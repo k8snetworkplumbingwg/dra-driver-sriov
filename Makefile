@@ -18,6 +18,11 @@ TR       ?= tr
 DIST_DIR ?= $(CURDIR)/dist
 HELM     ?= "go run helm.sh/helm/v3/cmd/helm@latest"
 
+# envtest configuration (resolved lazily in targets that need it)
+ENVTEST_K8S_VERSION ?= 1.34.x
+SETUP_ENVTEST ?= go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+ENVTEST_ASSETS_DIR ?= $(BIN_DIR)/envtest
+
 export IMAGE_GIT_TAG ?= $(shell git describe --tags --always --dirty --match 'v*' 2>/dev/null || echo 'v0.0.0-dev')
 export CHART_GIT_TAG ?= $(shell git describe --tags --always --dirty --match 'chart/*' 2>/dev/null || echo 'chart/v0.0.0-dev')
 
@@ -91,7 +96,7 @@ vet:
 
 COVERAGE_FILE := coverage.out
 test:
-	go test -v -coverprofile=$(COVERAGE_FILE) $(MODULE)/...
+	KUBEBUILDER_ASSETS=$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir=$(ENVTEST_ASSETS_DIR) -p path) go test -v -coverprofile=$(COVERAGE_FILE) $(MODULE)/...
 
 coverage: test
 	cat $(COVERAGE_FILE) | grep -v "_mock.go" > $(COVERAGE_FILE).no-mocks

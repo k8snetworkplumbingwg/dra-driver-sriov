@@ -55,11 +55,11 @@ type SriovResourceFilterReconciler struct {
 	namespace             string
 	currentResourceFilter *sriovdrav1alpha1.SriovResourceFilter
 	log                   klog.Logger
-	deviceStateManager    *devicestate.Manager
+	deviceStateManager    devicestate.DeviceState
 }
 
 // NewSriovResourceFilterReconciler creates a new SriovResourceFilterReconciler
-func NewSriovResourceFilterReconciler(client client.Client, nodeName, namespace string, deviceStateManager *devicestate.Manager) *SriovResourceFilterReconciler {
+func NewSriovResourceFilterReconciler(client client.Client, nodeName, namespace string, deviceStateManager devicestate.DeviceState) *SriovResourceFilterReconciler {
 	return &SriovResourceFilterReconciler{
 		Client:             client,
 		deviceStateManager: deviceStateManager,
@@ -169,7 +169,7 @@ func (r *SriovResourceFilterReconciler) GetResourceFilters() []sriovdrav1alpha1.
 }
 
 // GetResourceNames returns all resource names from the currently active SriovResourceFilter
-// Returns empty slice if no resource filter is active
+// Returns nil if no resource filter is active
 func (r *SriovResourceFilterReconciler) GetResourceNames() []string {
 	if r.currentResourceFilter == nil {
 		return nil
