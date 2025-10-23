@@ -79,9 +79,7 @@ func getMapOfOpaqueDeviceConfigForDevice(
 			resultConfigs[request] = resultConfig
 		}
 	}
+
 	klog.V(3).InfoS("Result configs", "resultConfigs", resultConfigs)
-	if len(resultConfigs) == 0 {
-		return resultConfigs, fmt.Errorf("no configs constructed for driver")
-	}
 	return resultConfigs, nil
 }

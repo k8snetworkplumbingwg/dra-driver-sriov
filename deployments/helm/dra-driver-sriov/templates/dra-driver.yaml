@@ -101,6 +101,8 @@ spec:
           value: {{ .Values.kubeletPlugin.nriPluginIndex | quote }}
         - name: DEFAULT_INTERFACE_PREFIX
           value: {{ .Values.kubeletPlugin.defaultInterfacePrefix | quote }}
+        - name: CONFIGURATION_MODE
+          value: {{ .Values.kubeletPlugin.configurationMode | quote }}
         - name: NODE_NAME
           valueFrom:
             fieldRef:

@@ -22,6 +22,7 @@ import (
 	"maps"
 	"os"
 	"path"
+	"time"
 
 	resourceapi "k8s.io/api/resource/v1"
 	coreclientset "k8s.io/client-go/kubernetes"
@@ -47,8 +48,8 @@ type Driver struct {
 	cdi                *cdi.Handler
 }
 
-// Start creates a new DRA driver and starts the kubelet plugin and the healthcheck service after publishing
-// the available resources
+// Start creates a new DRA driver and starts the kubelet plugin. It waits for the plugin to be registered
+// with the kubelet before starting the healthcheck service and publishing the available resources
 func Start(ctx context.Context, config *sriovdratype.Config, deviceStateManager *devicestate.Manager, podManager *podmanager.PodManager, cdi *cdi.Handler) (*Driver, error) {
 	driver := &Driver{
 		client:             config.K8sClient.Interface,
@@ -74,6 +75,11 @@ func Start(ctx context.Context, config *sriovdratype.Config, deviceStateManager 
 	}
 	driver.helper = helper
 
+	// Wait for plugin registration to complete
+	if err = waitForRegistration(ctx, helper); err != nil {
+		return nil, err
+	}
+
 	driver.healthcheck, err = startHealthcheck(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("start healthcheck: %w", err)
@@ -84,6 +90,33 @@ func Start(ctx context.Context, config *sriovdratype.Config, deviceStateManager 
 		return nil, fmt.Errorf("failed to publish resources: %w", err)
 	}
 	return driver, nil
+}
+
+// waitForRegistration waits for the plugin to be registered with the kubelet
+func waitForRegistration(ctx context.Context, helper *kubeletplugin.Helper) error {
+	logger := klog.FromContext(ctx)
+	logger.Info("Waiting for plugin registration")
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	timeout := time.After(30 * time.Second)
+
+	for {
+		select {
+		case <-timeout:
+			return fmt.Errorf("timeout waiting for plugin registration")
+		case <-ticker.C:
+			status := helper.RegistrationStatus()
+			if status != nil && status.PluginRegistered {
+				logger.Info("Plugin registration completed successfully")
+				return nil
+			}
+			if status != nil && status.Error != "" {
+				return fmt.Errorf("plugin registration failed: %s", status.Error)
+			}
+		}
+	}
 }
 
 // Shutdown shuts down the driver
