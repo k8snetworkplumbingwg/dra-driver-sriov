@@ -1,0 +1,90 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vf-test8
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: vf-test1
+  namespace: vf-test8
+  annotations:
+    k8s.v1.cni.cncf.io/resourceName: sriov/vf
+spec:
+  config: |-
+    {
+        "cniVersion": "1.0.0",
+        "name": "vf-test1",
+        "type": "sriov",
+        "vlan": 0,
+        "spoofchk": "on",
+        "trust": "on",
+        "vlanQoS": 0,
+        "logLevel": "info",
+        "ipam": {
+            "type": "host-local",
+            "ranges": [
+                [
+                    {
+                        "subnet": "10.0.2.0/24"
+                    }
+                ]
+            ]
+        }
+    }
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  namespace: vf-test8
+  name: vf-test8
+spec:
+  spec:
+    devices:
+      requests:
+      - name: vf
+        exactly:
+          deviceClassName: sriovnetwork.openshift.io
+          count: 2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: vf-test8
+  name: pod0
+  labels:
+    app: pod0
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pod0
+  template:
+    metadata:
+      labels:
+        app: pod0
+      annotations:
+        k8s.v1.cni.cncf.io/networks: vf-test1,vf-test1
+    spec:
+      terminationGracePeriodSeconds: 2
+      containers:
+      - name: ctr0
+        image: quay.io/schseba/toolbox:latest
+        command:
+          - /bin/bash
+          - -c
+          - sleep INF
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: true
+          capabilities:
+            add:
+              - NET_ADMIN
+              - NET_RAW
+        resources:
+          claims:
+          - name: sriov
+      resourceClaims:
+      - name: sriov
+        resourceClaimTemplateName: vf-test8

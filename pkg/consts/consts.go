@@ -28,6 +28,7 @@ const (
 	DriverPluginCheckpointFile = "checkpoint.json"
 
 	StandardAttributePrefix = "resource.kubernetes.io"
+	MultusAttributePrefix   = "k8s.cni.cncf.io"
 
 	AttributePciAddress       = DriverName + "/pciAddress"
 	AttributePFName           = DriverName + "/PFName"
@@ -39,10 +40,18 @@ const (
 	AttributeResourceName     = DriverName + "/resourceName"
 	AttributeNumaNode         = StandardAttributePrefix + "/numaNode"
 	AttributeParentPciAddress = StandardAttributePrefix + "/pcieRoot"
+	AttributeMultusDeviceID   = MultusAttributePrefix + "/deviceID"
 
 	// Network device constants
 	NetClass  = 0x02 // Network controller class
 	SysBusPci = "/sys/bus/pci/devices"
+)
+
+type ConfigurationMode string
+
+const (
+	ConfigurationModeStandalone ConfigurationMode = "STANDALONE"
+	ConfigurationModeMultus     ConfigurationMode = "MULTUS"
 )
 
 var Backoff = wait.Backoff{

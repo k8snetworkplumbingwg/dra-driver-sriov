@@ -149,6 +149,9 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 					consts.AttributePciAddress: {
 						StringValue: ptr.To(vfInfo.PciAddress),
 					},
+					consts.AttributeMultusDeviceID: {
+						StringValue: ptr.To(vfInfo.PciAddress),
+					},
 					consts.AttributePFName: {
 						StringValue: ptr.To(pfInfo.NetName),
 					},
