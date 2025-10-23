@@ -374,7 +374,7 @@ Illustrates VFIO-PCI driver configuration for userspace applications:
 
 ```bash
 # Clone the repository
-git clone https://github.com/SchSeba/dra-driver-sriov.git
+git clone https://github.com/k8snetworkplumbingwg/dra-driver-sriov.git
 cd dra-driver-sriov
 
 # Build binaries

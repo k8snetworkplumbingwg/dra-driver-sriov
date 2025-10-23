@@ -20,7 +20,7 @@ FROM --platform=$BUILDPLATFORM golang:${GOLANG_VERSION} AS build
 
 ARG GOARCH=amd64
 
-WORKDIR /Users/sscheink/Documents/GolangProjects/src/github.com/SchSeba/dra-driver-sriov
+WORKDIR /go/src/github.com/k8snetworkplumbingwg/dra-driver-sriov
 COPY . .
 
 RUN mkdir /artifacts
@@ -29,7 +29,7 @@ RUN GOARCH=${GOARCH} make PREFIX=/artifacts cmds
 # Final stage using target architecture
 FROM --platform=linux/amd64 ${BASE_IMAGE}
 
-LABEL org.opencontainers.image.source=https://github.com/SchSeba/dra-driver-sriov
+LABEL org.opencontainers.image.source=https://github.com/k8snetworkplumbingwg/dra-driver-sriov
 LABEL org.opencontainers.image.description="Dynamic Resource Allocation (DRA) resource driver for SR-IOV devices"
 LABEL org.opencontainers.image.licenses=Apache-2.0
 LABEL org.opencontainers.image.title="Dynamic Resource Allocation (DRA) resource driver for SR-IOV devices"

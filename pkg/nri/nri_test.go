@@ -8,10 +8,10 @@ import (
 	. "github.com/onsi/gomega"
 	"go.uber.org/mock/gomock"
 
-	cnimock "github.com/SchSeba/dra-driver-sriov/pkg/cni/mock"
-	"github.com/SchSeba/dra-driver-sriov/pkg/podmanager"
-	"github.com/SchSeba/dra-driver-sriov/pkg/types"
 	"github.com/containerd/nri/pkg/api"
+	cnimock "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cni/mock"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/podmanager"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 

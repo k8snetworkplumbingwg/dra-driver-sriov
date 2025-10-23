@@ -1,4 +1,4 @@
-module github.com/SchSeba/dra-driver-sriov
+module github.com/k8snetworkplumbingwg/dra-driver-sriov
 
 go 1.24.3
 

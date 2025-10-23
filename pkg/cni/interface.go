@@ -21,8 +21,8 @@ package cni
 import (
 	"context"
 
-	"github.com/SchSeba/dra-driver-sriov/pkg/types"
 	"github.com/containerd/nri/pkg/api"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 	resourcev1 "k8s.io/api/resource/v1"
 )
 

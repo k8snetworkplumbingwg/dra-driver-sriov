@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
 
-	"github.com/SchSeba/dra-driver-sriov/pkg/flags"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
 )
 
 var _ = Describe("Flags", func() {

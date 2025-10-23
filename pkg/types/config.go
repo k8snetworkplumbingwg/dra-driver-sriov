@@ -3,8 +3,8 @@ package types
 import (
 	"path/filepath"
 
-	"github.com/SchSeba/dra-driver-sriov/pkg/consts"
-	"github.com/SchSeba/dra-driver-sriov/pkg/flags"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
 )
 
 type Flags struct {

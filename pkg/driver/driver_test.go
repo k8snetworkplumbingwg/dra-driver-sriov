@@ -12,8 +12,8 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 
-	"github.com/SchSeba/dra-driver-sriov/pkg/podmanager"
-	"github.com/SchSeba/dra-driver-sriov/pkg/types"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/podmanager"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
 var _ = Describe("Driver", func() {

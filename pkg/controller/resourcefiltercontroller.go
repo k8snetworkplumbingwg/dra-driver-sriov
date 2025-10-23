@@ -39,9 +39,9 @@ import (
 
 	resourceapi "k8s.io/api/resource/v1"
 
-	sriovdrav1alpha1 "github.com/SchSeba/dra-driver-sriov/pkg/api/sriovdra/v1alpha1"
-	"github.com/SchSeba/dra-driver-sriov/pkg/consts"
-	"github.com/SchSeba/dra-driver-sriov/pkg/devicestate"
+	sriovdrav1alpha1 "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/sriovdra/v1alpha1"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/devicestate"
 )
 
 const (

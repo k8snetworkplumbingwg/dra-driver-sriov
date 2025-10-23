@@ -11,8 +11,8 @@ import (
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 	cdispec "tags.cncf.io/container-device-interface/specs-go"
 
-	"github.com/SchSeba/dra-driver-sriov/pkg/cdi"
-	draTypes "github.com/SchSeba/dra-driver-sriov/pkg/types"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cdi"
+	draTypes "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
 var _ = Describe("CDI Handler", func() {

@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/types"
 
-	draTypes "github.com/SchSeba/dra-driver-sriov/pkg/types"
+	draTypes "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
 var _ = Describe("Types", func() {

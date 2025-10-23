@@ -9,8 +9,8 @@ import (
 	cdiparser "tags.cncf.io/container-device-interface/pkg/parser"
 	cdispec "tags.cncf.io/container-device-interface/specs-go"
 
-	"github.com/SchSeba/dra-driver-sriov/pkg/consts"
-	"github.com/SchSeba/dra-driver-sriov/pkg/types"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
 const (

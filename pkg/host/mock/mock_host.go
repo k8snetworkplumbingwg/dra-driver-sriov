@@ -12,9 +12,9 @@ package mock_host
 import (
 	reflect "reflect"
 
-	v1alpha1 "github.com/SchSeba/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
-	host "github.com/SchSeba/dra-driver-sriov/pkg/host"
 	ghw "github.com/jaypipes/ghw"
+	v1alpha1 "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
+	host "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host"
 	gomock "go.uber.org/mock/gomock"
 )
 

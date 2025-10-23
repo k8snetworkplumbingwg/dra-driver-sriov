@@ -5,10 +5,10 @@ import (
 	. "github.com/onsi/gomega"
 	"go.uber.org/mock/gomock"
 
-	configapi "github.com/SchSeba/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
-	"github.com/SchSeba/dra-driver-sriov/pkg/host"
-	hostmock "github.com/SchSeba/dra-driver-sriov/pkg/host/mock"
-	drasriovtypes "github.com/SchSeba/dra-driver-sriov/pkg/types"
+	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host"
+	hostmock "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host/mock"
+	drasriovtypes "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
 var _ = Describe("Manager", func() {

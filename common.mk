@@ -22,7 +22,7 @@ CLIENT_GEN_VERSION ?= v0.29.2
 MOCKGEN_VERSION ?= v0.6.0
 
 DRIVER_NAME := dra-driver-sriov
-MODULE := github.com/SchSeba/$(DRIVER_NAME)
+MODULE := github.com/k8snetworkplumbingwg/$(DRIVER_NAME)
 
 # Determine VERSION based on git state and branch
 ifeq ($(VERSION),)
@@ -57,6 +57,6 @@ BIN_DIR=$(CURPATH)/bin
 
 # Default to GitHub Container Registry
 ifeq ($(IMAGE_NAME),)
-REGISTRY ?= ghcr.io/schseba/$(DRIVER_NAME)
+REGISTRY ?= ghcr.io/k8snetworkplumbingwg/$(DRIVER_NAME)
 IMAGE_NAME = $(REGISTRY)
 endif

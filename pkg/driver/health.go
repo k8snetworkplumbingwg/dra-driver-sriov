@@ -25,7 +25,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/SchSeba/dra-driver-sriov/pkg/types"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -35,7 +35,7 @@ import (
 	drapb "k8s.io/kubelet/pkg/apis/dra/v1beta1"
 	registerapi "k8s.io/kubelet/pkg/apis/pluginregistration/v1"
 
-	"github.com/SchSeba/dra-driver-sriov/pkg/consts"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 )
 
 type Healthcheck struct {

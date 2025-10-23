@@ -16,18 +16,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/SchSeba/dra-driver-sriov/pkg/cdi"
-	"github.com/SchSeba/dra-driver-sriov/pkg/cni"
-	"github.com/SchSeba/dra-driver-sriov/pkg/consts"
-	"github.com/SchSeba/dra-driver-sriov/pkg/controller"
-	"github.com/SchSeba/dra-driver-sriov/pkg/devicestate"
-	"github.com/SchSeba/dra-driver-sriov/pkg/driver"
-	"github.com/SchSeba/dra-driver-sriov/pkg/flags"
-	"github.com/SchSeba/dra-driver-sriov/pkg/nri"
-	"github.com/SchSeba/dra-driver-sriov/pkg/podmanager"
-	"github.com/SchSeba/dra-driver-sriov/pkg/types"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cdi"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cni"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/controller"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/devicestate"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/driver"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/nri"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/podmanager"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 
-	sriovdrav1alpha1 "github.com/SchSeba/dra-driver-sriov/pkg/api/sriovdra/v1alpha1"
+	sriovdrav1alpha1 "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/sriovdra/v1alpha1"
 )
 
 func main() {

@@ -13,8 +13,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	types "github.com/SchSeba/dra-driver-sriov/pkg/types"
 	api "github.com/containerd/nri/pkg/api"
+	types "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 	gomock "go.uber.org/mock/gomock"
 	v1 "k8s.io/api/resource/v1"
 )

@@ -21,11 +21,11 @@ import (
 
 	gomock "go.uber.org/mock/gomock"
 
-	sriovdrav1alpha1 "github.com/SchSeba/dra-driver-sriov/pkg/api/sriovdra/v1alpha1"
-	sriovconsts "github.com/SchSeba/dra-driver-sriov/pkg/consts"
-	"github.com/SchSeba/dra-driver-sriov/pkg/controller"
-	"github.com/SchSeba/dra-driver-sriov/pkg/devicestate/mock"
-	drasriovtypes "github.com/SchSeba/dra-driver-sriov/pkg/types"
+	sriovdrav1alpha1 "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/sriovdra/v1alpha1"
+	sriovconsts "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/controller"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/devicestate/mock"
+	drasriovtypes "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
 func TestController(t *testing.T) {

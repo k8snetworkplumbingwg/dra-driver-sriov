@@ -29,11 +29,11 @@ import (
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/klog/v2"
 
-	"github.com/SchSeba/dra-driver-sriov/pkg/cdi"
-	"github.com/SchSeba/dra-driver-sriov/pkg/consts"
-	"github.com/SchSeba/dra-driver-sriov/pkg/devicestate"
-	"github.com/SchSeba/dra-driver-sriov/pkg/podmanager"
-	sriovdratype "github.com/SchSeba/dra-driver-sriov/pkg/types"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cdi"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/devicestate"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/podmanager"
+	sriovdratype "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
 type Driver struct {

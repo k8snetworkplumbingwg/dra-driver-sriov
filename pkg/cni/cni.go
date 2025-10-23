@@ -25,10 +25,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/SchSeba/dra-driver-sriov/pkg/types"
 	"github.com/containerd/nri/pkg/api"
 	"github.com/containernetworking/cni/libcni"
 	cni100 "github.com/containernetworking/cni/pkg/types/100"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 	netattdefclientutils "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/utils"
 	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/klog/v2"

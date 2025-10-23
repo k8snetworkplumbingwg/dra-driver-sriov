@@ -6,9 +6,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	sriovdrav1alpha1 "github.com/SchSeba/dra-driver-sriov/pkg/api/sriovdra/v1alpha1"
-	sriovconsts "github.com/SchSeba/dra-driver-sriov/pkg/consts"
-	drasriovtypes "github.com/SchSeba/dra-driver-sriov/pkg/types"
+	sriovdrav1alpha1 "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/sriovdra/v1alpha1"
+	sriovconsts "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
+	drasriovtypes "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 	resourceapi "k8s.io/api/resource/v1"
 )
 
