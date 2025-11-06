@@ -15,14 +15,14 @@ require (
 	github.com/urfave/cli/v2 v2.25.3
 	go.uber.org/mock v0.6.0
 	google.golang.org/grpc v1.72.1
-	k8s.io/api v0.34.0
-	k8s.io/apimachinery v0.34.0
-	k8s.io/client-go v0.34.0
-	k8s.io/component-base v0.34.0
-	k8s.io/dynamic-resource-allocation v0.34.0
+	k8s.io/api v0.34.1
+	k8s.io/apimachinery v0.34.1
+	k8s.io/client-go v0.34.1
+	k8s.io/component-base v0.34.1
+	k8s.io/dynamic-resource-allocation v0.34.1
 	k8s.io/klog/v2 v2.130.1
-	k8s.io/kubelet v0.34.0
-	k8s.io/kubernetes v1.34.0
+	k8s.io/kubelet v0.34.1
+	k8s.io/kubernetes v1.34.1
 	k8s.io/utils v0.0.0-20250604170112-4c0f3b243397
 	sigs.k8s.io/controller-runtime v0.22.1
 	tags.cncf.io/container-device-interface v0.8.0
