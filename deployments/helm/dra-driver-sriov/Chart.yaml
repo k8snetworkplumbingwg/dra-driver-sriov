@@ -1,5 +1,5 @@
 apiVersion: v2
-name: dra-driver-sriov
+name: dra-driver-sriov-chart
 description: Helm chart for a Dynamic Resource Allocation (DRA) resource driver for SR-IOV devices
 
 # A chart can be either an 'application' or a 'library' chart.

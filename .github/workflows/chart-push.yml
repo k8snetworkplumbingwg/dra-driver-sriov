@@ -1,0 +1,52 @@
+name: "Push helm chart"
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - v*
+
+jobs:
+  package-and-push-helm-chart:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v5
+
+      - name: Set version info
+        id: vars
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            # For tags, use the tag name (e.g., v1.2.3)
+            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            # For main branch, use short SHA
+            echo "version=$(git rev-parse --short=7 HEAD)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install helm
+        uses: azure/setup-helm@v4.2.0
+        with:
+          version: latest
+      
+      - name: Update chart
+        env:
+          VERSION: ${{ steps.vars.outputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO_OWNER: ${{ github.repository_owner }}
+        run: make chart-prepare
+    
+      - name: Push chart
+        env:
+          VERSION: ${{ steps.vars.outputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO_OWNER: ${{ github.repository_owner }}
+        run: make chart-push
+
