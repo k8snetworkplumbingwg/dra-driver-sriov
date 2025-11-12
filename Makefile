@@ -35,7 +35,7 @@ CMDS := $(patsubst ./cmd/%/,%,$(sort $(dir $(wildcard ./cmd/*/))))
 CMD_TARGETS := $(patsubst %,cmd-%, $(CMDS))
 
 CHECK_TARGETS := assert-fmt vet lint
-MAKE_TARGETS := binaries build check vendor fmt test cmds coverage generate mock-generate build-image $(CHECK_TARGETS)
+MAKE_TARGETS := binaries build check vendor fmt test test-coverage cmds coverage generate mock-generate build-image $(CHECK_TARGETS)
 
 TARGETS := $(MAKE_TARGETS) $(CMD_TARGETS)
 
@@ -97,6 +97,9 @@ vet:
 COVERAGE_FILE := coverage.out
 test:
 	KUBEBUILDER_ASSETS=$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir=$(ENVTEST_ASSETS_DIR) -p path) go test -v -coverprofile=$(COVERAGE_FILE) $(MODULE)/...
+
+test-coverage:
+	KUBEBUILDER_ASSETS=$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir=$(ENVTEST_ASSETS_DIR) -p path) go test -v -covermode=atomic -coverprofile=$(COVERAGE_FILE) $(MODULE)/...
 
 coverage: test
 	cat $(COVERAGE_FILE) | grep -v "_mock.go" > $(COVERAGE_FILE).no-mocks

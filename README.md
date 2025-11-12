@@ -1,5 +1,9 @@
 # DRA Driver for SR-IOV Virtual Functions
 
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](http://www.apache.org/licenses/LICENSE-2.0)
+[![Go Report Card](https://goreportcard.com/badge/github.com/k8snetworkplumbingwg/dra-driver-sriov)](https://goreportcard.com/report/github.com/k8snetworkplumbingwg/dra-driver-sriov)
+[![Coverage Status](https://coveralls.io/repos/github/k8snetworkplumbingwg/dra-driver-sriov/badge.svg)](https://coveralls.io/github/k8snetworkplumbingwg/dra-driver-sriov)
+
 A Kubernetes Dynamic Resource Allocation (DRA) driver that enables exposure and management of SR-IOV virtual functions as cluster resources.
 
 ## Overview
