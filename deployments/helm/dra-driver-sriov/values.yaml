@@ -11,7 +11,7 @@ allowDefaultNamespace: false
 
 imagePullSecrets: []
 image:
-  repository: quay.io/k8snetworkplumbingwg/dra-driver-sriov
+  repository: ghcr.io/k8snetworkplumbingwg/dra-driver-sriov
   pullPolicy: Always
   # Overrides the image tag whose default is the chart appVersion.
   tag: ""
