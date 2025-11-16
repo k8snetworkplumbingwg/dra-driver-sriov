@@ -113,7 +113,7 @@ spec:
       requests:
       - name: vf
         exactly:
-          deviceClassName: sriovnetwork.openshift.io
+          deviceClassName: sriovnetwork.k8snetworkplumbingwg.io
 ```
 
 Then reference the claim in your Pod:
@@ -144,7 +144,7 @@ The DRA driver includes an advanced resource filtering system that allows admini
 The `SriovResourceFilter` custom resource allows you to define filtering policies for SR-IOV devices:
 
 ```yaml
-apiVersion: sriovnetwork.openshift.io/v1alpha1
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
 kind: SriovResourceFilter
 metadata:
   name: example-filter
@@ -222,10 +222,10 @@ spec:
       requests:
       - name: vf
         exactly:
-          deviceClassName: sriovnetwork.openshift.io
+          deviceClassName: sriovnetwork.k8snetworkplumbingwg.io
           selectors:
           - cel:
-              expression: device.attributes["sriovnetwork.openshift.io"].resourceName == "eth0_resource"
+              expression: device.attributes["sriovnetwork.k8snetworkplumbingwg.io"].resourceName == "eth0_resource"
 ```
 
 ## VfConfig Parameters
@@ -263,7 +263,7 @@ The `VfConfig` resource defines how Virtual Functions are configured and exposed
 **Basic Kernel Networking:**
 ```yaml
 parameters:
-  apiVersion: sriovnetwork.openshift.io/v1alpha1
+  apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
   kind: VfConfig
   ifName: net1
   netAttachDefName: sriov-network
@@ -272,7 +272,7 @@ parameters:
 **VFIO for DPDK Applications:**
 ```yaml
 parameters:
-  apiVersion: sriovnetwork.openshift.io/v1alpha1
+  apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
   kind: VfConfig
   driver: vfio-pci
   addVhostMount: true

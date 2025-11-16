@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.14.0
-  name: sriovresourcefilters.sriovnetwork.openshift.io
+  name: sriovresourcefilters.sriovnetwork.k8snetworkplumbingwg.io
 spec:
-  group: sriovnetwork.openshift.io
+  group: sriovnetwork.k8snetworkplumbingwg.io
   names:
     kind: SriovResourceFilter
     listKind: SriovResourceFilterList

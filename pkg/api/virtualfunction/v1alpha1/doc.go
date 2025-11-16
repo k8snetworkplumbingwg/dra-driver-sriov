@@ -15,6 +15,6 @@
  */
 
 // +k8s:deepcopy-gen=package
-// +groupName=vf.sriovnetwork.openshift.io
+// +groupName=vf.sriovnetwork.k8snetworkplumbingwg.io
 
 package v1alpha1

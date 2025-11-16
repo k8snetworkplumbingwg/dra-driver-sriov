@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	GroupName                  = "sriovnetwork.openshift.io"
-	DriverName                 = "sriovnetwork.openshift.io"
+	GroupName                  = "sriovnetwork.k8snetworkplumbingwg.io"
+	DriverName                 = "sriovnetwork.k8snetworkplumbingwg.io"
 	DriverPluginCheckpointFile = "checkpoint.json"
 
 	StandardAttributePrefix = "resource.kubernetes.io"

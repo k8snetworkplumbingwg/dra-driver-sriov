@@ -20,7 +20,7 @@ This scenario showcases:
 
 ### 2. Multi-Device Resource Claim
 The `ResourceClaimTemplate` requests resources from two different device classes:
-- **SR-IOV VF**: `deviceClassName: sriovnetwork.openshift.io`
+- **SR-IOV VF**: `deviceClassName: sriovnetwork.k8snetworkplumbingwg.io`
 - **GPU Device**: `deviceClassName: gpu.example.com` (count: 1)
 - **Alignment Constraint**: `matchAttribute: "resource.kubernetes.io/numaNode"`
   - Ensures both VF and GPU are allocated from the same NUMA node

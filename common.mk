@@ -46,7 +46,7 @@ endif
 endif
 endif
 
-VENDOR := sriovnetwork.openshift.io
+VENDOR := sriovnetwork.k8snetworkplumbingwg.io
 APIS := virtualfunction/v1alpha1 sriovdra/v1alpha1
 
 PLURAL_EXCEPTIONS  = DeviceClassParameters:DeviceClassParameters
