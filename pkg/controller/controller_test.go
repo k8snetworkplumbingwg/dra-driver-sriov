@@ -53,7 +53,7 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 	testEnv = &envtest.Environment{
 		CRDInstallOptions: envtest.CRDInstallOptions{
 			Paths: []string{
-				"../../deployments/helm/dra-driver-sriov/templates/sriovnetwork.openshift.io_sriovresourcefilters.yaml",
+				"../../deployments/helm/dra-driver-sriov/templates/sriovnetwork.k8snetworkplumbingwg.io_sriovresourcefilters.yaml",
 			},
 		},
 		ErrorIfCRDPathMissing: true,

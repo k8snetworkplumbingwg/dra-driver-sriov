@@ -238,21 +238,21 @@ var _ = Describe("CDI Handler", func() {
 		It("should return correct qualified device name", func() {
 			result := handler.GetClaimDevices(claimUID, deviceName)
 
-			expectedName := "sriovnetwork.openshift.io/vf=" + claimUID + "-" + deviceName
+			expectedName := "sriovnetwork.k8snetworkplumbingwg.io/vf=" + claimUID + "-" + deviceName
 			Expect(result).To(Equal(expectedName))
 		})
 
 		It("should handle empty claim UID", func() {
 			result := handler.GetClaimDevices("", deviceName)
 
-			expectedName := "sriovnetwork.openshift.io/vf=" + "-" + deviceName
+			expectedName := "sriovnetwork.k8snetworkplumbingwg.io/vf=" + "-" + deviceName
 			Expect(result).To(Equal(expectedName))
 		})
 
 		It("should handle empty device name", func() {
 			result := handler.GetClaimDevices(claimUID, "")
 
-			expectedName := "sriovnetwork.openshift.io/vf=" + claimUID + "-"
+			expectedName := "sriovnetwork.k8snetworkplumbingwg.io/vf=" + claimUID + "-"
 			Expect(result).To(Equal(expectedName))
 		})
 
@@ -262,7 +262,7 @@ var _ = Describe("CDI Handler", func() {
 
 			result := handler.GetClaimDevices(specialClaimUID, specialDeviceName)
 
-			expectedName := "sriovnetwork.openshift.io/vf=" + specialClaimUID + "-" + specialDeviceName
+			expectedName := "sriovnetwork.k8snetworkplumbingwg.io/vf=" + specialClaimUID + "-" + specialDeviceName
 			Expect(result).To(Equal(expectedName))
 		})
 	})
@@ -271,14 +271,14 @@ var _ = Describe("CDI Handler", func() {
 		It("should return correct qualified pod spec name", func() {
 			result := handler.GetPodSpecName(podUID)
 
-			expectedName := "sriovnetwork.openshift.io/vf=" + podUID
+			expectedName := "sriovnetwork.k8snetworkplumbingwg.io/vf=" + podUID
 			Expect(result).To(Equal(expectedName))
 		})
 
 		It("should handle empty pod UID", func() {
 			result := handler.GetPodSpecName("")
 
-			expectedName := "sriovnetwork.openshift.io/vf="
+			expectedName := "sriovnetwork.k8snetworkplumbingwg.io/vf="
 			Expect(result).To(Equal(expectedName))
 		})
 
@@ -287,7 +287,7 @@ var _ = Describe("CDI Handler", func() {
 
 			result := handler.GetPodSpecName(specialPodUID)
 
-			expectedName := "sriovnetwork.openshift.io/vf=" + specialPodUID
+			expectedName := "sriovnetwork.k8snetworkplumbingwg.io/vf=" + specialPodUID
 			Expect(result).To(Equal(expectedName))
 		})
 	})

@@ -43,7 +43,7 @@ spec:
       requests:
       - name: vf
         exactly:
-          deviceClassName: sriovnetwork.openshift.io
+          deviceClassName: sriovnetwork.k8snetworkplumbingwg.io
       - name: gpu
         exactly:
           deviceClassName: gpu.example.com
@@ -53,9 +53,9 @@ spec:
       config:
       - requests: ["vf"]
         opaque:
-          driver: sriovnetwork.openshift.io
+          driver: sriovnetwork.k8snetworkplumbingwg.io
           parameters:
-            apiVersion: sriovnetwork.openshift.io/v1alpha1
+            apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
             kind: VfConfig
             ifName: net1
             netAttachDefName: vf-test1

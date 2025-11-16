@@ -20,6 +20,6 @@ rules:
 - apiGroups: ["k8s.cni.cncf.io"]
   resources: ["network-attachment-definitions"]
   verbs: ["get"]
-- apiGroups: ["sriovnetwork.openshift.io"]
+- apiGroups: ["sriovnetwork.k8snetworkplumbingwg.io"]
   resources: ["sriovresourcefilters"]
   verbs: ["get", "list", "watch"]  # SriovResourceFilter resources

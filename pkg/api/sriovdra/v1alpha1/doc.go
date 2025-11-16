@@ -16,6 +16,6 @@
 
 // Package v1alpha1 contains API types for the SR-IOV Dynamic Resource Allocation driver
 // +k8s:deepcopy-gen=package
-// +groupName=sriovnetwork.openshift.io
+// +groupName=sriovnetwork.k8snetworkplumbingwg.io
 // +k8s:defaulter-gen=TypeMeta
 package v1alpha1

@@ -13,11 +13,11 @@ import (
 var _ = Describe("Consts", func() {
 	Context("Constants", func() {
 		It("should have correct group name", func() {
-			Expect(consts.GroupName).To(Equal("sriovnetwork.openshift.io"))
+			Expect(consts.GroupName).To(Equal("sriovnetwork.k8snetworkplumbingwg.io"))
 		})
 
 		It("should have correct driver name", func() {
-			Expect(consts.DriverName).To(Equal("sriovnetwork.openshift.io"))
+			Expect(consts.DriverName).To(Equal("sriovnetwork.k8snetworkplumbingwg.io"))
 		})
 
 		It("should have correct checkpoint file name", func() {

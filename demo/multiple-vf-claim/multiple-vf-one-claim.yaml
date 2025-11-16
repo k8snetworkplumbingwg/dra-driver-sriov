@@ -43,14 +43,14 @@ spec:
       requests:
       - name: vf
         exactly:
-          deviceClassName: sriovnetwork.openshift.io
+          deviceClassName: sriovnetwork.k8snetworkplumbingwg.io
           count: 2
       config:
         - requests: [ "vf" ]
           opaque:
-            driver: sriovnetwork.openshift.io
+            driver: sriovnetwork.k8snetworkplumbingwg.io
             parameters:
-              apiVersion: sriovnetwork.openshift.io/v1alpha1
+              apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
               kind: VfConfig
               netAttachDefName: vf-test
 
