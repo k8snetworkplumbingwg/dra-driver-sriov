@@ -38,6 +38,7 @@ const (
 	AttributeVFID         = DriverName + "/vfID"
 	AttributeResourceName = DriverName + "/resourceName"
 	AttributeLinkType     = DriverName + "/linkType"
+	AttributeRDMACapable  = DriverName + "/rdmaCapable"
 	// Use upstream Kubernetes standard attribute prefix for numaNode
 	AttributeNumaNode = deviceattribute.StandardDeviceAttributePrefix + "numaNode"
 	// Use upstream Kubernetes standard attribute prefix for pciAddress
@@ -54,6 +55,9 @@ const (
 	LinkTypeEthernet   = "ethernet"
 	LinkTypeInfiniband = "infiniband"
 	LinkTypeUnknown    = "unknown"
+
+	// RDMA device constants
+	SysClassInfiniband = "/sys/class/infiniband"
 )
 
 // Kubernetes standard attributes

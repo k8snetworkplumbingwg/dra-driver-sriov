@@ -117,17 +117,23 @@ type Interface interface {
 	LoadKernelModule(moduleName string) error
 	EnsureDpdkModuleLoaded(driver string) error
 	EnsureVhostModulesLoaded() error
+
+	// RDMA device functions
+	GetRDMADevicesForPCI(pciAddr string) []string
+	VerifyRDMACapability(pciAddr string) bool
 }
 
 // Host provides unified host system functionality for SR-IOV, PCI operations, and driver management
 type Host struct {
-	log klog.Logger
+	log          klog.Logger
+	rdmaProvider RdmaProvider
 }
 
 // NewHost creates a new Host instance
 func NewHost() Interface {
 	return &Host{
-		log: klog.FromContext(context.Background()).WithName("Host"),
+		log:          klog.FromContext(context.Background()).WithName("Host"),
+		rdmaProvider: newRdmaProvider(),
 	}
 }
 
@@ -148,6 +154,12 @@ func initHelpers() {
 func GetHelpers() Interface {
 	initHelpers()
 	return Helpers
+}
+
+// SetRdmaProvider sets the RDMA provider for a Host instance
+// This is primarily used for injecting mock providers in unit tests
+func (h *Host) SetRdmaProvider(provider RdmaProvider) {
+	h.rdmaProvider = provider
 }
 
 // SR-IOV Detection Functions
@@ -296,6 +308,9 @@ func (h *Host) GetLinkType(pciAddr string) (string, error) {
 }
 
 // GetNumaNode returns the NUMA node for a given PCI device
+// Parse NUMA node value. Keep the actual value including -1 which indicates
+// NUMA is not supported/enabled (standard Linux convention).
+// This allows users to filter devices based on NUMA availability.
 func (h *Host) GetNumaNode(pciAddress string) (string, error) {
 	numaNodePath := buildSysBusPciPath(pciAddress, "numa_node")
 	content, err := os.ReadFile(numaNodePath) /* #nosec G304 */
@@ -807,4 +822,34 @@ func (h *Host) EnsureVhostModulesLoaded() error {
 		return fmt.Errorf("failed to load %d out of %d required kernel modules for vhost functionality: %v", len(errors), len(modulesToLoad), errors)
 	}
 	return nil
+}
+
+// RDMA Device Functions
+
+// GetRDMADevicesForPCI returns the RDMA device names associated with a PCI address
+// Uses the rdmamap library from Mellanox for RDMA device detection
+func (h *Host) GetRDMADevicesForPCI(pciAddr string) []string {
+	h.log.V(2).Info("GetRDMADevicesForPCI(): getting RDMA devices for PCI address", "device", pciAddr)
+
+	// Use rdmaProvider to get RDMA devices for this PCI address
+	rdmaDevices := h.rdmaProvider.GetRdmaDevicesForPcidev(pciAddr)
+
+	if len(rdmaDevices) > 0 {
+		h.log.Info("GetRDMADevicesForPCI(): found RDMA devices",
+			"pciAddress", pciAddr, "rdmaDevices", rdmaDevices)
+	}
+	return rdmaDevices
+}
+
+// VerifyRDMACapability checks if a device supports RDMA by looking for associated RDMA devices
+func (h *Host) VerifyRDMACapability(pciAddr string) bool {
+	h.log.V(2).Info("VerifyRDMACapability(): checking RDMA capability", "device", pciAddr)
+
+	rdmaDevices := h.GetRDMADevicesForPCI(pciAddr)
+
+	hasRDMA := len(rdmaDevices) > 0
+	h.log.Info("VerifyRDMACapability(): RDMA capability check result",
+		"device", pciAddr, "rdmaCapable", hasRDMA)
+
+	return hasRDMA
 }

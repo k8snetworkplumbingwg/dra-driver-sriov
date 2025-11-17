@@ -3,6 +3,7 @@ module github.com/k8snetworkplumbingwg/dra-driver-sriov
 go 1.25.3
 
 require (
+	github.com/Mellanox/rdmamap v1.1.0
 	github.com/containerd/nri v0.11.0
 	github.com/containernetworking/cni v1.3.0
 	github.com/jaypipes/ghw v0.21.2
@@ -77,6 +78,8 @@ require (
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/cobra v1.9.1 // indirect
 	github.com/tetratelabs/wazero v1.10.1 // indirect
+	github.com/vishvananda/netlink v1.3.1 // indirect
+	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
