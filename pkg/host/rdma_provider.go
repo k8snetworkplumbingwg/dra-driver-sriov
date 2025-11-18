@@ -26,6 +26,7 @@ import (
 //go:generate mockgen -destination mock/mock_rdma_provider.go -source rdma_provider.go
 type RdmaProvider interface {
 	GetRdmaDevicesForPcidev(pciAddr string) []string
+	GetRdmaCharDevices(rdmaDeviceName string) []string
 }
 
 type defaultRdmaProvider struct{}
@@ -33,6 +34,11 @@ type defaultRdmaProvider struct{}
 // GetRdmaDevicesForPcidev returns RDMA devices associated with a PCI device
 func (defaultRdmaProvider) GetRdmaDevicesForPcidev(pciAddr string) []string {
 	return rdmamap.GetRdmaDevicesForPcidev(pciAddr)
+}
+
+// GetRdmaCharDevices returns character device paths for an RDMA device
+func (defaultRdmaProvider) GetRdmaCharDevices(rdmaDeviceName string) []string {
+	return rdmamap.GetRdmaCharDevices(rdmaDeviceName)
 }
 
 // newRdmaProvider creates a new default RDMA provider

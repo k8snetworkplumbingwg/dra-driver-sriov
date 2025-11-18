@@ -716,5 +716,87 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 				Expect(protocol).To(Equal("InfiniBand"))
 			})
 		})
+
+		Context("GetRDMACharDevices", func() {
+			It("should return character devices when they exist", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaCharDevices("mlx5_1").
+					Return([]string{
+						"/dev/infiniband/uverbs0",
+						"/dev/infiniband/umad0",
+						"/dev/infiniband/issm0",
+						"/dev/infiniband/rdma_cm",
+					}).
+					Times(1)
+
+				charDevices, err := hostImpl.GetRDMACharDevices("mlx5_1")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(charDevices).To(HaveLen(4))
+				Expect(charDevices).To(ContainElements(
+					"/dev/infiniband/uverbs0",
+					"/dev/infiniband/umad0",
+					"/dev/infiniband/issm0",
+					"/dev/infiniband/rdma_cm",
+				))
+			})
+
+			It("should return subset of character devices when only some exist", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaCharDevices("mlx5_2").
+					Return([]string{
+						"/dev/infiniband/uverbs1",
+						"/dev/infiniband/rdma_cm",
+					}).
+					Times(1)
+
+				charDevices, err := hostImpl.GetRDMACharDevices("mlx5_2")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(charDevices).To(HaveLen(2))
+				Expect(charDevices).To(ContainElements(
+					"/dev/infiniband/uverbs1",
+					"/dev/infiniband/rdma_cm",
+				))
+			})
+
+			It("should return nil when no character devices exist", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaCharDevices("mlx5_3").
+					Return([]string{}).
+					Times(1)
+
+				charDevices, err := hostImpl.GetRDMACharDevices("mlx5_3")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(charDevices).To(BeNil())
+			})
+
+			It("should handle multiple RDMA devices with different character devices", func() {
+				// First RDMA device
+				mockRdmaProvider.EXPECT().
+					GetRdmaCharDevices("mlx5_1").
+					Return([]string{
+						"/dev/infiniband/uverbs0",
+						"/dev/infiniband/umad0",
+					}).
+					Times(1)
+
+				// Second RDMA device
+				mockRdmaProvider.EXPECT().
+					GetRdmaCharDevices("mlx5_2").
+					Return([]string{
+						"/dev/infiniband/uverbs1",
+						"/dev/infiniband/umad1",
+					}).
+					Times(1)
+
+				charDevices1, err := hostImpl.GetRDMACharDevices("mlx5_1")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(charDevices1).To(HaveLen(2))
+
+				charDevices2, err := hostImpl.GetRDMACharDevices("mlx5_2")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(charDevices2).To(HaveLen(2))
+				Expect(charDevices2).NotTo(Equal(charDevices1))
+			})
+		})
 	})
 })

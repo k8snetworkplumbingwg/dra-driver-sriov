@@ -113,6 +113,7 @@ type Interface interface {
 	GetRDMADeviceForPCI(pciAddr string) ([]string, error)
 	VerifyRDMACapability(pciAddr string) (bool, error)
 	GetRDMAProtocol(pciAddr string) (string, error)
+	GetRDMACharDevices(rdmaDeviceName string) ([]string, error)
 }
 
 // Host provides unified host system functionality for SR-IOV, PCI operations, and driver management
@@ -857,4 +858,23 @@ func (h *Host) GetRDMAProtocol(pciAddr string) (string, error) {
 	h.log.V(2).Info("GetRDMAProtocol(): unable to determine specific protocol, returning Unknown",
 		"device", pciAddr)
 	return "Unknown", nil
+}
+
+// GetRDMACharDevices returns the character device paths for an RDMA device
+// These are the actual device nodes (e.g., /dev/infiniband/uverbs0) that need to be
+// exposed to containers for RDMA functionality
+func (h *Host) GetRDMACharDevices(rdmaDeviceName string) ([]string, error) {
+	h.log.V(2).Info("GetRDMACharDevices(): getting character devices for RDMA device", "rdmaDevice", rdmaDeviceName)
+
+	// Use rdmaProvider to get character devices for this RDMA device
+	charDevices := h.rdmaProvider.GetRdmaCharDevices(rdmaDeviceName)
+
+	if len(charDevices) == 0 {
+		h.log.V(2).Info("GetRDMACharDevices(): no character devices found", "rdmaDevice", rdmaDeviceName)
+		return nil, nil
+	}
+
+	h.log.Info("GetRDMACharDevices(): found character devices",
+		"rdmaDevice", rdmaDeviceName, "charDevices", charDevices)
+	return charDevices, nil
 }
