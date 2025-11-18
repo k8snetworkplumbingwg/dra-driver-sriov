@@ -215,6 +215,16 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 		})
 	}
 
+	// If device is RDMA capable, add RDMA character devices
+	if rdmaCapableAttr, ok := deviceInfo.Attributes[consts.AttributeRDMACapable]; ok && rdmaCapableAttr.BoolValue != nil && *rdmaCapableAttr.BoolValue {
+		rdmaDeviceNodes, rdmaEnvs, err := s.handleRDMADevice(ctx, pciAddress, result.Device)
+		if err != nil {
+			return nil, fmt.Errorf("error handling RDMA device: %w", err)
+		}
+		deviceNodes = append(deviceNodes, rdmaDeviceNodes...)
+		envs = append(envs, rdmaEnvs...)
+	}
+
 	edits := &cdispec.ContainerEdits{
 		Env:         envs,
 		DeviceNodes: deviceNodes,
@@ -252,6 +262,79 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 	}
 
 	return preparedDevice, nil
+}
+
+// handleRDMADevice handles RDMA device configuration and returns device nodes, environment variables, or an error
+func (s *Manager) handleRDMADevice(ctx context.Context, pciAddress, deviceName string) ([]*cdispec.DeviceNode, []string, error) {
+	logger := klog.FromContext(ctx).WithName("handleRDMADevice")
+	var deviceNodes []*cdispec.DeviceNode
+	var envs []string
+
+	rdmaDevices, err := host.GetHelpers().GetRDMADeviceForPCI(pciAddress)
+	if err != nil {
+		logger.Error(err, "Failed to get RDMA devices for PCI address",
+			"device", pciAddress)
+		return nil, nil, err
+	}
+
+	if len(rdmaDevices) == 0 {
+		logger.V(2).Info("No RDMA devices found for PCI address", "device", pciAddress)
+		return nil, nil, fmt.Errorf("no RDMA devices found for PCI address %s", pciAddress)
+	}
+
+	logger.V(2).Info("Device is RDMA capable, adding RDMA character devices",
+		"device", pciAddress, "rdmaDevices", rdmaDevices)
+
+	for _, rdmaDevice := range rdmaDevices {
+		// Get character devices for this RDMA device
+		charDevices, err := host.GetHelpers().GetRDMACharDevices(rdmaDevice)
+		if err != nil {
+			logger.Error(err, "Failed to get RDMA character devices, skipping",
+				"device", pciAddress, "rdmaDevice", rdmaDevice)
+			return nil, nil, err
+		}
+
+		if len(charDevices) == 0 {
+			logger.V(2).Info("No RDMA character devices found",
+				"device", pciAddress, "rdmaDevice", rdmaDevice)
+			return nil, nil, fmt.Errorf("no RDMA character devices found for RDMA device %s (PCI: %s)", rdmaDevice, pciAddress)
+		}
+
+		// Use RDMA device name in env var key to support multiple RDMA devices
+		rdmaDeviceSanitized := strings.ReplaceAll(rdmaDevice, "_", "")
+		devicePrefix := strings.ReplaceAll(deviceName, "-", "_")
+
+		// Add each character device to the CDI spec
+		for _, charDev := range charDevices {
+			deviceNodes = append(deviceNodes, &cdispec.DeviceNode{
+				Path:     charDev,
+				HostPath: charDev,
+				Type:     "c", // character device
+			})
+
+			// Add environment variable for each character device type
+			// Include RDMA device name to avoid collisions with multiple RDMA devices
+			switch {
+			case strings.Contains(charDev, "uverbs"):
+				envs = append(envs, fmt.Sprintf("SRIOVNETWORK_%s_%s_RDMA_UVERBS=%s", devicePrefix, rdmaDeviceSanitized, charDev))
+			case strings.Contains(charDev, "umad"):
+				envs = append(envs, fmt.Sprintf("SRIOVNETWORK_%s_%s_RDMA_UMAD=%s", devicePrefix, rdmaDeviceSanitized, charDev))
+			case strings.Contains(charDev, "issm"):
+				envs = append(envs, fmt.Sprintf("SRIOVNETWORK_%s_%s_RDMA_ISSM=%s", devicePrefix, rdmaDeviceSanitized, charDev))
+			case strings.Contains(charDev, "rdma_cm"):
+				envs = append(envs, fmt.Sprintf("SRIOVNETWORK_%s_%s_RDMA_CM=%s", devicePrefix, rdmaDeviceSanitized, charDev))
+			}
+		}
+
+		logger.Info("Added RDMA character devices for device",
+			"device", pciAddress, "rdmaDevice", rdmaDevice, "charDevices", charDevices, "envs", envs)
+
+		// Add RDMA device name to environment variables
+		envs = append(envs, fmt.Sprintf("SRIOVNETWORK_%s_%s_RDMA_DEVICE=%s",
+			devicePrefix, rdmaDeviceSanitized, rdmaDevice))
+	}
+
+	return deviceNodes, envs, nil
 }
 
 func (s *Manager) getNetAttachDefRawConfig(ctx context.Context, namespace string, netAttachDefName string) (string, error) {

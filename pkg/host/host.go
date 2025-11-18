@@ -114,6 +114,7 @@ type Interface interface {
 	// RDMA device functions
 	GetRDMADeviceForPCI(pciAddr string) ([]string, error)
 	VerifyRDMACapability(pciAddr string) (bool, error)
+	GetRDMACharDevices(rdmaDeviceName string) ([]string, error)
 }
 
 // Host provides unified host system functionality for SR-IOV, PCI operations, and driver management
@@ -783,6 +784,21 @@ func (h *Host) EnsureVhostModulesLoaded() error {
 // GetRDMADeviceForPCI returns the RDMA device names associated with a PCI address
 // Uses the rdmamap library from Mellanox for RDMA device detection
 func (h *Host) GetRDMADeviceForPCI(pciAddr string) ([]string, error) {
+	// Validate input
+	if pciAddr == "" {
+		return nil, fmt.Errorf("pciAddr cannot be empty")
+	}
+	// Validate PCI address format (should be DDDD:BB:DD.F)
+	parts := strings.Split(pciAddr, ":")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("invalid PCI address format: %s (expected format: DDDD:BB:DD.F)", pciAddr)
+	}
+	// Validate the last part contains device.function format
+	deviceFunc := strings.Split(parts[2], ".")
+	if len(deviceFunc) != 2 {
+		return nil, fmt.Errorf("invalid PCI address format: %s (expected format: DDDD:BB:DD.F)", pciAddr)
+	}
+
 	h.log.V(2).Info("GetRDMADeviceForPCI(): getting RDMA devices for PCI address", "device", pciAddr)
 
 	// Use rdmaProvider to get RDMA devices for this PCI address
@@ -811,4 +827,28 @@ func (h *Host) VerifyRDMACapability(pciAddr string) (bool, error) {
 		"device", pciAddr, "rdmaCapable", hasRDMA)
 
 	return hasRDMA, nil
+}
+
+// GetRDMACharDevices returns the character device paths for an RDMA device
+// These are the actual device nodes (e.g., /dev/infiniband/uverbs0) that need to be
+// exposed to containers for RDMA functionality
+func (h *Host) GetRDMACharDevices(rdmaDeviceName string) ([]string, error) {
+	// Validate input
+	if rdmaDeviceName == "" {
+		return nil, fmt.Errorf("rdmaDeviceName cannot be empty")
+	}
+
+	h.log.Info("GetRDMACharDevices(): getting character devices for RDMA device", "rdmaDevice", rdmaDeviceName)
+
+	// Use rdmaProvider to get character devices for this RDMA device
+	charDevices := h.rdmaProvider.GetRdmaCharDevices(rdmaDeviceName)
+
+	if len(charDevices) == 0 {
+		h.log.Info("GetRDMACharDevices(): no character devices found", "rdmaDevice", rdmaDeviceName)
+		return nil, nil
+	}
+
+	h.log.Info("GetRDMACharDevices(): found character devices",
+		"rdmaDevice", rdmaDeviceName, "charDevices", charDevices)
+	return charDevices, nil
 }

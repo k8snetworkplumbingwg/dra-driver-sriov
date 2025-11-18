@@ -624,6 +624,41 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 				Expect(err).NotTo(HaveOccurred())
 				Expect(devices).To(BeNil())
 			})
+
+			It("should return error when PCI address is empty", func() {
+				devices, err := hostImpl.GetRDMADeviceForPCI("")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("pciAddr cannot be empty"))
+				Expect(devices).To(BeNil())
+			})
+
+			It("should return error when PCI address format is invalid - no colons", func() {
+				devices, err := hostImpl.GetRDMADeviceForPCI("invalid")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("invalid PCI address format"))
+				Expect(devices).To(BeNil())
+			})
+
+			It("should return error when PCI address format is invalid - too few parts", func() {
+				devices, err := hostImpl.GetRDMADeviceForPCI("0000:08")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("invalid PCI address format"))
+				Expect(devices).To(BeNil())
+			})
+
+			It("should return error when PCI address format is invalid - missing device.function dot", func() {
+				devices, err := hostImpl.GetRDMADeviceForPCI("0000:08:00")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("invalid PCI address format"))
+				Expect(devices).To(BeNil())
+			})
+
+			It("should return error when PCI address format is invalid - too many parts", func() {
+				devices, err := hostImpl.GetRDMADeviceForPCI("0000:08:00:01.5")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("invalid PCI address format"))
+				Expect(devices).To(BeNil())
+			})
 		})
 
 		Context("VerifyRDMACapability", func() {
@@ -658,6 +693,95 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 				capable, err := hostImpl.VerifyRDMACapability("0000:01:00.0")
 				Expect(err).NotTo(HaveOccurred())
 				Expect(capable).To(BeFalse())
+			})
+		})
+
+		Context("GetRDMACharDevices", func() {
+			It("should return character devices when they exist", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaCharDevices("mlx5_1").
+					Return([]string{
+						"/dev/infiniband/uverbs0",
+						"/dev/infiniband/umad0",
+						"/dev/infiniband/issm0",
+						"/dev/infiniband/rdma_cm",
+					}).
+					Times(1)
+
+				charDevices, err := hostImpl.GetRDMACharDevices("mlx5_1")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(charDevices).To(HaveLen(4))
+				Expect(charDevices).To(ContainElements(
+					"/dev/infiniband/uverbs0",
+					"/dev/infiniband/umad0",
+					"/dev/infiniband/issm0",
+					"/dev/infiniband/rdma_cm",
+				))
+			})
+
+			It("should return subset of character devices when only some exist", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaCharDevices("mlx5_2").
+					Return([]string{
+						"/dev/infiniband/uverbs1",
+						"/dev/infiniband/rdma_cm",
+					}).
+					Times(1)
+
+				charDevices, err := hostImpl.GetRDMACharDevices("mlx5_2")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(charDevices).To(HaveLen(2))
+				Expect(charDevices).To(ContainElements(
+					"/dev/infiniband/uverbs1",
+					"/dev/infiniband/rdma_cm",
+				))
+			})
+
+			It("should return nil when no character devices exist", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaCharDevices("mlx5_3").
+					Return([]string{}).
+					Times(1)
+
+				charDevices, err := hostImpl.GetRDMACharDevices("mlx5_3")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(charDevices).To(BeNil())
+			})
+
+			It("should handle multiple RDMA devices with different character devices", func() {
+				// First RDMA device
+				mockRdmaProvider.EXPECT().
+					GetRdmaCharDevices("mlx5_1").
+					Return([]string{
+						"/dev/infiniband/uverbs0",
+						"/dev/infiniband/umad0",
+					}).
+					Times(1)
+
+				// Second RDMA device
+				mockRdmaProvider.EXPECT().
+					GetRdmaCharDevices("mlx5_2").
+					Return([]string{
+						"/dev/infiniband/uverbs1",
+						"/dev/infiniband/umad1",
+					}).
+					Times(1)
+
+				charDevices1, err := hostImpl.GetRDMACharDevices("mlx5_1")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(charDevices1).To(HaveLen(2))
+
+				charDevices2, err := hostImpl.GetRDMACharDevices("mlx5_2")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(charDevices2).To(HaveLen(2))
+				Expect(charDevices2).NotTo(Equal(charDevices1))
+			})
+
+			It("should return error when RDMA device name is empty", func() {
+				charDevices, err := hostImpl.GetRDMACharDevices("")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("rdmaDeviceName cannot be empty"))
+				Expect(charDevices).To(BeNil())
 			})
 		})
 	})
