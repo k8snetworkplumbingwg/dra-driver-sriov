@@ -22,6 +22,7 @@ type PFInfo struct {
 	Address          string
 	EswitchMode      string
 	NumaNode         string
+	PCIeRoot         string
 	ParentPciAddress string
 }
 
@@ -81,7 +82,14 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			numaNode = "0" // Default to node 0 if we can't determine it
 		}
 
-		// Get parent PCI address information
+		// Get PCIe Root Complex information using upstream Kubernetes implementation
+		pcieRoot, err := host.GetHelpers().GetPCIeRoot(device.Address)
+		if err != nil {
+			logger.Error(err, "Failed to get PCIe Root Complex", "address", device.Address)
+			pcieRoot = "" // Leave empty if we can't determine it
+		}
+
+		// Get immediate parent PCI address (e.g., bridge) for granular filtering
 		parentPciAddress, err := host.GetHelpers().GetParentPciAddress(device.Address)
 		if err != nil {
 			logger.Error(err, "Failed to get parent PCI address", "address", device.Address)
@@ -95,6 +103,7 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			"device", device.Product.ID,
 			"eswitchMode", eswitchMode,
 			"numaNode", numaNode,
+			"pcieRoot", pcieRoot,
 			"parentPciAddress", parentPciAddress)
 
 		pfList = append(pfList, PFInfo{
@@ -105,6 +114,7 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			Address:          device.Address,
 			EswitchMode:      eswitchMode,
 			NumaNode:         numaNode,
+			PCIeRoot:         pcieRoot,
 			ParentPciAddress: parentPciAddress,
 		})
 	}
@@ -168,6 +178,11 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 							return ptr.To(numaNodeInt)
 						}(),
 					},
+					// PCIe Root Complex (upstream Kubernetes standard) - for topology-aware scheduling
+					consts.AttributePCIeRoot: {
+						StringValue: ptr.To(pfInfo.PCIeRoot),
+					},
+					// Immediate parent PCI address - for granular filtering
 					consts.AttributeParentPciAddress: {
 						StringValue: ptr.To(pfInfo.ParentPciAddress),
 					},

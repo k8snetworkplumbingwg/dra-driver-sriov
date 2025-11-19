@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/jaypipes/ghw"
+	"k8s.io/dynamic-resource-allocation/deviceattribute"
 	"k8s.io/klog/v2"
 
 	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
@@ -83,8 +84,9 @@ type Interface interface {
 	TryGetInterfaceName(pciAddr string) string
 	GetNicSriovMode(pciAddr string) string
 
-	// NUMA and parent device functions
+	// NUMA and topology functions
 	GetNumaNode(pciAddress string) (string, error)
+	GetPCIeRoot(pciAddress string) (string, error)
 	GetParentPciAddress(pciAddress string) (string, error)
 
 	// Driver binding operations
@@ -311,6 +313,23 @@ func (h *Host) GetParentPciAddress(pciAddress string) (string, error) {
 
 	// If we can't find a specific parent, return empty string
 	return "", nil
+}
+
+// GetPCIeRoot returns the PCIe Root Complex for a given PCI device using the upstream Kubernetes implementation.
+// The PCIe Root Complex is returned in the format "pci<domain>:<bus>" (e.g., "pci0000:00").
+// This is used to identify devices that share the same PCIe Root Complex for resource alignment.
+func (h *Host) GetPCIeRoot(pciAddress string) (string, error) {
+	attr, err := deviceattribute.GetPCIeRootAttributeByPCIBusID(pciAddress)
+	if err != nil {
+		return "", fmt.Errorf("failed to get PCIe root for %s: %w", pciAddress, err)
+	}
+
+	// Extract the string value from the attribute
+	if attr.Value.StringValue != nil {
+		return *attr.Value.StringValue, nil
+	}
+
+	return "", fmt.Errorf("PCIe root attribute for %s has no string value", pciAddress)
 }
 
 // High-level Driver Management Functions

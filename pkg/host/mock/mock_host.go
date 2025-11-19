@@ -157,6 +157,21 @@ func (mr *MockInterfaceMockRecorder) GetNumaNode(pciAddress any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetNumaNode", reflect.TypeOf((*MockInterface)(nil).GetNumaNode), pciAddress)
 }
 
+// GetPCIeRoot mocks base method.
+func (m *MockInterface) GetPCIeRoot(pciAddress string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetPCIeRoot", pciAddress)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetPCIeRoot indicates an expected call of GetPCIeRoot.
+func (mr *MockInterfaceMockRecorder) GetPCIeRoot(pciAddress any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPCIeRoot", reflect.TypeOf((*MockInterface)(nil).GetPCIeRoot), pciAddress)
+}
+
 // GetParentPciAddress mocks base method.
 func (m *MockInterface) GetParentPciAddress(pciAddress string) (string, error) {
 	m.ctrl.T.Helper()

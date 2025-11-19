@@ -318,13 +318,14 @@ func (r *SriovResourceFilterReconciler) deviceMatchesFilter(device resourceapi.D
 		}
 	}
 
-	// Check root devices (parent PCI addresses)
+	// Check root devices (parent PCI addresses, e.g., "0000:00:00.0")
+	// This filters by immediate parent device for granular filtering
 	if len(filter.RootDevices) > 0 {
-		rootAttr, exists := device.Attributes[consts.AttributeParentPciAddress]
-		if !exists || rootAttr.StringValue == nil {
+		parentAttr, exists := device.Attributes[consts.AttributeParentPciAddress]
+		if !exists || parentAttr.StringValue == nil {
 			return false
 		}
-		if !r.stringSliceContains(filter.RootDevices, *rootAttr.StringValue) {
+		if !r.stringSliceContains(filter.RootDevices, *parentAttr.StringValue) {
 			return false
 		}
 	}

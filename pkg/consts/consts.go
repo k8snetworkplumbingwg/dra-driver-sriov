@@ -19,7 +19,9 @@ package consts
 import (
 	"time"
 
+	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/dynamic-resource-allocation/deviceattribute"
 )
 
 const (
@@ -27,22 +29,29 @@ const (
 	DriverName                 = "sriovnetwork.k8snetworkplumbingwg.io"
 	DriverPluginCheckpointFile = "checkpoint.json"
 
-	StandardAttributePrefix = "resource.kubernetes.io"
-
-	AttributePciAddress       = DriverName + "/pciAddress"
-	AttributePFName           = DriverName + "/PFName"
-	AttributeEswitchMode      = DriverName + "/EswitchMode"
-	AttributeVendorID         = DriverName + "/vendor"
-	AttributeDeviceID         = DriverName + "/deviceID"
-	AttributePFDeviceID       = DriverName + "/pfDeviceID"
-	AttributeVFID             = DriverName + "/vfID"
-	AttributeResourceName     = DriverName + "/resourceName"
-	AttributeNumaNode         = StandardAttributePrefix + "/numaNode"
-	AttributeParentPciAddress = StandardAttributePrefix + "/pcieRoot"
+	AttributePciAddress   = DriverName + "/pciAddress"
+	AttributePFName       = DriverName + "/PFName"
+	AttributeEswitchMode  = DriverName + "/EswitchMode"
+	AttributeVendorID     = DriverName + "/vendor"
+	AttributeDeviceID     = DriverName + "/deviceID"
+	AttributePFDeviceID   = DriverName + "/pfDeviceID"
+	AttributeVFID         = DriverName + "/vfID"
+	AttributeResourceName = DriverName + "/resourceName"
+	// Use upstream Kubernetes standard attribute prefix for numaNode
+	AttributeNumaNode = deviceattribute.StandardDeviceAttributePrefix + "numaNode"
+	// AttributeParentPciAddress is for the immediate parent PCI device (e.g., bridge)
+	// This provides more granular filtering than PCIeRoot
+	AttributeParentPciAddress = DriverName + "/parentPciAddress"
 
 	// Network device constants
 	NetClass  = 0x02 // Network controller class
 	SysBusPci = "/sys/bus/pci/devices"
+)
+
+// Kubernetes standard attributes
+var (
+	// AttributePCIeRoot identifies the PCIe root complex of the device
+	AttributePCIeRoot resourceapi.QualifiedName = deviceattribute.StandardDeviceAttributePCIeRoot
 )
 
 var Backoff = wait.Backoff{

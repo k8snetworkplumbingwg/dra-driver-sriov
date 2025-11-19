@@ -6,6 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/dynamic-resource-allocation/deviceattribute"
 
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 )
@@ -24,20 +25,22 @@ var _ = Describe("Consts", func() {
 			Expect(consts.DriverPluginCheckpointFile).To(Equal("checkpoint.json"))
 		})
 
-		It("should have correct standard attribute prefix", func() {
-			Expect(consts.StandardAttributePrefix).To(Equal("resource.kubernetes.io"))
+		It("should use upstream standard attribute prefix", func() {
+			// Verify we're using the upstream Kubernetes standard prefix
+			Expect(deviceattribute.StandardDeviceAttributePrefix).To(Equal("resource.kubernetes.io/"))
 		})
 
 		It("should have correct attributes with driver name prefix", func() {
 			expectedAttributes := map[string]string{
-				"pciAddress":   consts.DriverName + "/pciAddress",
-				"PFName":       consts.DriverName + "/PFName",
-				"EswitchMode":  consts.DriverName + "/EswitchMode",
-				"vendor":       consts.DriverName + "/vendor",
-				"deviceID":     consts.DriverName + "/deviceID",
-				"pfDeviceID":   consts.DriverName + "/pfDeviceID",
-				"vfID":         consts.DriverName + "/vfID",
-				"resourceName": consts.DriverName + "/resourceName",
+				"pciAddress":       consts.DriverName + "/pciAddress",
+				"PFName":           consts.DriverName + "/PFName",
+				"EswitchMode":      consts.DriverName + "/EswitchMode",
+				"vendor":           consts.DriverName + "/vendor",
+				"deviceID":         consts.DriverName + "/deviceID",
+				"pfDeviceID":       consts.DriverName + "/pfDeviceID",
+				"vfID":             consts.DriverName + "/vfID",
+				"resourceName":     consts.DriverName + "/resourceName",
+				"parentPciAddress": consts.DriverName + "/parentPciAddress",
 			}
 
 			Expect(consts.AttributePciAddress).To(Equal(expectedAttributes["pciAddress"]))
@@ -48,11 +51,13 @@ var _ = Describe("Consts", func() {
 			Expect(consts.AttributePFDeviceID).To(Equal(expectedAttributes["pfDeviceID"]))
 			Expect(consts.AttributeVFID).To(Equal(expectedAttributes["vfID"]))
 			Expect(consts.AttributeResourceName).To(Equal(expectedAttributes["resourceName"]))
+			Expect(consts.AttributeParentPciAddress).To(Equal(expectedAttributes["parentPciAddress"]))
 		})
 
 		It("should have correct attributes with standard prefix", func() {
-			Expect(consts.AttributeNumaNode).To(Equal(consts.StandardAttributePrefix + "/numaNode"))
-			Expect(consts.AttributeParentPciAddress).To(Equal(consts.StandardAttributePrefix + "/pcieRoot"))
+			// Both attributes should use the upstream standard prefix
+			Expect(consts.AttributeNumaNode).To(Equal(deviceattribute.StandardDeviceAttributePrefix + "numaNode"))
+			Expect(string(consts.AttributePCIeRoot)).To(Equal(deviceattribute.StandardDeviceAttributePrefix + "pcieRoot"))
 		})
 
 		It("should have correct network device constants", func() {
