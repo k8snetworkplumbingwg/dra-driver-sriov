@@ -98,16 +98,11 @@ jobs:
       - name: Run unit tests with coverage
         run: make test-coverage
 
-      - name: Generate LCOV report
-        run: |
-          go install github.com/jandelgado/gcov2lcov@latest
-          gcov2lcov -infile=coverage.out -outfile=coverage.lcov
-
       - name: Upload coverage to Coveralls
-        uses: coverallsapp/github-action@v2.3.6
+        uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          path-to-lcov: coverage.lcov
+          file: coverage.out
 
   build-container:
     name: Build Container
