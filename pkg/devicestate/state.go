@@ -214,6 +214,62 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 		})
 	}
 
+	// If device is RDMA capable, add RDMA character devices
+	if rdmaCapableAttr, ok := deviceInfo.Attributes[consts.AttributeRDMACapable]; ok && rdmaCapableAttr.BoolValue != nil && *rdmaCapableAttr.BoolValue {
+		rdmaDevicesStr := deviceInfo.Attributes[consts.AttributeRDMADevices].StringValue
+		if rdmaDevicesStr != nil && *rdmaDevicesStr != "" {
+			rdmaDevices := strings.Split(*rdmaDevicesStr, ",")
+			logger.V(2).Info("Device is RDMA capable, adding RDMA character devices",
+				"device", pciAddress, "rdmaDevices", rdmaDevices)
+
+			for _, rdmaDevice := range rdmaDevices {
+				// Get character devices for this RDMA device
+				charDevices, err := host.GetHelpers().GetRDMACharDevices(rdmaDevice)
+				if err != nil {
+					logger.Error(err, "Failed to get RDMA character devices, skipping",
+						"device", pciAddress, "rdmaDevice", rdmaDevice)
+					continue
+				}
+
+				if len(charDevices) == 0 {
+					logger.V(2).Info("No RDMA character devices found",
+						"device", pciAddress, "rdmaDevice", rdmaDevice)
+					continue
+				}
+
+				// Add each character device to the CDI spec
+				for _, charDev := range charDevices {
+					deviceNodes = append(deviceNodes, &cdispec.DeviceNode{
+						Path:     charDev,
+						HostPath: charDev,
+						Type:     "c", // character device
+					})
+
+					// Add environment variable for each character device type
+					// This matches the behavior of sriov-network-device-plugin
+					devicePrefix := strings.ReplaceAll(result.Device, "-", "_")
+					switch {
+					case strings.Contains(charDev, "uverbs"):
+						envs = append(envs, fmt.Sprintf("SRIOVNETWORK_%s_RDMA_UVERBS=%s", devicePrefix, charDev))
+					case strings.Contains(charDev, "umad"):
+						envs = append(envs, fmt.Sprintf("SRIOVNETWORK_%s_RDMA_UMAD=%s", devicePrefix, charDev))
+					case strings.Contains(charDev, "issm"):
+						envs = append(envs, fmt.Sprintf("SRIOVNETWORK_%s_RDMA_ISSM=%s", devicePrefix, charDev))
+					case strings.Contains(charDev, "rdma_cm"):
+						envs = append(envs, fmt.Sprintf("SRIOVNETWORK_%s_RDMA_CM=%s", devicePrefix, charDev))
+					}
+				}
+
+				logger.Info("Added RDMA character devices for device",
+					"device", pciAddress, "rdmaDevice", rdmaDevice, "charDevices", charDevices)
+
+				// Add RDMA device name to environment variables
+				envs = append(envs, fmt.Sprintf("SRIOVNETWORK_%s_RDMA_DEVICE=%s",
+					strings.ReplaceAll(result.Device, "-", "_"), rdmaDevice))
+			}
+		}
+	}
+
 	edits := &cdispec.ContainerEdits{
 		Env:         envs,
 		DeviceNodes: deviceNodes,

@@ -126,52 +126,101 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			deviceName := strings.ReplaceAll(vfInfo.PciAddress, ":", "-")
 			deviceName = strings.ReplaceAll(deviceName, ".", "-")
 
+			// Check RDMA capability for this VF
+			rdmaCapable, err := host.GetHelpers().VerifyRDMACapability(vfInfo.PciAddress)
+			if err != nil {
+				logger.Error(err, "Failed to verify RDMA capability, assuming not RDMA capable",
+					"vfAddress", vfInfo.PciAddress)
+				rdmaCapable = false
+			}
+
+			// Get RDMA devices if RDMA capable
+			var rdmaDevices []string
+			var rdmaProtocol string
+			if rdmaCapable {
+				rdmaDevices, err = host.GetHelpers().GetRDMADeviceForPCI(vfInfo.PciAddress)
+				if err != nil {
+					logger.Error(err, "Failed to get RDMA devices", "vfAddress", vfInfo.PciAddress)
+					rdmaDevices = []string{}
+				}
+
+				rdmaProtocol, err = host.GetHelpers().GetRDMAProtocol(vfInfo.PciAddress)
+				if err != nil {
+					logger.Error(err, "Failed to get RDMA protocol", "vfAddress", vfInfo.PciAddress)
+					rdmaProtocol = "Unknown"
+				}
+			}
+
 			logger.V(2).Info("Adding VF device to resource list",
 				"deviceName", deviceName,
 				"vfAddress", vfInfo.PciAddress,
 				"vfID", vfInfo.VFID,
 				"vfDeviceID", vfInfo.DeviceID,
 				"pfDeviceID", pfInfo.DeviceID,
-				"pf", pfInfo.NetName)
+				"pf", pfInfo.NetName,
+				"rdmaCapable", rdmaCapable,
+				"rdmaDevices", rdmaDevices,
+				"rdmaProtocol", rdmaProtocol)
+
+			// Build device attributes
+			attributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+				consts.AttributeVendorID: {
+					StringValue: ptr.To(pfInfo.VendorID),
+				},
+				consts.AttributeDeviceID: {
+					StringValue: ptr.To(vfInfo.DeviceID),
+				},
+				consts.AttributePFDeviceID: {
+					StringValue: ptr.To(pfInfo.DeviceID),
+				},
+				consts.AttributePciAddress: {
+					StringValue: ptr.To(vfInfo.PciAddress),
+				},
+				consts.AttributePFName: {
+					StringValue: ptr.To(pfInfo.NetName),
+				},
+				consts.AttributeEswitchMode: {
+					StringValue: ptr.To(pfInfo.EswitchMode),
+				},
+				consts.AttributeVFID: {
+					IntValue: ptr.To(int64(vfInfo.VFID)),
+				},
+				consts.AttributeNumaNode: {
+					IntValue: func() *int64 {
+						numaNodeInt, err := strconv.ParseInt(pfInfo.NumaNode, 10, 64)
+						if err != nil {
+							// Default to -1 if parsing fails
+							return ptr.To(int64(-1))
+						}
+						return ptr.To(numaNodeInt)
+					}(),
+				},
+				consts.AttributeParentPciAddress: {
+					StringValue: ptr.To(pfInfo.ParentPciAddress),
+				},
+				consts.AttributeRDMACapable: {
+					BoolValue: ptr.To(rdmaCapable),
+				},
+			}
+
+			// Add RDMA devices as comma-separated string if present
+			if len(rdmaDevices) > 0 {
+				rdmaDevicesStr := strings.Join(rdmaDevices, ",")
+				attributes[consts.AttributeRDMADevices] = resourceapi.DeviceAttribute{
+					StringValue: ptr.To(rdmaDevicesStr),
+				}
+			}
+
+			// Add RDMA protocol if present
+			if rdmaProtocol != "" {
+				attributes[consts.AttributeRDMAProtocol] = resourceapi.DeviceAttribute{
+					StringValue: ptr.To(rdmaProtocol),
+				}
+			}
 
 			resourceList[deviceName] = resourceapi.Device{
-				Name: deviceName,
-				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-					consts.AttributeVendorID: {
-						StringValue: ptr.To(pfInfo.VendorID),
-					},
-					consts.AttributeDeviceID: {
-						StringValue: ptr.To(vfInfo.DeviceID),
-					},
-					consts.AttributePFDeviceID: {
-						StringValue: ptr.To(pfInfo.DeviceID),
-					},
-					consts.AttributePciAddress: {
-						StringValue: ptr.To(vfInfo.PciAddress),
-					},
-					consts.AttributePFName: {
-						StringValue: ptr.To(pfInfo.NetName),
-					},
-					consts.AttributeEswitchMode: {
-						StringValue: ptr.To(pfInfo.EswitchMode),
-					},
-					consts.AttributeVFID: {
-						IntValue: ptr.To(int64(vfInfo.VFID)),
-					},
-					consts.AttributeNumaNode: {
-						IntValue: func() *int64 {
-							numaNodeInt, err := strconv.ParseInt(pfInfo.NumaNode, 10, 64)
-							if err != nil {
-								// Default to -1 if parsing fails
-								return ptr.To(int64(-1))
-							}
-							return ptr.To(numaNodeInt)
-						}(),
-					},
-					consts.AttributeParentPciAddress: {
-						StringValue: ptr.To(pfInfo.ParentPciAddress),
-					},
-				},
+				Name:       deviceName,
+				Attributes: attributes,
 			}
 		}
 	}

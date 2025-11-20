@@ -5,9 +5,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"go.uber.org/mock/gomock"
 
 	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host"
+	mock_host "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host/mock"
 )
 
 var _ = Describe("Host", func() {
@@ -513,6 +515,287 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 				Expect(err).NotTo(HaveOccurred())
 				Expect(vfList).To(HaveLen(1))
 				Expect(vfList[0].DeviceID).To(BeEmpty()) // Should handle missing device ID
+			})
+		})
+	})
+
+	Describe("RDMA Device Functions", func() {
+		var (
+			mockCtrl         *gomock.Controller
+			mockRdmaProvider *mock_host.MockRdmaProvider
+			hostImpl         *host.Host
+		)
+
+		BeforeEach(func() {
+			mockCtrl = gomock.NewController(GinkgoT())
+			mockRdmaProvider = mock_host.NewMockRdmaProvider(mockCtrl)
+			hostImpl = host.NewHost().(*host.Host)
+			hostImpl.SetRdmaProvider(mockRdmaProvider)
+		})
+
+		AfterEach(func() {
+			mockCtrl.Finish()
+		})
+
+		Context("GetRDMADeviceForPCI", func() {
+			It("should return RDMA devices when they exist", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaDevicesForPcidev("0000:08:00.1").
+					Return([]string{"mlx5_1", "mlx5_2"}).
+					Times(1)
+
+				devices, err := hostImpl.GetRDMADeviceForPCI("0000:08:00.1")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(devices).To(HaveLen(2))
+				Expect(devices).To(Equal([]string{"mlx5_1", "mlx5_2"}))
+			})
+
+			It("should return nil when no RDMA devices exist", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaDevicesForPcidev("0000:08:00.2").
+					Return([]string{}).
+					Times(1)
+
+				devices, err := hostImpl.GetRDMADeviceForPCI("0000:08:00.2")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(devices).To(BeNil())
+			})
+
+			It("should return nil when device is not RDMA capable", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaDevicesForPcidev("0000:01:00.0").
+					Return([]string{}).
+					Times(1)
+
+				devices, err := hostImpl.GetRDMADeviceForPCI("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(devices).To(BeNil())
+			})
+		})
+
+		Context("VerifyRDMACapability", func() {
+			It("should return true when device has RDMA capabilities", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaDevicesForPcidev("0000:08:00.1").
+					Return([]string{"mlx5_1"}).
+					Times(1)
+
+				capable, err := hostImpl.VerifyRDMACapability("0000:08:00.1")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(capable).To(BeTrue())
+			})
+
+			It("should return false when device has no RDMA capabilities", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaDevicesForPcidev("0000:08:00.2").
+					Return([]string{}).
+					Times(1)
+
+				capable, err := hostImpl.VerifyRDMACapability("0000:08:00.2")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(capable).To(BeFalse())
+			})
+
+			It("should return false when device has empty RDMA device list", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaDevicesForPcidev("0000:01:00.0").
+					Return([]string{}).
+					Times(1)
+
+				capable, err := hostImpl.VerifyRDMACapability("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(capable).To(BeFalse())
+			})
+		})
+
+		Context("GetRDMAProtocol", func() {
+			It("should return RoCE when link layer is Ethernet", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaDevicesForPcidev("0000:08:00.1").
+					Return([]string{"mlx5_1"}).
+					Times(1)
+
+				fs.Dirs = []string{
+					"sys/class/infiniband/mlx5_1/ports/1",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/infiniband/mlx5_1/node_type":          []byte("1: CA\n"),
+					"sys/class/infiniband/mlx5_1/ports/1/link_layer": []byte("Ethernet\n"),
+				}
+				tearDown = fs.Use()
+
+				protocol, err := hostImpl.GetRDMAProtocol("0000:08:00.1")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(protocol).To(Equal("RoCE"))
+			})
+
+			It("should return InfiniBand when link layer is InfiniBand", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaDevicesForPcidev("0000:08:00.1").
+					Return([]string{"mlx5_1"}).
+					Times(1)
+
+				fs.Dirs = []string{
+					"sys/class/infiniband/mlx5_1/ports/1",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/infiniband/mlx5_1/node_type":          []byte("1: CA\n"),
+					"sys/class/infiniband/mlx5_1/ports/1/link_layer": []byte("InfiniBand\n"),
+				}
+				tearDown = fs.Use()
+
+				protocol, err := hostImpl.GetRDMAProtocol("0000:08:00.1")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(protocol).To(Equal("InfiniBand"))
+			})
+
+			It("should return iWARP when node type is 4", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaDevicesForPcidev("0000:08:00.1").
+					Return([]string{"mlx5_1"}).
+					Times(1)
+
+				fs.Dirs = []string{
+					"sys/class/infiniband/mlx5_1",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/infiniband/mlx5_1/node_type": []byte("4: RNIC\n"),
+				}
+				tearDown = fs.Use()
+
+				protocol, err := hostImpl.GetRDMAProtocol("0000:08:00.1")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(protocol).To(Equal("iWARP"))
+			})
+
+			It("should return empty string when no RDMA devices exist", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaDevicesForPcidev("0000:01:00.0").
+					Return([]string{}).
+					Times(1)
+
+				protocol, err := hostImpl.GetRDMAProtocol("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(protocol).To(BeEmpty())
+			})
+
+			It("should return Unknown when node_type file does not exist", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaDevicesForPcidev("0000:08:00.1").
+					Return([]string{"mlx5_1"}).
+					Times(1)
+
+				fs.Dirs = []string{
+					"sys/class/infiniband/mlx5_1",
+				}
+				// No node_type file
+				tearDown = fs.Use()
+
+				protocol, err := hostImpl.GetRDMAProtocol("0000:08:00.1")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(protocol).To(Equal("Unknown"))
+			})
+
+			It("should default to InfiniBand when link_layer file does not exist", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaDevicesForPcidev("0000:08:00.1").
+					Return([]string{"mlx5_1"}).
+					Times(1)
+
+				fs.Dirs = []string{
+					"sys/class/infiniband/mlx5_1",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/infiniband/mlx5_1/node_type": []byte("1: CA\n"),
+				}
+				// No link_layer file
+				tearDown = fs.Use()
+
+				protocol, err := hostImpl.GetRDMAProtocol("0000:08:00.1")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(protocol).To(Equal("InfiniBand"))
+			})
+		})
+
+		Context("GetRDMACharDevices", func() {
+			It("should return character devices when they exist", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaCharDevices("mlx5_1").
+					Return([]string{
+						"/dev/infiniband/uverbs0",
+						"/dev/infiniband/umad0",
+						"/dev/infiniband/issm0",
+						"/dev/infiniband/rdma_cm",
+					}).
+					Times(1)
+
+				charDevices, err := hostImpl.GetRDMACharDevices("mlx5_1")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(charDevices).To(HaveLen(4))
+				Expect(charDevices).To(ContainElements(
+					"/dev/infiniband/uverbs0",
+					"/dev/infiniband/umad0",
+					"/dev/infiniband/issm0",
+					"/dev/infiniband/rdma_cm",
+				))
+			})
+
+			It("should return subset of character devices when only some exist", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaCharDevices("mlx5_2").
+					Return([]string{
+						"/dev/infiniband/uverbs1",
+						"/dev/infiniband/rdma_cm",
+					}).
+					Times(1)
+
+				charDevices, err := hostImpl.GetRDMACharDevices("mlx5_2")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(charDevices).To(HaveLen(2))
+				Expect(charDevices).To(ContainElements(
+					"/dev/infiniband/uverbs1",
+					"/dev/infiniband/rdma_cm",
+				))
+			})
+
+			It("should return nil when no character devices exist", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaCharDevices("mlx5_3").
+					Return([]string{}).
+					Times(1)
+
+				charDevices, err := hostImpl.GetRDMACharDevices("mlx5_3")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(charDevices).To(BeNil())
+			})
+
+			It("should handle multiple RDMA devices with different character devices", func() {
+				// First RDMA device
+				mockRdmaProvider.EXPECT().
+					GetRdmaCharDevices("mlx5_1").
+					Return([]string{
+						"/dev/infiniband/uverbs0",
+						"/dev/infiniband/umad0",
+					}).
+					Times(1)
+
+				// Second RDMA device
+				mockRdmaProvider.EXPECT().
+					GetRdmaCharDevices("mlx5_2").
+					Return([]string{
+						"/dev/infiniband/uverbs1",
+						"/dev/infiniband/umad1",
+					}).
+					Times(1)
+
+				charDevices1, err := hostImpl.GetRDMACharDevices("mlx5_1")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(charDevices1).To(HaveLen(2))
+
+				charDevices2, err := hostImpl.GetRDMACharDevices("mlx5_2")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(charDevices2).To(HaveLen(2))
+				Expect(charDevices2).NotTo(Equal(charDevices1))
 			})
 		})
 	})
