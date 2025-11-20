@@ -3,15 +3,11 @@ set -xeo pipefail
 
 source hack/common.sh
 
-NUM_OF_WORKERS=${NUM_OF_WORKERS:-0}
+NUM_OF_WORKERS=${NUM_OF_WORKERS:-2}
 total_number_of_nodes=$((1 + NUM_OF_WORKERS))
 
 ## Global configuration
-export NAMESPACE="sriov-network-operator"
-export OPERATOR_NAMESPACE="sriov-network-operator"
 export OPERATOR_EXEC=kubectl
-export CLUSTER_HAS_EMULATED_PF=TRUE
-
 export MULTUS_NAMESPACE="kube-system"
 
 check_requirements() {
@@ -33,6 +29,7 @@ kcli delete network $cluster_name -y
 function cleanup {
   kcli delete cluster $cluster_name -y
   kcli delete network $cluster_name -y
+  sudo rm -f /etc/containers/registries.conf.d/003-${cluster_name}.conf
 }
 
 if [ -z $SKIP_DELETE ]; then
@@ -64,10 +61,6 @@ vmrules:
   - $cluster_name-ctlplane-.*:
       nets:
         - name: ${network_name}
-          type: igb
-          vfio: true
-          noconf: true
-        - name: $cluster_name
           type: igb
           vfio: true
           noconf: true
@@ -148,9 +141,9 @@ insecure = true
 \"golang\" = \"docker.io/library/golang\"
 "
 
-cat << EOF > /etc/containers/registries.conf.d/003-${cluster_name}.conf
+sudo bash -c "cat << EOF > /etc/containers/registries.conf.d/003-${cluster_name}.conf
 $insecure_registry
-EOF
+EOF"
 
 function update_host() {
     node_name=$1
@@ -206,6 +199,22 @@ WantedBy=default.target' > /etc/systemd/system/load-br-netfilter.service
 systemctl daemon-reload
 systemctl enable --now load-br-netfilter
 
+echo '[Unit]
+Description=create sriov vfs
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash -c "echo 5 > /sys/bus/pci/devices/0000\:01\:00.0/sriov_numvfs && echo 5 > /sys/bus/pci/devices/0000\:02\:00.0/sriov_numvfs"
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=default.target' > /etc/systemd/system/create-sriov-vfs.service
+
+systemctl daemon-reload
+systemctl enable --now create-sriov-vfs
+
 systemctl restart NetworkManager
 
 grubby --update-kernel=DEFAULT --args=pci=realloc
@@ -228,6 +237,98 @@ kubectl wait --for=condition=ready node --all --timeout=10m
 # remove the patch after multus bug is fixed
 # https://github.com/k8snetworkplumbingwg/multus-cni/issues/1221
 kubectl patch  -n ${MULTUS_NAMESPACE} ds/kube-multus-ds --type=json -p='[{"op": "replace", "path": "/spec/template/spec/initContainers/0/command", "value":["cp", "-f","/usr/src/multus-cni/bin/multus-shim", "/host/opt/cni/bin/multus-shim"]}]'
+
+## Deploy internal registry
+kubectl create namespace container-registry
+
+echo "## deploy internal registry"
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: registry-pv
+spec:
+  capacity:
+    storage: 60Gi
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: registry-local-storage
+  local:
+    path: /mnt/
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - ${cluster_name}-ctlplane-0.${domain_name}
+EOF
+
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry-pv-claim
+  namespace: container-registry
+spec:
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 60Gi
+  storageClassName: registry-local-storage
+EOF
+
+cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: container-registry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: registry
+  template:
+    metadata:
+      labels:
+        app: registry
+    spec:
+      hostNetwork: true
+      tolerations:
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/control-plane
+      containers:
+      - image: quay.io/libpod/registry:2.8.2
+        imagePullPolicy: Always
+        name: registry
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/registry
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: registry-pv-claim
+      terminationGracePeriodSeconds: 10
+EOF
+
+export SRIOV_DRIVER_IMAGE="$controller_ip:5000/dra-driver-sriov"
+
+echo "## build driver image"
+CONTAINER_TOOL=podman IMAGE_NAME=${SRIOV_DRIVER_IMAGE} make -C deployments/container/
+podman push --tls-verify=false "${SRIOV_DRIVER_IMAGE}"
+podman rmi -fi ${SRIOV_DRIVER_IMAGE}
+
+# remove the crio bridge and let flannel to recreate
+kcli ssh $cluster_name-ctlplane-0 << EOF
+sudo su
+if [ $(ip a | grep 10.85.0 | wc -l) -eq 0 ]; then ip link del cni0; fi
+EOF
 
 kubectl -n ${MULTUS_NAMESPACE} get po | grep multus | awk '{print "kubectl -n kube-system delete po",$1}' | sh
 kubectl -n kube-system get po | grep coredns | awk '{print "kubectl -n kube-system delete po",$1}' | sh
@@ -259,6 +360,26 @@ do
         sleep $sleep_time
     fi
     ATTEMPTS=$((ATTEMPTS+1))
+done
+
+# Deploy the dra driver via helm
+set +e
+make helm
+set -e
+${root}/bin/helm upgrade -i dra-driver-sriov deployments/helm/dra-driver-sriov/ --namespace dra-driver-sriov --create-namespace --set image.repository=${SRIOV_DRIVER_IMAGE}
+
+# Wait for the daemonset to be fully deployed
+echo "## Waiting for daemonset to be ready..."
+while true; do
+    DESIRED=$(kubectl -n dra-driver-sriov get ds/dra-driver-sriov-dra-driver-sriov-chart-kubeletplugin -o jsonpath='{.status.desiredNumberScheduled}' 2>/dev/null || echo "0")
+    READY=$(kubectl -n dra-driver-sriov get ds/dra-driver-sriov-dra-driver-sriov-chart-kubeletplugin -o jsonpath='{.status.numberReady}' 2>/dev/null || echo "0")
+    
+    if [ "$DESIRED" != "" ] && [ "$DESIRED" != "0" ] && [ "$DESIRED" = "$READY" ]; then
+        echo "## Daemonset is ready ($READY/$DESIRED)"
+        break
+    fi
+    echo "## Waiting for daemonset to be ready ($READY/$DESIRED)..."
+    sleep 5
 done
 
 echo "## Cluster deployed successfully"

@@ -216,6 +216,13 @@ GOBIN=$(BIN_DIR) go install $(2) ;\
 }
 endef
 
+
+$(BIN_DIR)/helm helm:
+	mkdir -p $(BIN_DIR)
+	curl -fsSL -o $(BIN_DIR)/get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+	chmod 700 $(BIN_DIR)/get_helm.sh
+	HELM_INSTALL_DIR=$(BIN_DIR) $(BIN_DIR)/get_helm.sh
+
 # Helm chart targets
 .PHONY: chart-prepare
 chart-prepare: | $(YQ) ; ## Prepare chart (pass VERSION=v1.0.0 or VERSION=sha)
@@ -224,3 +231,17 @@ chart-prepare: | $(YQ) ; ## Prepare chart (pass VERSION=v1.0.0 or VERSION=sha)
 .PHONY: chart-push
 chart-push: ## Push chart (pass VERSION=v1.0.0 or VERSION=sha)
 	@VERSION=$(VERSION) GITHUB_TOKEN=$(GITHUB_TOKEN) GITHUB_REPO_OWNER=$(GITHUB_REPO_OWNER) hack/release/chart-push.sh
+
+.PHONY: deploy-virtual-k8s-cluster
+deploy-virtual-k8s-cluster:
+	SKIP_DELETE=TRUE ./hack/deploy-virtual-k8s-cluster.sh
+
+.PHONY: undeploy-virtual-k8s-cluster
+delete-virtual-k8s-cluster:
+	./hack/delete-virtual-k8s-cluster.sh
+
+redeploy-operator-virtual-cluster:
+	./hack/virtual-cluster-redeploy.sh
+
+e2e-tests:
+	./hack/deploy-virtual-k8s-cluster.sh
