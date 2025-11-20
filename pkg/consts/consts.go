@@ -39,10 +39,16 @@ const (
 	AttributeResourceName     = DriverName + "/resourceName"
 	AttributeNumaNode         = StandardAttributePrefix + "/numaNode"
 	AttributeParentPciAddress = StandardAttributePrefix + "/pcieRoot"
+	AttributeRDMACapable      = DriverName + "/rdmaCapable"
+	AttributeRDMADevices      = DriverName + "/rdmaDevices"
+	AttributeRDMAProtocol     = DriverName + "/rdmaProtocol"
 
 	// Network device constants
 	NetClass  = 0x02 // Network controller class
 	SysBusPci = "/sys/bus/pci/devices"
+
+	// RDMA device constants
+	SysClassInfiniband = "/sys/class/infiniband"
 )
 
 var Backoff = wait.Backoff{
