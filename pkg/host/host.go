@@ -108,17 +108,24 @@ type Interface interface {
 	LoadKernelModule(moduleName string) error
 	EnsureDpdkModuleLoaded(driver string) error
 	EnsureVhostModulesLoaded() error
+
+	// RDMA device functions
+	GetRDMADeviceForPCI(pciAddr string) ([]string, error)
+	VerifyRDMACapability(pciAddr string) (bool, error)
+	GetRDMAProtocol(pciAddr string) (string, error)
 }
 
 // Host provides unified host system functionality for SR-IOV, PCI operations, and driver management
 type Host struct {
-	log klog.Logger
+	log          klog.Logger
+	rdmaProvider RdmaProvider
 }
 
 // NewHost creates a new Host instance
 func NewHost() Interface {
 	return &Host{
-		log: klog.FromContext(context.Background()).WithName("Host"),
+		log:          klog.FromContext(context.Background()).WithName("Host"),
+		rdmaProvider: newRdmaProvider(),
 	}
 }
 
@@ -139,6 +146,12 @@ func initHelpers() {
 func GetHelpers() Interface {
 	initHelpers()
 	return Helpers
+}
+
+// SetRdmaProvider sets the RDMA provider for a Host instance
+// This is primarily used for injecting mock providers in unit tests
+func (h *Host) SetRdmaProvider(provider RdmaProvider) {
+	h.rdmaProvider = provider
 }
 
 // SR-IOV Detection Functions
@@ -745,4 +758,103 @@ func (h *Host) EnsureVhostModulesLoaded() error {
 		return fmt.Errorf("failed to load %d out of %d required kernel modules for vhost functionality: %v", len(errors), len(modulesToLoad), errors)
 	}
 	return nil
+}
+
+// RDMA Device Functions
+
+// GetRDMADeviceForPCI returns the RDMA device names associated with a PCI address
+// Uses the rdmamap library from Mellanox for RDMA device detection
+func (h *Host) GetRDMADeviceForPCI(pciAddr string) ([]string, error) {
+	h.log.V(2).Info("GetRDMADeviceForPCI(): getting RDMA devices for PCI address", "device", pciAddr)
+
+	// Use rdmaProvider to get RDMA devices for this PCI address
+	rdmaDevices := h.rdmaProvider.GetRdmaDevicesForPcidev(pciAddr)
+
+	if len(rdmaDevices) == 0 {
+		h.log.V(2).Info("GetRDMADeviceForPCI(): no RDMA devices found", "device", pciAddr)
+		return nil, nil
+	}
+
+	h.log.Info("GetRDMADeviceForPCI(): found RDMA devices",
+		"pciAddress", pciAddr, "rdmaDevices", rdmaDevices)
+	return rdmaDevices, nil
+}
+
+// VerifyRDMACapability checks if a device supports RDMA by looking for associated RDMA devices
+func (h *Host) VerifyRDMACapability(pciAddr string) (bool, error) {
+	h.log.V(2).Info("VerifyRDMACapability(): checking RDMA capability", "device", pciAddr)
+
+	rdmaDevices, err := h.GetRDMADeviceForPCI(pciAddr)
+	if err != nil {
+		return false, fmt.Errorf("failed to get RDMA devices for PCI address %s: %w", pciAddr, err)
+	}
+
+	hasRDMA := len(rdmaDevices) > 0
+	h.log.V(2).Info("VerifyRDMACapability(): RDMA capability check result",
+		"device", pciAddr, "rdmaCapable", hasRDMA)
+
+	return hasRDMA, nil
+}
+
+// GetRDMAProtocol determines the RDMA protocol type for a given PCI device
+// Returns "InfiniBand", "RoCE", "iWARP", or "Unknown"
+func (h *Host) GetRDMAProtocol(pciAddr string) (string, error) {
+	h.log.V(2).Info("GetRDMAProtocol(): determining RDMA protocol", "device", pciAddr)
+
+	rdmaDevices, err := h.GetRDMADeviceForPCI(pciAddr)
+	if err != nil {
+		return "", fmt.Errorf("failed to get RDMA devices for PCI address %s: %w", pciAddr, err)
+	}
+
+	if len(rdmaDevices) == 0 {
+		return "", nil
+	}
+
+	// Check the first RDMA device to determine protocol
+	rdmaDevice := rdmaDevices[0]
+
+	// Check if it's InfiniBand by looking for the node_type file
+	ibPath := buildSysPath(consts.SysClassInfiniband)
+	nodeTypePath := filepath.Join(ibPath, rdmaDevice, "node_type")
+
+	if nodeTypeBytes, err := os.ReadFile(nodeTypePath); err == nil {
+		nodeType := strings.TrimSpace(string(nodeTypeBytes))
+		h.log.V(2).Info("GetRDMAProtocol(): read node_type", "device", pciAddr, "nodeType", nodeType)
+
+		// node_type format is typically "N: <description>" where N is:
+		// 1 = CA (Channel Adapter) - InfiniBand or RoCE
+		// 2 = Switch
+		// 3 = Router
+		// 4 = RNIC (RDMA NIC) - typically iWARP
+		// Parse the numeric value before the colon
+		if strings.HasPrefix(nodeType, "1:") || strings.HasPrefix(nodeType, "1 ") || nodeType == "1" {
+			// Could be InfiniBand or RoCE, need to check link_layer to distinguish
+			linkLayerPath := filepath.Join(ibPath, rdmaDevice, "ports", "1", "link_layer")
+			if linkLayerBytes, err := os.ReadFile(linkLayerPath); err == nil {
+				linkLayer := strings.TrimSpace(string(linkLayerBytes))
+				h.log.V(2).Info("GetRDMAProtocol(): read link_layer", "device", pciAddr, "linkLayer", linkLayer)
+
+				if strings.EqualFold(linkLayer, "InfiniBand") {
+					return "InfiniBand", nil
+				} else if strings.EqualFold(linkLayer, "Ethernet") {
+					return "RoCE", nil
+				}
+			} else {
+				h.log.V(2).Info("GetRDMAProtocol(): failed to read link_layer, defaulting to InfiniBand",
+					"device", pciAddr, "error", err)
+			}
+			// Default to InfiniBand if we can't determine link_layer
+			return "InfiniBand", nil
+		} else if strings.HasPrefix(nodeType, "4:") || strings.HasPrefix(nodeType, "4 ") || nodeType == "4" {
+			return "iWARP", nil
+		}
+	} else {
+		h.log.V(2).Info("GetRDMAProtocol(): failed to read node_type",
+			"device", pciAddr, "error", err)
+	}
+
+	// If we can't determine the specific protocol, return Unknown
+	h.log.V(2).Info("GetRDMAProtocol(): unable to determine specific protocol, returning Unknown",
+		"device", pciAddr)
+	return "Unknown", nil
 }
