@@ -172,6 +172,51 @@ func (mr *MockInterfaceMockRecorder) GetParentPciAddress(pciAddress any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetParentPciAddress", reflect.TypeOf((*MockInterface)(nil).GetParentPciAddress), pciAddress)
 }
 
+// GetRDMACharDevices mocks base method.
+func (m *MockInterface) GetRDMACharDevices(rdmaDeviceName string) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRDMACharDevices", rdmaDeviceName)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetRDMACharDevices indicates an expected call of GetRDMACharDevices.
+func (mr *MockInterfaceMockRecorder) GetRDMACharDevices(rdmaDeviceName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRDMACharDevices", reflect.TypeOf((*MockInterface)(nil).GetRDMACharDevices), rdmaDeviceName)
+}
+
+// GetRDMADeviceForPCI mocks base method.
+func (m *MockInterface) GetRDMADeviceForPCI(pciAddr string) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRDMADeviceForPCI", pciAddr)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetRDMADeviceForPCI indicates an expected call of GetRDMADeviceForPCI.
+func (mr *MockInterfaceMockRecorder) GetRDMADeviceForPCI(pciAddr any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRDMADeviceForPCI", reflect.TypeOf((*MockInterface)(nil).GetRDMADeviceForPCI), pciAddr)
+}
+
+// GetRDMAProtocol mocks base method.
+func (m *MockInterface) GetRDMAProtocol(pciAddr string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRDMAProtocol", pciAddr)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetRDMAProtocol indicates an expected call of GetRDMAProtocol.
+func (mr *MockInterfaceMockRecorder) GetRDMAProtocol(pciAddr any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRDMAProtocol", reflect.TypeOf((*MockInterface)(nil).GetRDMAProtocol), pciAddr)
+}
+
 // GetVFIODeviceFile mocks base method.
 func (m *MockInterface) GetVFIODeviceFile(pciAddress string) (string, string, error) {
 	m.ctrl.T.Helper()
@@ -328,4 +373,19 @@ func (m *MockInterface) UnbindDriverByBusAndDevice(device string) error {
 func (mr *MockInterfaceMockRecorder) UnbindDriverByBusAndDevice(device any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnbindDriverByBusAndDevice", reflect.TypeOf((*MockInterface)(nil).UnbindDriverByBusAndDevice), device)
+}
+
+// VerifyRDMACapability mocks base method.
+func (m *MockInterface) VerifyRDMACapability(pciAddr string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "VerifyRDMACapability", pciAddr)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// VerifyRDMACapability indicates an expected call of VerifyRDMACapability.
+func (mr *MockInterfaceMockRecorder) VerifyRDMACapability(pciAddr any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "VerifyRDMACapability", reflect.TypeOf((*MockInterface)(nil).VerifyRDMACapability), pciAddr)
 }
