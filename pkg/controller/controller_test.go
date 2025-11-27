@@ -118,7 +118,10 @@ func defaultAllocatableDevices() drasriovtypes.AllocatableDevices {
 	dev := "154c"
 	pf := "eth0"
 	pci := "0000:00:00.1"
-	root := "0000:00:00.0"
+	// PCIe Root Complex in the new upstream format: "pci<domain>:<bus>"
+	pcieRoot := "pci0000:00"
+	// Immediate parent PCI address (e.g., bridge)
+	parentPci := "0000:00:00.0"
 	numa := int64(0)
 
 	return drasriovtypes.AllocatableDevices{
@@ -129,7 +132,8 @@ func defaultAllocatableDevices() drasriovtypes.AllocatableDevices {
 				sriovconsts.AttributeDeviceID:         {StringValue: &dev},
 				sriovconsts.AttributePFName:           {StringValue: &pf},
 				sriovconsts.AttributePciAddress:       {StringValue: &pci},
-				sriovconsts.AttributeParentPciAddress: {StringValue: &root},
+				sriovconsts.AttributePCIeRoot:         {StringValue: &pcieRoot},
+				sriovconsts.AttributeParentPciAddress: {StringValue: &parentPci},
 				sriovconsts.AttributeNumaNode:         {IntValue: &numa},
 			},
 		},

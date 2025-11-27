@@ -47,7 +47,10 @@ var _ = Describe("deviceMatchesFilter", func() {
 		dev := "154c"
 		pf := "eth0"
 		pci := "0000:00:00.1"
-		root := "0000:00:00.0"
+		// PCIe Root Complex in the new upstream format: "pci<domain>:<bus>"
+		pcieRoot := "pci0000:00"
+		// Immediate parent PCI address (e.g., bridge)
+		parentPci := "0000:00:00.0"
 		numa := int64(0)
 		d := resourceapi.Device{
 			Name: "devA",
@@ -56,7 +59,8 @@ var _ = Describe("deviceMatchesFilter", func() {
 				sriovconsts.AttributeDeviceID:         {StringValue: &dev},
 				sriovconsts.AttributePFName:           {StringValue: &pf},
 				sriovconsts.AttributePciAddress:       {StringValue: &pci},
-				sriovconsts.AttributeParentPciAddress: {StringValue: &root},
+				sriovconsts.AttributePCIeRoot:         {StringValue: &pcieRoot},
+				sriovconsts.AttributeParentPciAddress: {StringValue: &parentPci},
 				sriovconsts.AttributeNumaNode:         {IntValue: &numa},
 			},
 		}
@@ -68,8 +72,9 @@ var _ = Describe("deviceMatchesFilter", func() {
 			Devices:      []string{"154c"},
 			PciAddresses: []string{"0000:00:00.1"},
 			PfNames:      []string{"eth0"},
-			RootDevices:  []string{"0000:00:00.0"},
-			NumaNodes:    []string{"0"},
+			// RootDevices uses parent PCI address format (backward compatible)
+			RootDevices: []string{"0000:00:00.0"},
+			NumaNodes:   []string{"0"},
 		}
 		Expect(r.deviceMatchesFilter(d, f)).To(BeTrue())
 
@@ -77,6 +82,7 @@ var _ = Describe("deviceMatchesFilter", func() {
 		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{Devices: []string{"9999"}})).To(BeFalse())
 		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{PciAddresses: []string{"0000:00:00.2"}})).To(BeFalse())
 		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{PfNames: []string{"eth9"}})).To(BeFalse())
+		// Test with a different parent PCI address
 		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{RootDevices: []string{"0000:00:ff.f"}})).To(BeFalse())
 		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{NumaNodes: []string{"2"}})).To(BeFalse())
 	})
