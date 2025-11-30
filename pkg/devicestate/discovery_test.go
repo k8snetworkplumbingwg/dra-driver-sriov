@@ -75,6 +75,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("0000:00:01.0", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 
@@ -133,6 +134,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("0000:00:01.0", nil)
 
 			// Second PF
@@ -140,6 +142,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:02:00.0").Return("eth1")
 			mockHost.EXPECT().GetNicSriovMode("0000:02:00.0").Return("switchdev")
 			mockHost.EXPECT().GetNumaNode("0000:02:00.0").Return("1", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:02:00.0").Return("pci0000:00", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:02:00.0").Return("0000:00:02.0", nil)
 
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList1, nil)
@@ -185,6 +188,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("", fmt.Errorf("numa node not found"))
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 
@@ -218,6 +222,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", fmt.Errorf("parent not found"))
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 
@@ -288,6 +293,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 
@@ -383,6 +389,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(nil, fmt.Errorf("failed to get VF list"))
 
@@ -415,6 +422,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 
@@ -445,6 +453,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return([]host.VFInfo{}, nil) // Empty list
 
