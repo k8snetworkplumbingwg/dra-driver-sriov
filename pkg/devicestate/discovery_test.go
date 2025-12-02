@@ -75,6 +75,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("0000:00:01.0", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 
@@ -93,6 +94,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			Expect(dev1.Attributes[consts.AttributeEswitchMode].StringValue).To(Equal(ptr.To("legacy")))
 			Expect(dev1.Attributes[consts.AttributeVFID].IntValue).To(Equal(ptr.To(int64(0))))
 			Expect(dev1.Attributes[consts.AttributeNumaNode].IntValue).To(Equal(ptr.To(int64(0))))
+			Expect(dev1.Attributes[consts.AttributePCIeRoot].StringValue).To(Equal(ptr.To("pci0000:00")))
 			Expect(dev1.Attributes[consts.AttributeParentPciAddress].StringValue).To(Equal(ptr.To("0000:00:01.0")))
 
 			// Check second VF
@@ -133,6 +135,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("0000:00:01.0", nil)
 
 			// Second PF
@@ -140,6 +143,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:02:00.0").Return("eth1")
 			mockHost.EXPECT().GetNicSriovMode("0000:02:00.0").Return("switchdev")
 			mockHost.EXPECT().GetNumaNode("0000:02:00.0").Return("1", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:02:00.0").Return("pci0000:00", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:02:00.0").Return("0000:00:02.0", nil)
 
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList1, nil)
@@ -155,6 +159,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			Expect(dev1.Attributes[consts.AttributePFName].StringValue).To(Equal(ptr.To("eth0")))
 			Expect(dev1.Attributes[consts.AttributeEswitchMode].StringValue).To(Equal(ptr.To("legacy")))
 			Expect(dev1.Attributes[consts.AttributeNumaNode].IntValue).To(Equal(ptr.To(int64(0))))
+			Expect(dev1.Attributes[consts.AttributePCIeRoot].StringValue).To(Equal(ptr.To("pci0000:00")))
 
 			// Check Mellanox VF
 			dev2 := devices["0000-02-00-1"]
@@ -162,6 +167,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			Expect(dev2.Attributes[consts.AttributePFName].StringValue).To(Equal(ptr.To("eth1")))
 			Expect(dev2.Attributes[consts.AttributeEswitchMode].StringValue).To(Equal(ptr.To("switchdev")))
 			Expect(dev2.Attributes[consts.AttributeNumaNode].IntValue).To(Equal(ptr.To(int64(1))))
+			Expect(dev2.Attributes[consts.AttributePCIeRoot].StringValue).To(Equal(ptr.To("pci0000:00")))
 		})
 
 		It("should handle NUMA node detection failure with default", func() {
@@ -185,6 +191,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("", fmt.Errorf("numa node not found"))
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 
@@ -218,6 +225,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", fmt.Errorf("parent not found"))
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 
@@ -288,6 +296,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 
@@ -383,6 +392,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(nil, fmt.Errorf("failed to get VF list"))
 
@@ -415,6 +425,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 
@@ -445,6 +456,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return([]host.VFInfo{}, nil) // Empty list
 
