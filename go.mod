@@ -7,7 +7,7 @@ toolchain go1.24.6
 require (
 	github.com/containerd/nri v0.10.0
 	github.com/containernetworking/cni v1.3.0
-	github.com/jaypipes/ghw v0.20.0
+	github.com/jaypipes/ghw v0.21.0
 	github.com/jaypipes/pcidb v1.1.1
 	github.com/k8snetworkplumbingwg/network-attachment-definition-client v1.7.7
 	github.com/onsi/ginkgo/v2 v2.27.2
