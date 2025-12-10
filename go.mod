@@ -5,6 +5,7 @@ go 1.24.3
 toolchain go1.24.6
 
 require (
+	github.com/Mellanox/rdmamap v1.1.0
 	github.com/containerd/nri v0.10.0
 	github.com/containernetworking/cni v1.3.0
 	github.com/jaypipes/ghw v0.21.0
@@ -79,6 +80,8 @@ require (
 	github.com/spf13/cobra v1.9.1 // indirect
 	github.com/syndtr/gocapability v0.0.0-20200815063812-42c35b437635 // indirect
 	github.com/tetratelabs/wazero v1.9.0 // indirect
+	github.com/vishvananda/netlink v1.3.1 // indirect
+	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect

@@ -110,17 +110,23 @@ type Interface interface {
 	LoadKernelModule(moduleName string) error
 	EnsureDpdkModuleLoaded(driver string) error
 	EnsureVhostModulesLoaded() error
+
+	// RDMA device functions
+	GetRDMADeviceForPCI(pciAddr string) ([]string, error)
+	VerifyRDMACapability(pciAddr string) (bool, error)
 }
 
 // Host provides unified host system functionality for SR-IOV, PCI operations, and driver management
 type Host struct {
-	log klog.Logger
+	log          klog.Logger
+	rdmaProvider RdmaProvider
 }
 
 // NewHost creates a new Host instance
 func NewHost() Interface {
 	return &Host{
-		log: klog.FromContext(context.Background()).WithName("Host"),
+		log:          klog.FromContext(context.Background()).WithName("Host"),
+		rdmaProvider: newRdmaProvider(),
 	}
 }
 
@@ -141,6 +147,12 @@ func initHelpers() {
 func GetHelpers() Interface {
 	initHelpers()
 	return Helpers
+}
+
+// SetRdmaProvider sets the RDMA provider for a Host instance
+// This is primarily used for injecting mock providers in unit tests
+func (h *Host) SetRdmaProvider(provider RdmaProvider) {
+	h.rdmaProvider = provider
 }
 
 // SR-IOV Detection Functions
@@ -764,4 +776,40 @@ func (h *Host) EnsureVhostModulesLoaded() error {
 		return fmt.Errorf("failed to load %d out of %d required kernel modules for vhost functionality: %v", len(errors), len(modulesToLoad), errors)
 	}
 	return nil
+}
+
+// RDMA Device Functions
+
+// GetRDMADeviceForPCI returns the RDMA device names associated with a PCI address
+// Uses the rdmamap library from Mellanox for RDMA device detection
+func (h *Host) GetRDMADeviceForPCI(pciAddr string) ([]string, error) {
+	h.log.V(2).Info("GetRDMADeviceForPCI(): getting RDMA devices for PCI address", "device", pciAddr)
+
+	// Use rdmaProvider to get RDMA devices for this PCI address
+	rdmaDevices := h.rdmaProvider.GetRdmaDevicesForPcidev(pciAddr)
+
+	if len(rdmaDevices) == 0 {
+		h.log.V(2).Info("GetRDMADeviceForPCI(): no RDMA devices found", "device", pciAddr)
+		return nil, nil
+	}
+
+	h.log.Info("GetRDMADeviceForPCI(): found RDMA devices",
+		"pciAddress", pciAddr, "rdmaDevices", rdmaDevices)
+	return rdmaDevices, nil
+}
+
+// VerifyRDMACapability checks if a device supports RDMA by looking for associated RDMA devices
+func (h *Host) VerifyRDMACapability(pciAddr string) (bool, error) {
+	h.log.V(2).Info("VerifyRDMACapability(): checking RDMA capability", "device", pciAddr)
+
+	rdmaDevices, err := h.GetRDMADeviceForPCI(pciAddr)
+	if err != nil {
+		return false, fmt.Errorf("failed to get RDMA devices for PCI address %s: %w", pciAddr, err)
+	}
+
+	hasRDMA := len(rdmaDevices) > 0
+	h.log.V(2).Info("VerifyRDMACapability(): RDMA capability check result",
+		"device", pciAddr, "rdmaCapable", hasRDMA)
+
+	return hasRDMA, nil
 }
