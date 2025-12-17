@@ -35,6 +35,7 @@ The driver features an advanced resource filtering system that enables administr
 - SR-IOV capable network hardware  
 - Container runtime with CDI support
 - Container runtime with NRI plugins support
+- [SR-IOV CNI plugin](https://github.com/k8snetworkplumbingwg/sriov-cni) installed on nodes (typically at `/opt/cni/bin/sriov`)
 
 
 ## Building
