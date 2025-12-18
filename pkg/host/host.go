@@ -91,6 +91,7 @@ type Interface interface {
 
 	// Driver binding operations
 	BindDeviceDriver(pciAddress string, config *configapi.VfConfig) (string, error)
+	BindDeviceDriverWithMAC(pciAddress string, config *configapi.VfConfig, macAddress string) (string, error)
 	RestoreDeviceDriver(pciAddress string, originalDriver string) error
 
 	// Low-level driver operations
@@ -101,6 +102,9 @@ type Interface interface {
 
 	// Driver utility functions
 	IsDpdkDriver(driver string) bool
+
+	// VF MAC address configuration
+	SetVFMacAddress(vfPciAddress string, macAddress string) error
 
 	// VFIO device functions
 	GetVFIODeviceFile(pciAddress string) (devFileHost, devFileContainer string, err error)
@@ -339,8 +343,15 @@ func (h *Host) GetPCIeRoot(pciAddress string) (string, error) {
 // - If config.Driver == "default", binds device to default driver
 // - Otherwise, binds device to the specified driver
 func (h *Host) BindDeviceDriver(pciAddress string, config *configapi.VfConfig) (string, error) {
+	return h.BindDeviceDriverWithMAC(pciAddress, config, "")
+}
+
+// BindDeviceDriverWithMAC binds a device to the specified driver and optionally sets MAC address.
+// For vfio-pci driver: MAC is set after unbind (if needed) but before bind to vfio-pci.
+// This ensures VF has a network interface when MAC is configured.
+func (h *Host) BindDeviceDriverWithMAC(pciAddress string, config *configapi.VfConfig, macAddress string) (string, error) {
 	if config.Driver == "" {
-		h.log.V(2).Info("BindDeviceDriver(): no driver specified, skipping", "device", pciAddress)
+		h.log.V(2).Info("BindDeviceDriverWithMAC(): no driver specified, skipping", "device", pciAddress)
 		return "", nil
 	}
 
@@ -351,14 +362,40 @@ func (h *Host) BindDeviceDriver(pciAddress string, config *configapi.VfConfig) (
 	}
 
 	if config.Driver == "default" {
-		h.log.V(2).Info("BindDeviceDriver(): binding device to default driver", "device", pciAddress)
+		h.log.V(2).Info("BindDeviceDriverWithMAC(): binding device to default driver", "device", pciAddress)
 		if err := h.BindDefaultDriver(pciAddress); err != nil {
 			return "", fmt.Errorf("failed to bind device %s to default driver: %w", pciAddress, err)
 		}
 		return currentDriver, nil
 	}
 
-	h.log.V(2).Info("BindDeviceDriver(): binding device to driver", "device", pciAddress, "driver", config.Driver)
+	// For vfio-pci with MAC: set MAC after unbind (if needed) but before bind
+	if config.Driver == "vfio-pci" && macAddress != "" {
+		// If already bound to something, unbind first
+		if currentDriver != "" {
+			h.log.V(2).Info("BindDeviceDriverWithMAC(): unbinding device before setting MAC", "device", pciAddress, "currentDriver", currentDriver)
+			if err := h.UnbindDriverByBusAndDevice(pciAddress); err != nil {
+				return "", fmt.Errorf("failed to unbind device %s: %w", pciAddress, err)
+			}
+		}
+
+		// Now VF has network interface - set MAC
+		h.log.V(2).Info("BindDeviceDriverWithMAC(): setting MAC before binding to vfio-pci", "device", pciAddress, "mac", macAddress)
+		if err := h.SetVFMacAddress(pciAddress, macAddress); err != nil {
+			h.log.Error(err, "BindDeviceDriverWithMAC(): failed to set MAC address, continuing without it", "device", pciAddress, "mac", macAddress)
+			// Non-fatal: continue with bind
+		}
+
+		// Now bind to vfio-pci
+		h.log.V(2).Info("BindDeviceDriverWithMAC(): binding device to vfio-pci", "device", pciAddress)
+		if err := h.BindDriverByBusAndDevice(pciAddress, config.Driver); err != nil {
+			return "", fmt.Errorf("failed to bind device %s to driver %s: %w", pciAddress, config.Driver, err)
+		}
+		return currentDriver, nil
+	}
+
+	// Normal case: no MAC to set, just bind
+	h.log.V(2).Info("BindDeviceDriverWithMAC(): binding device to driver", "device", pciAddress, "driver", config.Driver)
 	if err := h.BindDriverByBusAndDevice(pciAddress, config.Driver); err != nil {
 		return "", fmt.Errorf("failed to bind device %s to driver %s: %w", pciAddress, config.Driver, err)
 	}
@@ -763,5 +800,54 @@ func (h *Host) EnsureVhostModulesLoaded() error {
 	if len(errors) > 0 {
 		return fmt.Errorf("failed to load %d out of %d required kernel modules for vhost functionality: %v", len(errors), len(modulesToLoad), errors)
 	}
+	return nil
+}
+
+// SetVFMacAddress sets the MAC address on a VF via the PF
+// This must be called BEFORE binding the VF to vfio-pci, as vfio-bound devices
+// don't have network interfaces and cannot have their MAC addresses set.
+func (h *Host) SetVFMacAddress(vfPciAddress string, macAddress string) error {
+	h.log.V(2).Info("SetVFMacAddress", "vfPciAddress", vfPciAddress, "macAddress", macAddress)
+
+	// Get the PF for this VF
+	pfPciAddress, err := h.GetParentPciAddress(vfPciAddress)
+	if err != nil {
+		return fmt.Errorf("failed to get parent PF for VF %s: %w", vfPciAddress, err)
+	}
+
+	// Get the PF network interface name
+	pfNetdev := h.TryGetInterfaceName(pfPciAddress)
+	if pfNetdev == "" {
+		return fmt.Errorf("failed to get network interface for PF %s", pfPciAddress)
+	}
+
+	// Get VF list to find the VF ID
+	vfList, err := h.GetVFList(pfPciAddress)
+	if err != nil {
+		return fmt.Errorf("failed to get VF list for PF %s: %w", pfPciAddress, err)
+	}
+
+	// Find the VF ID for this VF PCI address
+	vfID := -1
+	for _, vf := range vfList {
+		if vf.PciAddress == vfPciAddress {
+			vfID = vf.VFID
+			break
+		}
+	}
+
+	if vfID == -1 {
+		return fmt.Errorf("VF %s not found in PF %s VF list", vfPciAddress, pfPciAddress)
+	}
+
+	// Set the MAC address via ip link command
+	// Equivalent to: ip link set <pf> vf <vf_id> mac <mac>
+	cmd := exec.Command("ip", "link", "set", pfNetdev, "vf", strconv.Itoa(vfID), "mac", macAddress)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to set MAC address on VF %d of PF %s: %w, output: %s", vfID, pfNetdev, err, string(output))
+	}
+
+	h.log.V(2).Info("Successfully set MAC address on VF", "pf", pfNetdev, "vfID", vfID, "mac", macAddress)
 	return nil
 }

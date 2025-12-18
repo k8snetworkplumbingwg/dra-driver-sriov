@@ -2,10 +2,12 @@ package driver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 	resourceapi "k8s.io/api/resource/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -87,6 +89,13 @@ func (d *Driver) prepareResourceClaim(ctx context.Context, ifNameIndex *int, cla
 	// get the pod UID
 	podUID := claim.Status.ReservedFor[0].UID
 
+	// Get MAC addresses from pod annotations
+	macAddresses, err := d.getMACAddressesFromPod(ctx, claim)
+	if err != nil {
+		logger.V(2).Info("Failed to get MAC addresses from pod annotations", "error", err)
+		// Continue without MAC addresses - not a fatal error
+	}
+
 	// check if the pod claim is already prepared and return the prepared devices
 	preparedDevices, isAlreadyPrepared := d.podManager.Get(podUID, claim.UID)
 	if isAlreadyPrepared {
@@ -103,7 +112,7 @@ func (d *Driver) prepareResourceClaim(ctx context.Context, ifNameIndex *int, cla
 	}
 
 	// if the pod claim is not prepared, prepare the devices for the claim
-	preparedDevices, err := d.deviceStateManager.PrepareDevicesForClaim(ctx, ifNameIndex, claim)
+	preparedDevices, err = d.deviceStateManager.PrepareDevicesForClaim(ctx, ifNameIndex, claim, macAddresses)
 	if err != nil {
 		logger.Error(err, "Error preparing devices for claim", "claim", claim.UID)
 		return kubeletplugin.PrepareResult{
@@ -201,6 +210,40 @@ func (d *Driver) unprepareResourceClaim(ctx context.Context, claim kubeletplugin
 		return fmt.Errorf("error deleting claim %s from pod manager: %w", claim.UID, err)
 	}
 	return nil
+}
+
+// getMACAddressesFromPod retrieves MAC addresses from pod annotations set by KubeVirt
+func (d *Driver) getMACAddressesFromPod(ctx context.Context, claim *resourceapi.ResourceClaim) (map[string]string, error) {
+	logger := klog.FromContext(ctx).WithName("getMACAddressesFromPod")
+
+	if len(claim.Status.ReservedFor) == 0 {
+		return nil, fmt.Errorf("no pod info in claim")
+	}
+
+	podRef := claim.Status.ReservedFor[0]
+	// ResourceClaimConsumerReference only has Name and UID, we need to get namespace from claim
+	pod, err := d.client.CoreV1().Pods(claim.Namespace).Get(ctx, podRef.Name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pod %s/%s: %w", claim.Namespace, podRef.Name, err)
+	}
+
+	macMap := make(map[string]string)
+	if pod.Annotations == nil {
+		return macMap, nil
+	}
+
+	macJSON := pod.Annotations[types.DRANetworkMACsAnnotation]
+	if macJSON == "" {
+		logger.V(3).Info("No DRA network MAC annotation found on pod")
+		return macMap, nil
+	}
+
+	if err := json.Unmarshal([]byte(macJSON), &macMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal MAC addresses from annotation: %w", err)
+	}
+
+	logger.V(2).Info("Retrieved MAC addresses from pod annotations", "macAddresses", macMap)
+	return macMap, nil
 }
 
 func (d *Driver) HandleError(ctx context.Context, err error, msg string) {

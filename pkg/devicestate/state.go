@@ -60,7 +60,7 @@ func (s *Manager) GetAllocatedDeviceByDeviceName(deviceName string) (resourceapi
 
 // PrepareDevicesForClaim prepares the devices for a given claim
 // It will return the prepared devices for the claim
-func (s *Manager) PrepareDevicesForClaim(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim) (drasriovtypes.PreparedDevices, error) {
+func (s *Manager) PrepareDevicesForClaim(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim, macAddresses map[string]string) (drasriovtypes.PreparedDevices, error) {
 	logger := klog.FromContext(ctx).WithName("PrepareDevicesForClaim")
 
 	resultsConfig, err := getMapOfOpaqueDeviceConfigForDevice(configapi.Decoder, claim.Status.Allocation.Devices.Config)
@@ -69,7 +69,7 @@ func (s *Manager) PrepareDevicesForClaim(ctx context.Context, ifNameIndex *int, 
 		return nil, fmt.Errorf("error creating map of opaque device config for device: %v", err)
 	}
 
-	preparedDevices, err := s.prepareDevices(ctx, ifNameIndex, claim, resultsConfig)
+	preparedDevices, err := s.prepareDevices(ctx, ifNameIndex, claim, resultsConfig, macAddresses)
 	if err != nil {
 		logger.Error(err, "Prepare failed", "claim", *claim)
 		return nil, fmt.Errorf("prepare failed: %v", err)
@@ -88,7 +88,8 @@ func (s *Manager) PrepareDevicesForClaim(ctx context.Context, ifNameIndex *int, 
 
 func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 	claim *resourceapi.ResourceClaim,
-	resultsConfig map[string]*configapi.VfConfig) (drasriovtypes.PreparedDevices, error) {
+	resultsConfig map[string]*configapi.VfConfig,
+	macAddresses map[string]string) (drasriovtypes.PreparedDevices, error) {
 	logger := klog.FromContext(ctx).WithName("prepareDevices")
 	preparedDevices := drasriovtypes.PreparedDevices{}
 	for _, result := range claim.Status.Allocation.Devices.Results {
@@ -104,7 +105,7 @@ func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 		// make changes if needed
 		config.Normalize()
 
-		preparedDevice, err := s.applyConfigOnDevice(ctx, ifNameIndex, claim, config, &result)
+		preparedDevice, err := s.applyConfigOnDevice(ctx, ifNameIndex, claim, config, &result, macAddresses)
 		if err != nil {
 			logger.Error(err, "error applying config on device", "config", config, "result", result)
 			return nil, fmt.Errorf("error applying config on device: %v", err)
@@ -129,7 +130,7 @@ func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 	return preparedDevices, nil
 }
 
-func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim, config *configapi.VfConfig, result *resourceapi.DeviceRequestAllocationResult) (*drasriovtypes.PreparedDevice, error) {
+func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim, config *configapi.VfConfig, result *resourceapi.DeviceRequestAllocationResult, macAddresses map[string]string) (*drasriovtypes.PreparedDevice, error) {
 	logger := klog.FromContext(ctx).WithName("applyConfigOnDevice")
 	logger.V(3).Info("Applying config on device", "config", config, "result", result)
 	deviceInfo, exist := s.allocatable[result.Device]
@@ -152,8 +153,32 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 	if err != nil {
 		return nil, fmt.Errorf("error converting net attach def config to sriov-cni format: %w", err)
 	}
+
+	// Add MAC address to netconf if available from KubeVirt annotations
+	// Lookup MAC by "podClaimName/requestName" to handle multiple networks with same requestName
+	// Note: We need the pod's claim name (from pod.Spec.ResourceClaims[].Name),
+	// which we get from claim.Status.ReservedFor[0].Resource
+	podClaimName := getPodClaimNameFromResourceClaim(claim)
+	macKey := podClaimName + "/" + result.Request
+	mac := macAddresses[macKey]
+	logger.V(3).Info("Looking up MAC address", "macKey", macKey, "found", mac != "")
+
+	if mac != "" {
+		logger.V(2).Info("Adding MAC address to network config", "request", result.Request, "mac", mac)
+		netAttachDefRawConfig, err = drasriovtypes.AddMACToNetConf(netAttachDefRawConfig, mac)
+		if err != nil {
+			logger.Error(err, "Failed to add MAC address to network config, continuing without it", "mac", mac)
+			// Don't fail - continue without MAC
+		}
+	}
+
 	// Bind device to driver if specified in config
-	originalDriver, err := host.GetHelpers().BindDeviceDriver(pciAddress, config)
+	// For vfio-pci mode with MAC address: pass MAC so it can be set after unbind but before bind
+	macForBinding := ""
+	if mac != "" && config.Driver == "vfio-pci" {
+		macForBinding = mac
+	}
+	originalDriver, err := host.GetHelpers().BindDeviceDriverWithMAC(pciAddress, config, macForBinding)
 	if err != nil {
 		return nil, fmt.Errorf("error binding device %s to driver: %w", pciAddress, err)
 	}
@@ -251,6 +276,16 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 	}
 
 	return preparedDevice, nil
+}
+
+// getPodClaimNameFromResourceClaim extracts the pod's resource claim name from the ResourceClaim
+// The pod's claim name is stored in the annotation "resource.kubernetes.io/pod-claim-name"
+func getPodClaimNameFromResourceClaim(claim *resourceapi.ResourceClaim) string {
+	if claim.Annotations == nil {
+		return ""
+	}
+	// Kubernetes sets this annotation with the pod's claim name (from pod.spec.resourceClaims[].name)
+	return claim.Annotations["resource.kubernetes.io/pod-claim-name"]
 }
 
 func (s *Manager) getNetAttachDefRawConfig(ctx context.Context, namespace string, netAttachDefName string) (string, error) {
