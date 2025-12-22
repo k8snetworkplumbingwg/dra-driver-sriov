@@ -77,6 +77,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
 			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("0000:00:01.0", nil)
+			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return("ethernet", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 
 			devices, err := DiscoverSriovDevices()
@@ -97,6 +98,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			Expect(dev1.Attributes[consts.AttributePCIeRoot].StringValue).To(Equal(ptr.To("pci0000:00")))
 			Expect(dev1.Attributes[consts.AttributeParentPciAddress].StringValue).To(Equal(ptr.To("0000:00:01.0")))
 			Expect(dev1.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.1")))
+			Expect(dev1.Attributes[consts.AttributeLinkType].StringValue).To(Equal(ptr.To("ethernet")))
 
 			// Check second VF
 			dev2 := devices["0000-01-00-2"]
@@ -139,6 +141,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
 			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("0000:00:01.0", nil)
+			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return("ethernet", nil)
 
 			// Second PF
 			mockHost.EXPECT().IsSriovVF("0000:02:00.0").Return(false)
@@ -147,6 +150,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetNumaNode("0000:02:00.0").Return("1", nil)
 			mockHost.EXPECT().GetPCIeRoot("0000:02:00.0").Return("pci0000:00", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:02:00.0").Return("0000:00:02.0", nil)
+			mockHost.EXPECT().GetLinkType("0000:02:00.0").Return("infiniband", nil)
 
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList1, nil)
 			mockHost.EXPECT().GetVFList("0000:02:00.0").Return(vfList2, nil)
@@ -163,6 +167,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			Expect(dev1.Attributes[consts.AttributeNumaNode].IntValue).To(Equal(ptr.To(int64(0))))
 			Expect(dev1.Attributes[consts.AttributePCIeRoot].StringValue).To(Equal(ptr.To("pci0000:00")))
 			Expect(dev1.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.1")))
+			Expect(dev1.Attributes[consts.AttributeLinkType].StringValue).To(Equal(ptr.To("ethernet")))
 
 			// Check Mellanox VF
 			dev2 := devices["0000-02-00-1"]
@@ -172,6 +177,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			Expect(dev2.Attributes[consts.AttributeNumaNode].IntValue).To(Equal(ptr.To(int64(1))))
 			Expect(dev2.Attributes[consts.AttributePCIeRoot].StringValue).To(Equal(ptr.To("pci0000:00")))
 			Expect(dev2.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(ptr.To("0000:02:00.1")))
+			Expect(dev2.Attributes[consts.AttributeLinkType].StringValue).To(Equal(ptr.To("infiniband")))
 		})
 
 		It("should handle NUMA node detection failure with default", func() {
@@ -197,6 +203,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("", fmt.Errorf("numa node not found"))
 			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
+			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return("ethernet", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 
 			devices, err := DiscoverSriovDevices()
@@ -233,6 +240,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
 			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", fmt.Errorf("parent not found"))
+			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return("ethernet", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 
 			devices, err := DiscoverSriovDevices()
@@ -306,6 +314,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
 			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
+			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return("ethernet", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 
 			// Second device (VF) - should be skipped
@@ -402,6 +411,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
 			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
+			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return("ethernet", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(nil, fmt.Errorf("failed to get VF list"))
 
 			devices, err := DiscoverSriovDevices()
@@ -435,6 +445,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
 			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
+			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return("ethernet", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 
 			devices, err := DiscoverSriovDevices()
@@ -466,6 +477,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
 			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
+			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return("ethernet", nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return([]host.VFInfo{}, nil) // Empty list
 
 			devices, err := DiscoverSriovDevices()

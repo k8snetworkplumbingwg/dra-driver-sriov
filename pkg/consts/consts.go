@@ -37,6 +37,7 @@ const (
 	AttributePFDeviceID   = DriverName + "/pfDeviceID"
 	AttributeVFID         = DriverName + "/vfID"
 	AttributeResourceName = DriverName + "/resourceName"
+	AttributeLinkType     = DriverName + "/linkType"
 	// Use upstream Kubernetes standard attribute prefix for numaNode
 	AttributeNumaNode = deviceattribute.StandardDeviceAttributePrefix + "numaNode"
 	// Use upstream Kubernetes standard attribute prefix for pciAddress
