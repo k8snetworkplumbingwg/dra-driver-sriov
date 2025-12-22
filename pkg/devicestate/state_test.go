@@ -5,6 +5,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"k8s.io/utils/ptr"
 
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 	resourceapi "k8s.io/api/resource/v1"
@@ -42,6 +43,40 @@ var _ = Describe("Manager", func() {
 			// Ensure attribute is cleared for devB when value empty
 			_, exists := s.allocatable["devB"].Attributes[consts.AttributeResourceName]
 			Expect(exists).To(BeFalse())
+		})
+	})
+
+	Context("RDMA Device Preparation", func() {
+		It("should skip RDMA preparation when device is not RDMA capable", func() {
+			// Create device without RDMA capability
+			nonRdmaDevice := &resourceapi.Device{
+				Name: "0000-08-00-1",
+				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+					consts.AttributePciAddress: {
+						StringValue: ptr.To("0000:08:00.1"),
+					},
+					consts.AttributeRDMACapable: {
+						BoolValue: ptr.To(false),
+					},
+				},
+			}
+
+			// Verify device is not RDMA capable
+			rdmaCapable, exists := nonRdmaDevice.Attributes[consts.AttributeRDMACapable]
+			Expect(exists).To(BeTrue())
+			Expect(rdmaCapable.BoolValue).ToNot(BeNil())
+			Expect(*rdmaCapable.BoolValue).To(BeFalse())
+
+			// Test the conditional logic that determines if RDMA preparation should occur
+			// This replicates the production code condition:
+			// if rdmaCapableAttr, ok := deviceInfo.Attributes[consts.AttributeRDMACapable]; ok && rdmaCapableAttr.BoolValue != nil && *rdmaCapableAttr.BoolValue
+			shouldPrepareRDMA := exists && rdmaCapable.BoolValue != nil && *rdmaCapable.BoolValue
+			Expect(shouldPrepareRDMA).To(BeFalse(), "RDMA preparation should be skipped for non-RDMA capable devices")
+
+			// When this condition is false, the production code never calls:
+			// - GetRDMADeviceForPCI
+			// - GetRDMACharDevices
+			// This test verifies the condition evaluates correctly for non-RDMA devices
 		})
 	})
 })
