@@ -132,9 +132,23 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 
 		logger.Info("Found VFs for PF", "pf", pfInfo.NetName, "vfCount", len(vfList))
 
+		numaNodeInt, err := strconv.ParseInt(pfInfo.NumaNode, 10, 64)
+		numaNodeIntPtr := ptr.To(int64(0)) // Default to 0 if parsing fails
+		if err == nil {
+			numaNodeIntPtr = ptr.To(numaNodeInt)
+		}
+
 		for _, vfInfo := range vfList {
 			deviceName := strings.ReplaceAll(vfInfo.PciAddress, ":", "-")
 			deviceName = strings.ReplaceAll(deviceName, ".", "-")
+
+			// Check RDMA capability for this VF
+			rdmaCapable, err := host.GetHelpers().VerifyRDMACapability(vfInfo.PciAddress)
+			if err != nil {
+				logger.Error(err, "Failed to verify RDMA capability, assuming not RDMA capable",
+					"vfAddress", vfInfo.PciAddress)
+				rdmaCapable = false
+			}
 
 			logger.V(2).Info("Adding VF device to resource list",
 				"deviceName", deviceName,
@@ -142,55 +156,55 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 				"vfID", vfInfo.VFID,
 				"vfDeviceID", vfInfo.DeviceID,
 				"pfDeviceID", pfInfo.DeviceID,
-				"pf", pfInfo.NetName)
+				"pf", pfInfo.NetName,
+				"rdmaCapable", rdmaCapable)
+
+			// Build device attributes
+			attributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+				consts.AttributeVendorID: {
+					StringValue: ptr.To(pfInfo.VendorID),
+				},
+				consts.AttributeDeviceID: {
+					StringValue: ptr.To(vfInfo.DeviceID),
+				},
+				consts.AttributePFDeviceID: {
+					StringValue: ptr.To(pfInfo.DeviceID),
+				},
+				consts.AttributePciAddress: {
+					StringValue: ptr.To(vfInfo.PciAddress),
+				},
+				consts.AttributePFName: {
+					StringValue: ptr.To(pfInfo.NetName),
+				},
+				consts.AttributeEswitchMode: {
+					StringValue: ptr.To(pfInfo.EswitchMode),
+				},
+				consts.AttributeVFID: {
+					IntValue: ptr.To(int64(vfInfo.VFID)),
+				},
+				consts.AttributeNumaNode: {
+					IntValue: numaNodeIntPtr,
+				},
+				// PCIe Root Complex (upstream Kubernetes standard) - for topology-aware scheduling
+				consts.AttributePCIeRoot: {
+					StringValue: ptr.To(pfInfo.PCIeRoot),
+				},
+				// Immediate parent PCI address - for granular filtering
+				consts.AttributeParentPciAddress: {
+					StringValue: ptr.To(pfInfo.ParentPciAddress),
+				},
+				// Standard Kubernetes PCI address attribute
+				consts.AttributeStandardPciAddress: {
+					StringValue: ptr.To(vfInfo.PciAddress),
+				},
+				consts.AttributeRDMACapable: {
+					BoolValue: ptr.To(rdmaCapable),
+				},
+			}
 
 			resourceList[deviceName] = resourceapi.Device{
-				Name: deviceName,
-				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-					consts.AttributeVendorID: {
-						StringValue: ptr.To(pfInfo.VendorID),
-					},
-					consts.AttributeDeviceID: {
-						StringValue: ptr.To(vfInfo.DeviceID),
-					},
-					consts.AttributePFDeviceID: {
-						StringValue: ptr.To(pfInfo.DeviceID),
-					},
-					consts.AttributePciAddress: {
-						StringValue: ptr.To(vfInfo.PciAddress),
-					},
-					consts.AttributePFName: {
-						StringValue: ptr.To(pfInfo.NetName),
-					},
-					consts.AttributeEswitchMode: {
-						StringValue: ptr.To(pfInfo.EswitchMode),
-					},
-					consts.AttributeVFID: {
-						IntValue: ptr.To(int64(vfInfo.VFID)),
-					},
-					consts.AttributeNumaNode: {
-						IntValue: func() *int64 {
-							numaNodeInt, err := strconv.ParseInt(pfInfo.NumaNode, 10, 64)
-							if err != nil {
-								// Default to -1 if parsing fails
-								return ptr.To(int64(-1))
-							}
-							return ptr.To(numaNodeInt)
-						}(),
-					},
-					// PCIe Root Complex (upstream Kubernetes standard) - for topology-aware scheduling
-					consts.AttributePCIeRoot: {
-						StringValue: ptr.To(pfInfo.PCIeRoot),
-					},
-					// Immediate parent PCI address - for granular filtering
-					consts.AttributeParentPciAddress: {
-						StringValue: ptr.To(pfInfo.ParentPciAddress),
-					},
-					// Standard Kubernetes PCI address attribute
-					consts.AttributeStandardPciAddress: {
-						StringValue: ptr.To(vfInfo.PciAddress),
-					},
-				},
+				Name:       deviceName,
+				Attributes: attributes,
 			}
 		}
 	}
