@@ -128,6 +128,21 @@ func (mr *MockInterfaceMockRecorder) GetDriverByBusAndDevice(device any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDriverByBusAndDevice", reflect.TypeOf((*MockInterface)(nil).GetDriverByBusAndDevice), device)
 }
 
+// GetLinkType mocks base method.
+func (m *MockInterface) GetLinkType(pciAddr string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetLinkType", pciAddr)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetLinkType indicates an expected call of GetLinkType.
+func (mr *MockInterfaceMockRecorder) GetLinkType(pciAddr any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLinkType", reflect.TypeOf((*MockInterface)(nil).GetLinkType), pciAddr)
+}
+
 // GetNicSriovMode mocks base method.
 func (m *MockInterface) GetNicSriovMode(pciAddr string) string {
 	m.ctrl.T.Helper()

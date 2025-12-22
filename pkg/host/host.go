@@ -19,6 +19,12 @@ import (
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 )
 
+const (
+	// from include/uapi/linux/if_arp.h
+	ArphrdEther      = 1
+	ArphrdInfiniband = 32
+)
+
 var (
 	RootDir = ""
 )
@@ -83,6 +89,7 @@ type Interface interface {
 	// Network interface functions
 	TryGetInterfaceName(pciAddr string) string
 	GetNicSriovMode(pciAddr string) string
+	GetLinkType(pciAddr string) (string, error)
 
 	// NUMA and topology functions
 	GetNumaNode(pciAddress string) (string, error)
@@ -250,6 +257,42 @@ func (h *Host) GetNicSriovMode(_ string) string {
 	// For simplicity, always return legacy mode
 	// A full implementation would use netlink to query the eswitch mode
 	return "legacy"
+}
+
+// GetLinkType returns the link type for a given network interface
+// Common types: ethernet (type 1), infiniband (type 32)
+func (h *Host) GetLinkType(pciAddr string) (string, error) {
+	// Get the interface name first
+	ifName := h.TryGetInterfaceName(pciAddr)
+	if ifName == "" {
+		return "", fmt.Errorf("unable to get interface name for PCI address %s", pciAddr)
+	}
+
+	// Read the type from /sys/class/net/<interface>/type
+	typePath := buildSysPath(fmt.Sprintf("/sys/class/net/%s/type", ifName))
+	content, err := os.ReadFile(typePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read link type for interface %s: %w", ifName, err)
+	}
+
+	typeValue := strings.TrimSpace(string(content))
+	typeInt, err := strconv.Atoi(typeValue)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse link type value %s for interface %s: %w", typeValue, ifName, err)
+	}
+
+	// Map the type value to a human-readable string
+	// Reference: https://elixir.bootlin.com/linux/latest/source/include/uapi/linux/if_arp.h
+	switch typeInt {
+	case ArphrdEther:
+		return consts.LinkTypeEthernet, nil
+	case ArphrdInfiniband:
+		return consts.LinkTypeInfiniband, nil
+	default:
+		// Return "unknown" for unsupported types
+		h.log.V(1).Info("Unsupported link type, defaulting to unknown", "interface", ifName, "type", typeInt)
+		return consts.LinkTypeUnknown, nil
+	}
 }
 
 // GetNumaNode returns the NUMA node for a given PCI device

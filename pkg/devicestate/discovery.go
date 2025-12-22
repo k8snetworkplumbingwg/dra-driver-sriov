@@ -24,6 +24,7 @@ type PFInfo struct {
 	NumaNode         string
 	PCIeRoot         string
 	ParentPciAddress string
+	LinkType         string
 }
 
 func DiscoverSriovDevices() (types.AllocatableDevices, error) {
@@ -96,6 +97,13 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			parentPciAddress = "" // Leave empty if we can't determine it
 		}
 
+		// Get link type (ethernet, infiniband, etc.)
+		linkType, err := host.GetHelpers().GetLinkType(device.Address)
+		if err != nil {
+			logger.Error(err, "Failed to get link type", "address", device.Address)
+			linkType = consts.LinkTypeUnknown // Default to unknown if we can't determine it
+		}
+
 		logger.Info("Found SR-IOV PF device",
 			"address", device.Address,
 			"interface", pfNetName,
@@ -104,7 +112,8 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			"eswitchMode", eswitchMode,
 			"numaNode", numaNode,
 			"pcieRoot", pcieRoot,
-			"parentPciAddress", parentPciAddress)
+			"parentPciAddress", parentPciAddress,
+			"linkType", linkType)
 
 		pfList = append(pfList, PFInfo{
 			PciAddress:       device.Address,
@@ -116,6 +125,7 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			NumaNode:         numaNode,
 			PCIeRoot:         pcieRoot,
 			ParentPciAddress: parentPciAddress,
+			LinkType:         linkType,
 		})
 	}
 
@@ -189,6 +199,10 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 					// Standard Kubernetes PCI address attribute
 					consts.AttributeStandardPciAddress: {
 						StringValue: ptr.To(vfInfo.PciAddress),
+					},
+					// Link type (ethernet, infiniband, etc.)
+					consts.AttributeLinkType: {
+						StringValue: ptr.To(pfInfo.LinkType),
 					},
 				},
 			}
