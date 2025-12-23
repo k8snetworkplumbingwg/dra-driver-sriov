@@ -3,6 +3,8 @@ package types
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 	resourceapi "k8s.io/api/resource/v1"
@@ -142,4 +144,88 @@ func (cp *Checkpoint) VerifyChecksum() error {
 		return err
 	}
 	return ck.Verify(out)
+}
+
+// CNIResultFile represents the path information for CNI result files
+type CNIResultFile struct {
+	HostPath      string // Path on the host where the file is stored
+	ContainerPath string // Path inside the container where the file is mounted
+}
+
+// GetCNIResultFilePath returns the host and container paths for a CNI result file (one file per pod)
+func GetCNIResultFilePath(baseDir, containerDir, podUID string) CNIResultFile {
+	hostPath := filepath.Join(baseDir, fmt.Sprintf("%s.json", podUID))
+	containerPath := filepath.Join(containerDir, "cni-results.json")
+	return CNIResultFile{
+		HostPath:      hostPath,
+		ContainerPath: containerPath,
+	}
+}
+
+// CreateCNIResultFile creates an empty placeholder CNI result file
+func CreateCNIResultFile(filePath string) error {
+	// Create directory if it doesn't exist
+	dir := filepath.Dir(filePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", dir, err)
+	}
+
+	// Check if file already exists (idempotent - multiple devices can try to create same pod file)
+	if _, err := os.Stat(filePath); err == nil {
+		return nil // File already exists, ok
+	}
+
+	// Create empty placeholder file (not JSON, just empty - lines added later)
+	if err := os.WriteFile(filePath, []byte(""), 0644); err != nil {
+		return fmt.Errorf("failed to create CNI result file %s: %w", filePath, err)
+	}
+
+	return nil
+}
+
+// WriteCNIResultFile writes CNI results as line-by-line JSON to the file
+// Format: each line is {"claim_name/request_name": [pci_address, ip, mac, ...]}
+func WriteCNIResultFile(filePath, claimName, requestName, pciAddress string, networkData *resourceapi.NetworkDeviceData, cniResult map[string]interface{}) error {
+	// Build the key as "claim_name/request_name"
+	key := fmt.Sprintf("%s/%s", claimName, requestName)
+
+	// Build list of PCI results with network data
+	pciResults := []interface{}{
+		pciAddress,
+	}
+
+	// // Add IPs if available
+	// if networkData != nil && len(networkData.IPs) > 0 {
+	// 	for _, ip := range networkData.IPs {
+	// 		pciResults = append(pciResults, ip)
+	// 	}
+	// }
+
+	// // Add MAC if available
+	// if networkData != nil && networkData.HardwareAddress != "" {
+	// 	pciResults = append(pciResults, networkData.HardwareAddress)
+	// }
+
+	// Create line: {"claim_name/request_name": [results]}
+	line := map[string]interface{}{
+		key: pciResults,
+	}
+
+	data, err := json.Marshal(line)
+	if err != nil {
+		return fmt.Errorf("failed to marshal CNI result: %w", err)
+	}
+
+	// Append line to file
+	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open file %s: %w", filePath, err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		return fmt.Errorf("failed to write to %s: %w", filePath, err)
+	}
+
+	return nil
 }

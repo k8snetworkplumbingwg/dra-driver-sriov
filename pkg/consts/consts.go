@@ -48,6 +48,12 @@ const (
 	// Network device constants
 	NetClass  = 0x02 // Network controller class
 	SysBusPci = "/sys/bus/pci/devices"
+
+	// CNI result files directory - where CNI results are written for containers to access
+	// Using /var/lib/cni/ because it's already mounted in the driver pod
+	CNIResultsBaseDir = "/var/lib/cni/dra-sriov-results"
+	// CNI result file path in container
+	CNIResultContainerDir = "/etc/dra-sriov"
 )
 
 // Kubernetes standard attributes

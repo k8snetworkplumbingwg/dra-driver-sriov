@@ -91,6 +91,21 @@ func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 	resultsConfig map[string]*configapi.VfConfig,
 	macAddresses map[string]string) (drasriovtypes.PreparedDevices, error) {
 	logger := klog.FromContext(ctx).WithName("prepareDevices")
+
+	// Create CNI result file once per pod (before device loop)
+	podUID := string(claim.Status.ReservedFor[0].UID)
+	cniResultFile := drasriovtypes.GetCNIResultFilePath(
+		consts.CNIResultsBaseDir,
+		consts.CNIResultContainerDir,
+		podUID,
+	)
+
+	if err := drasriovtypes.CreateCNIResultFile(cniResultFile.HostPath); err != nil {
+		logger.Error(err, "Failed to create CNI result file", "podUID", podUID, "path", cniResultFile.HostPath)
+		return nil, fmt.Errorf("failed to create CNI result file: %w", err)
+	}
+	logger.V(2).Info("Created CNI result file", "podUID", podUID, "hostPath", cniResultFile.HostPath)
+
 	preparedDevices := drasriovtypes.PreparedDevices{}
 	for _, result := range claim.Status.Allocation.Devices.Results {
 		if result.Driver != consts.DriverName {
@@ -239,9 +254,27 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 		})
 	}
 
+	// Add mount for CNI result file (file already created once per pod)
+	podUID := string(claim.Status.ReservedFor[0].UID)
+	cniResultFile := drasriovtypes.GetCNIResultFilePath(
+		consts.CNIResultsBaseDir,
+		consts.CNIResultContainerDir,
+		podUID,
+	)
+
+	// Create mounts slice and add CNI result file mount
+	mounts := []*cdispec.Mount{
+		{
+			HostPath:      cniResultFile.HostPath,
+			ContainerPath: cniResultFile.ContainerPath,
+			Options:       []string{"ro", "rbind"},
+		},
+	}
+
 	edits := &cdispec.ContainerEdits{
 		Env:         envs,
 		DeviceNodes: deviceNodes,
+		Mounts:      mounts,
 	}
 
 	ifName := config.IfName
