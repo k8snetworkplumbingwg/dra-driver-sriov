@@ -117,6 +117,33 @@ func (p *Plugin) RunPodSandbox(ctx context.Context, pod *api.PodSandbox) error {
 			}
 		}
 
+		// Write CNI results to file SYNCHRONOUSLY (before container starts)
+		// Format: line-by-line JSON with "claim_name/request_name": [pci]
+		cniResultFile := types.GetCNIResultFilePath(
+			consts.CNIResultsBaseDir,
+			consts.CNIResultContainerDir,
+			string(pod.Uid),
+		)
+
+		// Get request name (first one, as devices typically have one request)
+		requestName := ""
+		if len(device.Device.RequestNames) > 0 {
+			requestName = device.Device.RequestNames[0]
+		}
+
+		if err := types.WriteCNIResultFile(
+			cniResultFile.HostPath,
+			device.ClaimNamespacedName.Name,
+			requestName,
+			device.PciAddress,
+			networkDeviceData,
+			cniResultMap,
+		); err != nil {
+			logger.Error(err, "Failed to write CNI result file", "podUID", pod.Uid, "path", cniResultFile.HostPath)
+		} else {
+			logger.V(2).Info("Wrote CNI result to file", "podUID", pod.Uid, "hostPath", cniResultFile.HostPath)
+		}
+
 		networkDevicesData = append(networkDevicesData, &types.NetworkDataChanStruct{
 			PreparedDevice:    device,
 			NetworkDeviceData: networkDeviceData,
@@ -126,6 +153,7 @@ func (p *Plugin) RunPodSandbox(ctx context.Context, pod *api.PodSandbox) error {
 		logger.Info("Attached network", "deviceName", device.Device.DeviceName, "pod.UID", pod.Uid, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace, "networkDeviceData", networkDeviceData)
 	}
 
+	// Send to channel for async ResourceClaim status update (can be slow, so done async)
 	p.networkDeviceDataUpdateChan <- networkDevicesData
 	return nil
 }
