@@ -14,6 +14,13 @@ import (
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 )
 
+const (
+	// DRANetworkMACsAnnotation contains a JSON map of network name to MAC address
+	// for DRA networks. This is set by KubeVirt on the virt-launcher pod to allow
+	// the DRA driver to configure MAC addresses on SR-IOV VFs.
+	DRANetworkMACsAnnotation = "kubevirt.io/dra-network-macs"
+)
+
 // AllocatableDevices is a map of device pci address to dra device objects
 type AllocatableDevices map[string]resourceapi.Device
 
@@ -44,6 +51,26 @@ func AddDeviceIDToNetConf(originalConfig, deviceID string) (string, error) {
 
 	// Set the deviceID (PCI address)
 	rawConfig["deviceID"] = deviceID
+
+	// Marshal the modified configuration back to a JSON string
+	modifiedConfig, err := json.Marshal(rawConfig)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal modified config: %w", err)
+	}
+
+	return string(modifiedConfig), nil
+}
+
+// AddMACToNetConf adds the MAC address to the netconf
+func AddMACToNetConf(originalConfig, macAddress string) (string, error) {
+	// Unmarshal the existing configuration into a raw map
+	var rawConfig map[string]interface{}
+	if err := json.Unmarshal([]byte(originalConfig), &rawConfig); err != nil {
+		return "", fmt.Errorf("failed to unmarshal existing config: %w", err)
+	}
+
+	// Set the MAC address
+	rawConfig["mac"] = macAddress
 
 	// Marshal the modified configuration back to a JSON string
 	modifiedConfig, err := json.Marshal(rawConfig)
