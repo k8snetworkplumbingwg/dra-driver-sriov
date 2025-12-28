@@ -1,33 +1,97 @@
+# Tested with golangci-lint ver. 2.x
 version: "2"
 
 run:
   timeout: 15m
   tests: false
 
-issues:
-  exclude-dirs:
-    - vendor
-    - .cache
-    - .config
-  exclude-files:
-    - ".*_mock.go"
-    - "zz_generated.*.go"
-
 linters:
   default: none
   enable:
-  - errcheck
-  - copyloopvar
-  - gochecknoinits
-  - gocritic
-  - gomodguard
-  - gosec
-  - govet
-  - ineffassign
-  - misspell
-  - revive
-  - staticcheck
-  - unconvert
-  - unparam
-  - unused
-  - whitespace
+    - asciicheck        # checks for non-ASCII identifiers
+    - bidichk           # checks for dangerous unicode sequences (security)
+    - bodyclose
+    - copyloopvar
+    - depguard
+    - dogsled
+    - errcheck
+    - errname           # checks error naming conventions
+    - exhaustive
+    - gocheckcompilerdirectives  # validates go compiler directives
+    - gochecknoinits
+    - goconst
+    - gocritic
+    - gomodguard
+    - goprintffuncname
+    - gosec
+    - govet
+    - ineffassign
+    - makezero          # finds slice declarations with non-zero initial length
+    - misspell
+    - reassign          # checks package variable reassignment
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - whitespace
+
+  settings:
+    depguard:
+      rules:
+        main:
+          deny:
+            - pkg: github.com/sirupsen/logrus
+              desc: "logging is allowed only by logutils.Log"
+    goconst:
+      min-len: 2
+      min-occurrences: 2
+    misspell:
+      locale: US
+    gosec:
+      excludes:
+        - G301  # Expect directory permissions to be 0750 or less
+        - G304  # Potential file inclusion via variable
+    staticcheck:
+      checks:
+        - all
+        - -QF1001
+        - -QF1003
+        - -QF1008
+        - -ST1000
+        - -ST1020
+        - -ST1021
+      dot-import-whitelist:
+        - github.com/onsi/ginkgo/v2
+        - github.com/onsi/gomega
+        - github.com/onsi/gomega/gstruct
+
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - std-error-handling
+    paths:
+      - vendor/
+      - .cache/
+      - .config/
+    rules:
+      - path: ".*_mock.go"
+        linters:
+          - all
+      - path: "zz_generated.*.go"
+        linters:
+          - all
+      - path: _test\.go
+        linters:
+          - gosec
+          - dupl
+          - goconst
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/k8snetworkplumbingwg/dra-driver-sriov

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -12,6 +11,8 @@ import (
 	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1beta1"
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager/checksum"
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
+
+	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 )
 
 // AllocatableDevices is a map of device pci address to dra device objects

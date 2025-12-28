@@ -9,10 +9,11 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/containerd/nri/pkg/api"
+	k8stypes "k8s.io/apimachinery/pkg/types"
+
 	cnimock "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cni/mock"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/podmanager"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
-	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
 var _ = Describe("NRI Plugin", func() {

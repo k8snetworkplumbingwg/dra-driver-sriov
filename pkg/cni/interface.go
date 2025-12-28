@@ -22,8 +22,9 @@ import (
 	"context"
 
 	"github.com/containerd/nri/pkg/api"
-	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 	resourcev1 "k8s.io/api/resource/v1"
+
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
 // Interface abstracts the CNI runtime to enable mocking in unit tests.

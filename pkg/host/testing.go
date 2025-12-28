@@ -24,7 +24,7 @@ func (fs *FakeFilesystem) Use() func() {
 	fs.RootDir = tmpDir
 
 	for _, dir := range fs.Dirs {
-		//nolint: mnd
+		//nolint: mnd,gosec
 		err := os.MkdirAll(path.Join(fs.RootDir, dir), 0755)
 		if err != nil {
 			panic(fmt.Errorf("error creating fake directory: %s", err.Error()))
@@ -37,12 +37,12 @@ func (fs *FakeFilesystem) Use() func() {
 			panic(fmt.Errorf("error creating fake file: %s", err.Error()))
 		}
 	}
-	//nolint: mnd
+	//nolint: mnd,gosec
 	err = os.MkdirAll(path.Join(fs.RootDir, "usr/share/hwdata"), 0755)
 	if err != nil {
 		panic(fmt.Errorf("error creating fake directory: %s", err.Error()))
 	}
-	//nolint: mnd
+	//nolint: mnd,gosec
 	err = os.MkdirAll(path.Join(fs.RootDir, "var/run/cdi"), 0755)
 	if err != nil {
 		panic(fmt.Errorf("error creating fake cdi directory: %s", err.Error()))
