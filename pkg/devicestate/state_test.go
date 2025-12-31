@@ -6,8 +6,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 	resourceapi "k8s.io/api/resource/v1"
+
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 )
 
 var _ = Describe("Manager", func() {

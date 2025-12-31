@@ -156,6 +156,7 @@ func (r *SriovResourceFilterReconciler) GetConfigs() []sriovdrav1alpha1.Config {
 
 // GetResourceFilters returns all resource filters from all configs in the currently active SriovResourceFilter
 // Returns nil if no resource filter is active
+//
 // Deprecated: Use GetConfigs() instead for better resource name handling
 func (r *SriovResourceFilterReconciler) GetResourceFilters() []sriovdrav1alpha1.ResourceFilter {
 	if r.currentResourceFilter == nil {

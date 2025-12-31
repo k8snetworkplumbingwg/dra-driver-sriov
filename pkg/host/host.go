@@ -196,7 +196,7 @@ func (h *Host) GetVFList(pfPciAddress string) ([]VFInfo, error) {
 
 			// Read VF device ID from sysfs
 			deviceIDPath := buildSysBusPciPath(vfAddr, "device")
-			deviceIDBytes, err := os.ReadFile(deviceIDPath)
+			deviceIDBytes, err := os.ReadFile(deviceIDPath) /* #nosec G304 */
 			vfDeviceID := ""
 			if err != nil {
 				klog.Error(err, "Failed to read VF device ID", "vfAddress", vfAddr, "pfAddress", pfPciAddress)
@@ -255,7 +255,7 @@ func (h *Host) GetNicSriovMode(_ string) string {
 // GetNumaNode returns the NUMA node for a given PCI device
 func (h *Host) GetNumaNode(pciAddress string) (string, error) {
 	numaNodePath := buildSysBusPciPath(pciAddress, "numa_node")
-	content, err := os.ReadFile(numaNodePath)
+	content, err := os.ReadFile(numaNodePath) /* #nosec G304 */
 	if err != nil {
 		// If numa_node file doesn't exist, return "0" as default
 		if os.IsNotExist(err) {
@@ -597,7 +597,7 @@ func (h *Host) GetVFIODeviceFile(pciAddress string) (devFileHost, devFileContain
 	namePath := filepath.Join(linkName, "name")
 	// Read the iommu group name
 	// The name file will not exist on baremetal
-	vfioName, errName := os.ReadFile(namePath)
+	vfioName, errName := os.ReadFile(namePath) /* #nosec G304 */
 	if errName == nil {
 		vName := strings.TrimSpace(string(vfioName))
 		h.log.V(2).Info("GetVFIODeviceFile(): read iommu group name", "device", pciAddress, "vfioName", vName)

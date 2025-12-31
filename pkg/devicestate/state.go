@@ -6,12 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
-	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cdi"
-	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
-	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
-	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host"
-	drasriovtypes "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 	netattdefv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -22,6 +16,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 	cdispec "tags.cncf.io/container-device-interface/specs-go"
+
+	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cdi"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host"
+	drasriovtypes "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
 type Manager struct {
@@ -112,7 +113,7 @@ func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 
 		rawConfig, err := json.Marshal(config)
 		if err != nil {
-			logger.Error(err, "error marshalling config", "config", config)
+			logger.Error(err, "error marshaling config", "config", config)
 			rawConfig = []byte("{}")
 		}
 		// Add applied config to device

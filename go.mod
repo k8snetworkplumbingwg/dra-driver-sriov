@@ -1,8 +1,6 @@
 module github.com/k8snetworkplumbingwg/dra-driver-sriov
 
-go 1.24.3
-
-toolchain go1.24.6
+go 1.25.3
 
 require (
 	github.com/containerd/nri v0.11.0
@@ -112,6 +110,3 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-// TODO: remove this once we upgrade to go 1.25
-replace gopkg.in/yaml.v3 => gopkg.in/yaml.v3 v3.0.0

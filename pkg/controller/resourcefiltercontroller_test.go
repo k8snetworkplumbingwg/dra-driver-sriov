@@ -6,10 +6,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	resourceapi "k8s.io/api/resource/v1"
+
 	sriovdrav1alpha1 "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/sriovdra/v1alpha1"
 	sriovconsts "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 	drasriovtypes "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
-	resourceapi "k8s.io/api/resource/v1"
 )
 
 // localFakeState implements devicestate.DeviceState with minimal logic for unit tests (same package access)

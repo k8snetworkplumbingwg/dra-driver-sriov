@@ -7,11 +7,6 @@ import (
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/containerd/nri/pkg/stub"
-	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cni"
-	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
-	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
-	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/podmanager"
-	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 	resourceapi "k8s.io/api/resource/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,6 +15,12 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cni"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/podmanager"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
 // Plugin represents a NRI plugin catching RunPodSandbox and StopPodSandbox events to

@@ -6,7 +6,7 @@ on:
     tags: ['v*']
 
 env:
-  GO_VERSION: "1.24.6"
+  GO_VERSION: "1.25.3"
   REGISTRY: ghcr.io
   IMAGE_NAME: ghcr.io/${{ github.repository }}
   BUILD_PLATFORMS: linux/amd64,linux/arm64,linux/s390x,linux/ppc64le

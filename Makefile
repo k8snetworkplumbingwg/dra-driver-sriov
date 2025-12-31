@@ -91,9 +91,9 @@ lint: $(GOLANGCI_LINT)
 	$(GOLANGCI_LINT) run ./cmd/... ./pkg/...
 
 $(GOLANGCI_LINT):
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION))
+	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION))
 
-YQ_VERSION ?= v4.44.3
+YQ_VERSION ?= v4.50.1
 YQ = $(BIN_DIR)/yq
 $(YQ):
 	@echo "Downloading yq $(YQ_VERSION)"
