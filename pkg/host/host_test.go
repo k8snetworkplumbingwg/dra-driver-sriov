@@ -1,12 +1,14 @@
 package host_test
 
 import (
+	"fmt"
 	"os"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host"
 )
 
@@ -172,6 +174,99 @@ var _ = Describe("Host", func() {
 
 				mode := h.GetNicSriovMode("0000:01:00.0")
 				Expect(mode).To(Equal("legacy"))
+			})
+		})
+
+		Context("GetLinkType", func() {
+			It("should return 'ethernet' for type ArphrdEther", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth0",
+					"sys/class/net/eth0",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/net/eth0/type": []byte(fmt.Sprintf("%d\n", host.ArphrdEther)),
+				}
+				tearDown = fs.Use()
+
+				linkType, err := h.GetLinkType("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(linkType).To(Equal(consts.LinkTypeEthernet))
+			})
+
+			It("should return 'infiniband' for type ArphrdInfiniband", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:02:00.0/net",
+					"sys/bus/pci/devices/0000:02:00.0/net/ib0",
+					"sys/class/net/ib0",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/net/ib0/type": []byte(fmt.Sprintf("%d\n", host.ArphrdInfiniband)),
+				}
+				tearDown = fs.Use()
+
+				linkType, err := h.GetLinkType("0000:02:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(linkType).To(Equal(consts.LinkTypeInfiniband))
+			})
+
+			It("should return 'unknown' for unknown types", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:03:00.0/net",
+					"sys/bus/pci/devices/0000:03:00.0/net/custom0",
+					"sys/class/net/custom0",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/net/custom0/type": []byte("99\n"),
+				}
+				tearDown = fs.Use()
+
+				linkType, err := h.GetLinkType("0000:03:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(linkType).To(Equal(consts.LinkTypeUnknown))
+			})
+
+			It("should return error when interface name cannot be determined", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:04:00.0",
+				}
+				tearDown = fs.Use()
+
+				linkType, err := h.GetLinkType("0000:04:00.0")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("unable to get interface name"))
+				Expect(linkType).To(BeEmpty())
+			})
+
+			It("should return error when type file does not exist", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:05:00.0/net",
+					"sys/bus/pci/devices/0000:05:00.0/net/eth0",
+					"sys/class/net/eth0",
+				}
+				tearDown = fs.Use()
+
+				linkType, err := h.GetLinkType("0000:05:00.0")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("failed to read link type"))
+				Expect(linkType).To(BeEmpty())
+			})
+
+			It("should return error when type file contains invalid data", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:06:00.0/net",
+					"sys/bus/pci/devices/0000:06:00.0/net/eth0",
+					"sys/class/net/eth0",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/net/eth0/type": []byte("invalid\n"),
+				}
+				tearDown = fs.Use()
+
+				linkType, err := h.GetLinkType("0000:06:00.0")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("failed to parse link type value"))
+				Expect(linkType).To(BeEmpty())
 			})
 		})
 	})

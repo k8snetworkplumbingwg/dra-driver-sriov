@@ -37,6 +37,7 @@ const (
 	AttributePFDeviceID   = DriverName + "/pfDeviceID"
 	AttributeVFID         = DriverName + "/vfID"
 	AttributeResourceName = DriverName + "/resourceName"
+	AttributeLinkType     = DriverName + "/linkType"
 	// Use upstream Kubernetes standard attribute prefix for numaNode
 	AttributeNumaNode = deviceattribute.StandardDeviceAttributePrefix + "numaNode"
 	// Use upstream Kubernetes standard attribute prefix for pciAddress
@@ -48,6 +49,11 @@ const (
 	// Network device constants
 	NetClass  = 0x02 // Network controller class
 	SysBusPci = "/sys/bus/pci/devices"
+
+	// Link type constants
+	LinkTypeEthernet   = "ethernet"
+	LinkTypeInfiniband = "infiniband"
+	LinkTypeUnknown    = "unknown"
 )
 
 // Kubernetes standard attributes
