@@ -6,10 +6,12 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"go.uber.org/mock/gomock"
 
 	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host"
+	mock_host "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host/mock"
 )
 
 var _ = Describe("Host", func() {
@@ -661,6 +663,70 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 				Expect(err).NotTo(HaveOccurred())
 				Expect(vfList).To(HaveLen(1))
 				Expect(vfList[0].DeviceID).To(BeEmpty()) // Should handle missing device ID
+			})
+		})
+	})
+
+	Describe("RDMA Device Functions", func() {
+		var (
+			mockCtrl         *gomock.Controller
+			mockRdmaProvider *mock_host.MockRdmaProvider
+			hostImpl         *host.Host
+		)
+
+		BeforeEach(func() {
+			mockCtrl = gomock.NewController(GinkgoT())
+			mockRdmaProvider = mock_host.NewMockRdmaProvider(mockCtrl)
+			hostImpl = host.NewHost().(*host.Host)
+			hostImpl.SetRdmaProvider(mockRdmaProvider)
+		})
+
+		AfterEach(func() {
+			mockCtrl.Finish()
+		})
+
+		Context("GetRDMADevicesForPCI", func() {
+			It("should return RDMA devices when they exist", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaDevicesForPcidev("0000:08:00.1").
+					Return([]string{"mlx5_1", "mlx5_2"}).
+					Times(1)
+
+				devices := hostImpl.GetRDMADevicesForPCI("0000:08:00.1")
+				Expect(devices).To(HaveLen(2))
+				Expect(devices).To(Equal([]string{"mlx5_1", "mlx5_2"}))
+			})
+
+			It("should return empty slice when no RDMA devices exist", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaDevicesForPcidev("0000:08:00.2").
+					Return([]string{}).
+					Times(1)
+
+				devices := hostImpl.GetRDMADevicesForPCI("0000:08:00.2")
+				Expect(devices).To(BeEmpty())
+			})
+		})
+
+		Context("VerifyRDMACapability", func() {
+			It("should return true when device has RDMA capabilities", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaDevicesForPcidev("0000:08:00.1").
+					Return([]string{"mlx5_1"}).
+					Times(1)
+
+				capable := hostImpl.VerifyRDMACapability("0000:08:00.1")
+				Expect(capable).To(BeTrue())
+			})
+
+			It("should return false when device has no RDMA capabilities", func() {
+				mockRdmaProvider.EXPECT().
+					GetRdmaDevicesForPcidev("0000:08:00.2").
+					Return([]string{}).
+					Times(1)
+
+				capable := hostImpl.VerifyRDMACapability("0000:08:00.2")
+				Expect(capable).To(BeFalse())
 			})
 		})
 	})

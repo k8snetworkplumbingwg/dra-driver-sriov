@@ -202,6 +202,20 @@ func (mr *MockInterfaceMockRecorder) GetParentPciAddress(pciAddress any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetParentPciAddress", reflect.TypeOf((*MockInterface)(nil).GetParentPciAddress), pciAddress)
 }
 
+// GetRDMADevicesForPCI mocks base method.
+func (m *MockInterface) GetRDMADevicesForPCI(pciAddr string) []string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRDMADevicesForPCI", pciAddr)
+	ret0, _ := ret[0].([]string)
+	return ret0
+}
+
+// GetRDMADevicesForPCI indicates an expected call of GetRDMADevicesForPCI.
+func (mr *MockInterfaceMockRecorder) GetRDMADevicesForPCI(pciAddr any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRDMADevicesForPCI", reflect.TypeOf((*MockInterface)(nil).GetRDMADevicesForPCI), pciAddr)
+}
+
 // GetVFIODeviceFile mocks base method.
 func (m *MockInterface) GetVFIODeviceFile(pciAddress string) (string, string, error) {
 	m.ctrl.T.Helper()
@@ -358,4 +372,18 @@ func (m *MockInterface) UnbindDriverByBusAndDevice(device string) error {
 func (mr *MockInterfaceMockRecorder) UnbindDriverByBusAndDevice(device any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnbindDriverByBusAndDevice", reflect.TypeOf((*MockInterface)(nil).UnbindDriverByBusAndDevice), device)
+}
+
+// VerifyRDMACapability mocks base method.
+func (m *MockInterface) VerifyRDMACapability(pciAddr string) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "VerifyRDMACapability", pciAddr)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// VerifyRDMACapability indicates an expected call of VerifyRDMACapability.
+func (mr *MockInterfaceMockRecorder) VerifyRDMACapability(pciAddr any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "VerifyRDMACapability", reflect.TypeOf((*MockInterface)(nil).VerifyRDMACapability), pciAddr)
 }
