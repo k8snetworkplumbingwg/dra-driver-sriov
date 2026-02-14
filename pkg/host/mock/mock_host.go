@@ -202,6 +202,21 @@ func (mr *MockInterfaceMockRecorder) GetParentPciAddress(pciAddress any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetParentPciAddress", reflect.TypeOf((*MockInterface)(nil).GetParentPciAddress), pciAddress)
 }
 
+// GetRDMACharDevices mocks base method.
+func (m *MockInterface) GetRDMACharDevices(rdmaDeviceName string) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRDMACharDevices", rdmaDeviceName)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetRDMACharDevices indicates an expected call of GetRDMACharDevices.
+func (mr *MockInterfaceMockRecorder) GetRDMACharDevices(rdmaDeviceName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRDMACharDevices", reflect.TypeOf((*MockInterface)(nil).GetRDMACharDevices), rdmaDeviceName)
+}
+
 // GetRDMADevicesForPCI mocks base method.
 func (m *MockInterface) GetRDMADevicesForPCI(pciAddr string) []string {
 	m.ctrl.T.Helper()
