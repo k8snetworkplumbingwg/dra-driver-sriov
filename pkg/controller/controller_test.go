@@ -41,7 +41,7 @@ var (
 	mgr        ctrl.Manager
 	cancelFunc context.CancelFunc
 
-	reconciler *controller.SriovResourceFilterReconciler
+	reconciler *controller.SriovResourcePolicyReconciler
 	applied    map[string]string
 )
 
@@ -53,7 +53,7 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 	testEnv = &envtest.Environment{
 		CRDInstallOptions: envtest.CRDInstallOptions{
 			Paths: []string{
-				"../../deployments/helm/dra-driver-sriov/templates/sriovnetwork.k8snetworkplumbingwg.io_sriovresourcefilters.yaml",
+				"../../deployments/helm/dra-driver-sriov/templates/sriovnetwork.k8snetworkplumbingwg.io_sriovresourcepolicies.yaml",
 			},
 		},
 		ErrorIfCRDPathMissing: true,
@@ -89,7 +89,7 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 		func(_ context.Context, m map[string]string) error { applied = m; return nil },
 	)
 
-	reconciler = controller.NewSriovResourceFilterReconciler(mgr.GetClient(), "test-node", "dra-sriov-driver", devState)
+	reconciler = controller.NewSriovResourcePolicyReconciler(mgr.GetClient(), "test-node", "dra-sriov-driver", devState)
 	Expect(reconciler.SetupWithManager(mgr)).To(Succeed())
 
 	var startCtx context.Context
@@ -147,18 +147,18 @@ func defaultAllocatableDevices() drasriovtypes.AllocatableDevices {
 	}
 }
 
-var _ = Describe("SriovResourceFilterReconciler (envtest)", func() {
-	It("should handle no filters in namespace", func(ctx SpecContext) {
+var _ = Describe("SriovResourcePolicyReconciler (envtest)", func() {
+	It("should handle no policies in namespace", func(ctx SpecContext) {
 		Consistently(func() bool {
-			return reconciler.GetCurrentResourceFilter() == nil
+			return reconciler.GetCurrentResourcePolicy() == nil
 		}, 500*time.Millisecond, 100*time.Millisecond).Should(BeTrue())
 		Expect(applied).To(HaveLen(0))
 	})
 
-	It("should select filter with empty nodeSelector and apply to devices", func(ctx SpecContext) {
-		filter := &sriovdrav1alpha1.SriovResourceFilter{
-			ObjectMeta: metav1.ObjectMeta{Name: "rf-empty-selector", Namespace: "dra-sriov-driver"},
-			Spec: sriovdrav1alpha1.SriovResourceFilterSpec{
+	It("should select policy with empty nodeSelector and apply to devices", func(ctx SpecContext) {
+		policy := &sriovdrav1alpha1.SriovResourcePolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "rp-empty-selector", Namespace: "dra-sriov-driver"},
+			Spec: sriovdrav1alpha1.SriovResourcePolicySpec{
 				NodeSelector: map[string]string{},
 				Configs: []sriovdrav1alpha1.Config{{
 					ResourceName:    "example.com/resA",
@@ -166,12 +166,12 @@ var _ = Describe("SriovResourceFilterReconciler (envtest)", func() {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, filter)).To(Succeed())
+		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
 
-		Eventually(func() *sriovdrav1alpha1.SriovResourceFilter {
-			return reconciler.GetCurrentResourceFilter()
+		Eventually(func() *sriovdrav1alpha1.SriovResourcePolicy {
+			return reconciler.GetCurrentResourcePolicy()
 		}, 5*time.Second, 200*time.Millisecond).ShouldNot(BeNil())
-		Expect(reconciler.HasResourceFilter()).To(BeTrue())
+		Expect(reconciler.HasResourcePolicy()).To(BeTrue())
 		Expect(reconciler.GetResourceNames()).To(ContainElement("example.com/resA"))
 
 		Eventually(func() int { return len(applied) }, 2*time.Second, 100*time.Millisecond).Should(BeNumerically(">=", 1))
@@ -181,26 +181,26 @@ var _ = Describe("SriovResourceFilterReconciler (envtest)", func() {
 		otherNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "other-ns"}}
 		Expect(k8sClient.Create(ctx, otherNS)).To(Succeed())
 
-		filter := &sriovdrav1alpha1.SriovResourceFilter{
-			ObjectMeta: metav1.ObjectMeta{Name: "rf-other-ns", Namespace: "other-ns"},
-			Spec:       sriovdrav1alpha1.SriovResourceFilterSpec{Configs: []sriovdrav1alpha1.Config{{ResourceName: "example.com/ignored"}}},
+		policy := &sriovdrav1alpha1.SriovResourcePolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "rp-other-ns", Namespace: "other-ns"},
+			Spec:       sriovdrav1alpha1.SriovResourcePolicySpec{Configs: []sriovdrav1alpha1.Config{{ResourceName: "example.com/ignored"}}},
 		}
-		Expect(k8sClient.Create(ctx, filter)).To(Succeed())
+		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
 
 		Consistently(func() []string { return reconciler.GetResourceNames() }, 1*time.Second, 200*time.Millisecond).Should(ContainElement("example.com/resA"))
 	})
 
-	It("should handle multiple matching filters by clearing current filter", func(ctx SpecContext) {
-		filter := &sriovdrav1alpha1.SriovResourceFilter{
-			ObjectMeta: metav1.ObjectMeta{Name: "rf-duplicate", Namespace: "dra-sriov-driver"},
-			Spec: sriovdrav1alpha1.SriovResourceFilterSpec{
+	It("should handle multiple matching policies by clearing current policy", func(ctx SpecContext) {
+		policy := &sriovdrav1alpha1.SriovResourcePolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "rp-duplicate", Namespace: "dra-sriov-driver"},
+			Spec: sriovdrav1alpha1.SriovResourcePolicySpec{
 				NodeSelector: map[string]string{},
 				Configs:      []sriovdrav1alpha1.Config{{ResourceName: "example.com/resB"}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, filter)).To(Succeed())
+		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
 
-		Eventually(func() bool { return reconciler.GetCurrentResourceFilter() == nil }, 5*time.Second, 200*time.Millisecond).Should(BeTrue())
+		Eventually(func() bool { return reconciler.GetCurrentResourcePolicy() == nil }, 5*time.Second, 200*time.Millisecond).Should(BeTrue())
 	})
 
 	It("should reselect when node labels change", func(ctx SpecContext) {
@@ -212,27 +212,27 @@ var _ = Describe("SriovResourceFilterReconciler (envtest)", func() {
 		node.Labels["role"] = "dpdk"
 		Expect(k8sClient.Update(ctx, node)).To(Succeed())
 
-		for _, name := range []string{"rf-empty-selector", "rf-duplicate"} {
-			rf := &sriovdrav1alpha1.SriovResourceFilter{}
-			if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: "dra-sriov-driver", Name: name}, rf); err == nil {
-				_ = k8sClient.Delete(ctx, rf)
+		for _, name := range []string{"rp-empty-selector", "rp-duplicate"} {
+			rp := &sriovdrav1alpha1.SriovResourcePolicy{}
+			if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: "dra-sriov-driver", Name: name}, rp); err == nil {
+				_ = k8sClient.Delete(ctx, rp)
 			}
 		}
 
-		filter := &sriovdrav1alpha1.SriovResourceFilter{
-			ObjectMeta: metav1.ObjectMeta{Name: "rf-node-select", Namespace: "dra-sriov-driver"},
-			Spec: sriovdrav1alpha1.SriovResourceFilterSpec{
+		policy := &sriovdrav1alpha1.SriovResourcePolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "rp-node-select", Namespace: "dra-sriov-driver"},
+			Spec: sriovdrav1alpha1.SriovResourcePolicySpec{
 				NodeSelector: map[string]string{"role": "dpdk"},
 				Configs:      []sriovdrav1alpha1.Config{{ResourceName: "example.com/resC"}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, filter)).To(Succeed())
+		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
 
 		Eventually(func() []string { return reconciler.GetResourceNames() }, 5*time.Second, 200*time.Millisecond).Should(ContainElement("example.com/resC"))
 	})
 
 	It("should requeue when node is missing (direct Reconcile call)", func(ctx SpecContext) {
-		bogus := controller.NewSriovResourceFilterReconciler(k8sClient, "missing-node", "dra-sriov-driver", nil)
+		bogus := controller.NewSriovResourcePolicyReconciler(k8sClient, "missing-node", "dra-sriov-driver", nil)
 		result, err := bogus.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Name: "irrelevant", Namespace: "dra-sriov-driver"}})
 		Expect(err).To(BeNil())
 		Expect(result.RequeueAfter).NotTo(BeZero())
