@@ -45,32 +45,32 @@ import (
 )
 
 const (
-	resourceFilterSyncEventName = "resource-filter-sync"
+	resourcePolicySyncEventName = "resource-policy-sync"
 )
 
-// SriovResourceFilterReconciler reconciles SriovResourceFilter objects
-type SriovResourceFilterReconciler struct {
+// SriovResourcePolicyReconciler reconciles SriovResourcePolicy objects
+type SriovResourcePolicyReconciler struct {
 	client.Client
 	nodeName              string
 	namespace             string
-	currentResourceFilter *sriovdrav1alpha1.SriovResourceFilter
+	currentResourcePolicy *sriovdrav1alpha1.SriovResourcePolicy
 	log                   klog.Logger
 	deviceStateManager    devicestate.DeviceState
 }
 
-// NewSriovResourceFilterReconciler creates a new SriovResourceFilterReconciler
-func NewSriovResourceFilterReconciler(client client.Client, nodeName, namespace string, deviceStateManager devicestate.DeviceState) *SriovResourceFilterReconciler {
-	return &SriovResourceFilterReconciler{
+// NewSriovResourcePolicyReconciler creates a new SriovResourcePolicyReconciler
+func NewSriovResourcePolicyReconciler(client client.Client, nodeName, namespace string, deviceStateManager devicestate.DeviceState) *SriovResourcePolicyReconciler {
+	return &SriovResourcePolicyReconciler{
 		Client:             client,
 		deviceStateManager: deviceStateManager,
 		nodeName:           nodeName,
 		namespace:          namespace,
-		log:                klog.Background().WithName("SriovResourceFilter"),
+		log:                klog.Background().WithName("SriovResourcePolicy"),
 	}
 }
 
-// Reconcile handles the reconciliation of SriovResourceFilter resources
-func (r *SriovResourceFilterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+// Reconcile handles the reconciliation of SriovResourcePolicy resources
+func (r *SriovResourcePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	r.log.Info("Starting reconcile", "request", req.NamespacedName, "watchedNamespace", r.namespace)
 
 	// Get the current node to check its labels
@@ -85,98 +85,98 @@ func (r *SriovResourceFilterReconciler) Reconcile(ctx context.Context, req ctrl.
 		return ctrl.Result{}, err
 	}
 
-	// List all SriovResourceFilter objects in the operator namespace
-	resourceFilterList := &sriovdrav1alpha1.SriovResourceFilterList{}
-	if err := r.List(ctx, resourceFilterList, client.InNamespace(r.namespace)); err != nil {
-		r.log.Error(err, "Failed to list SriovResourceFilter objects", "namespace", r.namespace)
+	// List all SriovResourcePolicy objects in the operator namespace
+	resourcePolicyList := &sriovdrav1alpha1.SriovResourcePolicyList{}
+	if err := r.List(ctx, resourcePolicyList, client.InNamespace(r.namespace)); err != nil {
+		r.log.Error(err, "Failed to list SriovResourcePolicy objects", "namespace", r.namespace)
 		return ctrl.Result{}, err
 	}
 
-	// Find matching resource filters for this node
-	var matchingFilters []*sriovdrav1alpha1.SriovResourceFilter
-	for i := range resourceFilterList.Items {
-		filter := &resourceFilterList.Items[i]
-		if r.matchesNodeSelector(node.Labels, filter.Spec.NodeSelector) {
-			matchingFilters = append(matchingFilters, filter)
+	// Find matching resource policies for this node
+	var matchingPolicies []*sriovdrav1alpha1.SriovResourcePolicy
+	for i := range resourcePolicyList.Items {
+		policy := &resourcePolicyList.Items[i]
+		if r.matchesNodeSelector(node.Labels, policy.Spec.NodeSelector) {
+			matchingPolicies = append(matchingPolicies, policy)
 		}
 	}
 
 	// Handle the results
-	switch len(matchingFilters) {
+	switch len(matchingPolicies) {
 	case 0:
-		r.log.Info("No matching SriovResourceFilter found for node", "nodeName", r.nodeName)
-		r.currentResourceFilter = nil
-		// Clear resource filter from devices since no filter matches
-		if err := r.applyResourceFilterToDevices(ctx); err != nil {
-			r.log.Error(err, "Failed to clear resource filter from devices")
+		r.log.Info("No matching SriovResourcePolicy found for node", "nodeName", r.nodeName)
+		r.currentResourcePolicy = nil
+		// Clear resource policy from devices since no policy matches
+		if err := r.applyResourcePolicyToDevices(ctx); err != nil {
+			r.log.Error(err, "Failed to clear resource policy from devices")
 			return ctrl.Result{}, err
 		}
 	case 1:
-		r.log.Info("Found matching SriovResourceFilter for node", "nodeName", r.nodeName, "filter", matchingFilters[0].Name)
-		r.currentResourceFilter = matchingFilters[0]
-		// Apply resource filter to devices
-		if err := r.applyResourceFilterToDevices(ctx); err != nil {
-			r.log.Error(err, "Failed to apply resource filter to devices")
+		r.log.Info("Found matching SriovResourcePolicy for node", "nodeName", r.nodeName, "policy", matchingPolicies[0].Name)
+		r.currentResourcePolicy = matchingPolicies[0]
+		// Apply resource policy to devices
+		if err := r.applyResourcePolicyToDevices(ctx); err != nil {
+			r.log.Error(err, "Failed to apply resource policy to devices")
 			return ctrl.Result{}, err
 		}
 	default:
 		// Multiple matches - log error and don't use any
-		filterNames := make([]string, len(matchingFilters))
-		for i, filter := range matchingFilters {
-			filterNames[i] = filter.Name
+		policyNames := make([]string, len(matchingPolicies))
+		for i, policy := range matchingPolicies {
+			policyNames[i] = policy.Name
 		}
-		r.log.Error(fmt.Errorf("multiple SriovResourceFilter objects match node"),
-			"Multiple resource filters match node, ignoring all",
+		r.log.Error(fmt.Errorf("multiple SriovResourcePolicy objects match node"),
+			"Multiple resource policies match node, ignoring all",
 			"nodeName", r.nodeName,
-			"matchingFilters", filterNames)
-		r.currentResourceFilter = nil
+			"matchingPolicies", policyNames)
+		r.currentResourcePolicy = nil
 	}
 
 	return ctrl.Result{}, nil
 }
 
-// GetCurrentResourceFilter returns the currently active SriovResourceFilter for the node
-func (r *SriovResourceFilterReconciler) GetCurrentResourceFilter() *sriovdrav1alpha1.SriovResourceFilter {
-	return r.currentResourceFilter
+// GetCurrentResourcePolicy returns the currently active SriovResourcePolicy for the node
+func (r *SriovResourcePolicyReconciler) GetCurrentResourcePolicy() *sriovdrav1alpha1.SriovResourcePolicy {
+	return r.currentResourcePolicy
 }
 
-// HasResourceFilter returns true if there is currently an active SriovResourceFilter for the node
-func (r *SriovResourceFilterReconciler) HasResourceFilter() bool {
-	return r.currentResourceFilter != nil
+// HasResourcePolicy returns true if there is currently an active SriovResourcePolicy for the node
+func (r *SriovResourcePolicyReconciler) HasResourcePolicy() bool {
+	return r.currentResourcePolicy != nil
 }
 
-// GetConfigs returns the configs from the currently active SriovResourceFilter
-// Returns nil if no resource filter is active
-func (r *SriovResourceFilterReconciler) GetConfigs() []sriovdrav1alpha1.Config {
-	if r.currentResourceFilter == nil {
+// GetConfigs returns the configs from the currently active SriovResourcePolicy
+// Returns nil if no resource policy is active
+func (r *SriovResourcePolicyReconciler) GetConfigs() []sriovdrav1alpha1.Config {
+	if r.currentResourcePolicy == nil {
 		return nil
 	}
-	return r.currentResourceFilter.Spec.Configs
+	return r.currentResourcePolicy.Spec.Configs
 }
 
-// GetResourceFilters returns all resource filters from all configs in the currently active SriovResourceFilter
-// Returns nil if no resource filter is active
+// GetResourceFilters returns all resource filters from all configs in the currently active SriovResourcePolicy
+// Returns nil if no resource policy is active
 //
 // Deprecated: Use GetConfigs() instead for better resource name handling
-func (r *SriovResourceFilterReconciler) GetResourceFilters() []sriovdrav1alpha1.ResourceFilter {
-	if r.currentResourceFilter == nil {
+func (r *SriovResourcePolicyReconciler) GetResourceFilters() []sriovdrav1alpha1.ResourceFilter {
+	if r.currentResourcePolicy == nil {
 		return nil
 	}
 	var allFilters []sriovdrav1alpha1.ResourceFilter
-	for _, config := range r.currentResourceFilter.Spec.Configs {
+	for _, config := range r.currentResourcePolicy.Spec.Configs {
 		allFilters = append(allFilters, config.ResourceFilters...)
 	}
 	return allFilters
 }
 
-// GetResourceNames returns all resource names from the currently active SriovResourceFilter
-// Returns nil if no resource filter is active
-func (r *SriovResourceFilterReconciler) GetResourceNames() []string {
-	if r.currentResourceFilter == nil {
+// GetResourceNames returns all resource names from the currently active SriovResourcePolicy
+// Returns nil if no resource policy is active
+func (r *SriovResourcePolicyReconciler) GetResourceNames() []string {
+	if r.currentResourcePolicy == nil {
 		return nil
 	}
 	var resourceNames []string
-	for _, config := range r.currentResourceFilter.Spec.Configs {
+	for _, config := range r.currentResourcePolicy.Spec.Configs {
 		if config.ResourceName != "" {
 			resourceNames = append(resourceNames, config.ResourceName)
 		}
@@ -185,7 +185,7 @@ func (r *SriovResourceFilterReconciler) GetResourceNames() []string {
 }
 
 // matchesNodeSelector checks if node labels match the given selector
-func (r *SriovResourceFilterReconciler) matchesNodeSelector(nodeLabels map[string]string, nodeSelector map[string]string) bool {
+func (r *SriovResourcePolicyReconciler) matchesNodeSelector(nodeLabels map[string]string, nodeSelector map[string]string) bool {
 	if len(nodeSelector) == 0 {
 		// Empty selector matches all nodes
 		return true
@@ -195,39 +195,39 @@ func (r *SriovResourceFilterReconciler) matchesNodeSelector(nodeLabels map[strin
 	return selector.Matches(labels.Set(nodeLabels))
 }
 
-// applyResourceFilterToDevices applies the current resource filter to devices
-func (r *SriovResourceFilterReconciler) applyResourceFilterToDevices(ctx context.Context) error {
+// applyResourcePolicyToDevices applies the current resource policy to devices
+func (r *SriovResourcePolicyReconciler) applyResourcePolicyToDevices(ctx context.Context) error {
 	deviceResourceMap := r.getFilteredDeviceResourceMap()
 	return r.deviceStateManager.UpdateDeviceResourceNames(ctx, deviceResourceMap)
 }
 
-// getFilteredDeviceResourceMap returns a map of device name to resource name based on the current resource filter
-func (r *SriovResourceFilterReconciler) getFilteredDeviceResourceMap() map[string]string {
+// getFilteredDeviceResourceMap returns a map of device name to resource name based on the current resource policy
+func (r *SriovResourcePolicyReconciler) getFilteredDeviceResourceMap() map[string]string {
 	deviceResourceMap := make(map[string]string)
 
-	// If no resource filter is active, return empty map (clears resource names)
-	if r.currentResourceFilter == nil {
-		r.log.V(2).Info("No active resource filter, clearing all resource names")
+	// If no resource policy is active, return empty map (clears resource names)
+	if r.currentResourcePolicy == nil {
+		r.log.V(2).Info("No active resource policy, clearing all resource names")
 		return deviceResourceMap
 	}
 
 	// Get all allocatable devices from device state manager
 	allocatableDevices := r.deviceStateManager.GetAllocatableDevices()
 
-	r.log.V(2).Info("Applying resource filter to devices",
-		"filterName", r.currentResourceFilter.Name,
-		"totalConfigs", len(r.currentResourceFilter.Spec.Configs),
+	r.log.V(2).Info("Applying resource policy to devices",
+		"policyName", r.currentResourcePolicy.Name,
+		"totalConfigs", len(r.currentResourcePolicy.Spec.Configs),
 		"totalDevices", len(allocatableDevices))
 
 	// Iterate through each config and apply its resource filters to devices
-	for _, config := range r.currentResourceFilter.Spec.Configs {
+	for _, config := range r.currentResourcePolicy.Spec.Configs {
 		if config.ResourceName == "" {
-			r.log.V(2).Info("Skipping config with empty resource name", "filterName", r.currentResourceFilter.Name)
+			r.log.V(2).Info("Skipping config with empty resource name", "policyName", r.currentResourcePolicy.Name)
 			continue
 		}
 
 		r.log.V(3).Info("Processing config",
-			"filterName", r.currentResourceFilter.Name,
+			"policyName", r.currentResourcePolicy.Name,
 			"resourceName", config.ResourceName,
 			"filtersCount", len(config.ResourceFilters))
 
@@ -243,13 +243,13 @@ func (r *SriovResourceFilterReconciler) getFilteredDeviceResourceMap() map[strin
 				r.log.V(3).Info("Device matches config filter",
 					"deviceName", deviceName,
 					"resourceName", config.ResourceName,
-					"filterName", r.currentResourceFilter.Name)
+					"policyName", r.currentResourcePolicy.Name)
 			}
 		}
 	}
 
-	r.log.Info("Resource filter applied",
-		"filterName", r.currentResourceFilter.Name,
+	r.log.Info("Resource policy applied",
+		"policyName", r.currentResourcePolicy.Name,
 		"matchingDevices", len(deviceResourceMap),
 		"totalDevices", len(allocatableDevices))
 
@@ -257,7 +257,7 @@ func (r *SriovResourceFilterReconciler) getFilteredDeviceResourceMap() map[strin
 }
 
 // deviceMatchesFilters checks if a device matches any of the provided resource filters
-func (r *SriovResourceFilterReconciler) deviceMatchesFilters(device resourceapi.Device, filters []sriovdrav1alpha1.ResourceFilter) bool {
+func (r *SriovResourcePolicyReconciler) deviceMatchesFilters(device resourceapi.Device, filters []sriovdrav1alpha1.ResourceFilter) bool {
 	// If no filters are specified, match all devices
 	if len(filters) == 0 {
 		return true
@@ -274,7 +274,7 @@ func (r *SriovResourceFilterReconciler) deviceMatchesFilters(device resourceapi.
 }
 
 // deviceMatchesFilter checks if a device matches a specific resource filter
-func (r *SriovResourceFilterReconciler) deviceMatchesFilter(device resourceapi.Device, filter sriovdrav1alpha1.ResourceFilter) bool {
+func (r *SriovResourcePolicyReconciler) deviceMatchesFilter(device resourceapi.Device, filter sriovdrav1alpha1.ResourceFilter) bool {
 	// Check vendor IDs
 	if len(filter.Vendors) > 0 {
 		vendorAttr, exists := device.Attributes[consts.AttributeVendorID]
@@ -355,7 +355,7 @@ func (r *SriovResourceFilterReconciler) deviceMatchesFilter(device resourceapi.D
 }
 
 // stringSliceContains checks if a slice contains a specific string
-func (r *SriovResourceFilterReconciler) stringSliceContains(slice []string, item string) bool {
+func (r *SriovResourcePolicyReconciler) stringSliceContains(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {
 			return true
@@ -365,11 +365,11 @@ func (r *SriovResourceFilterReconciler) stringSliceContains(slice []string, item
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *SriovResourceFilterReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *SriovResourcePolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	qHandler := func(q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 		q.AddAfter(reconcile.Request{NamespacedName: types.NamespacedName{
 			Namespace: r.namespace,
-			Name:      resourceFilterSyncEventName,
+			Name:      resourcePolicySyncEventName,
 		}}, time.Second)
 	}
 
@@ -431,11 +431,11 @@ func (r *SriovResourceFilterReconciler) SetupWithManager(mgr ctrl.Manager) error
 
 	// Send initial sync event to trigger reconcile when controller is started
 	var eventChan = make(chan event.GenericEvent, 1)
-	eventChan <- event.GenericEvent{Object: &sriovdrav1alpha1.SriovResourceFilter{
-		ObjectMeta: metav1.ObjectMeta{Name: resourceFilterSyncEventName, Namespace: r.namespace}}}
+	eventChan <- event.GenericEvent{Object: &sriovdrav1alpha1.SriovResourcePolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: resourcePolicySyncEventName, Namespace: r.namespace}}}
 	close(eventChan)
 
-	// Create predicate to filter SriovResourceFilter events to only the operator namespace
+	// Create predicate to filter SriovResourcePolicy events to only the operator namespace
 	namespacePredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		return obj.GetNamespace() == r.namespace
 	})
@@ -445,9 +445,9 @@ func (r *SriovResourceFilterReconciler) SetupWithManager(mgr ctrl.Manager) error
 	nodeMetadata.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Node"))
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&sriovdrav1alpha1.SriovResourceFilter{}).
+		For(&sriovdrav1alpha1.SriovResourcePolicy{}).
 		Watches(nodeMetadata, nodeEventHandler).
-		Watches(&sriovdrav1alpha1.SriovResourceFilter{}, delayedEventHandler).
+		Watches(&sriovdrav1alpha1.SriovResourcePolicy{}, delayedEventHandler).
 		WithEventFilter(namespacePredicate).
 		WatchesRawSource(source.Channel(eventChan, &handler.EnqueueRequestForObject{})).
 		Complete(r)
