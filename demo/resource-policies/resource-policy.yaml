@@ -1,33 +1,61 @@
+# DeviceAttributes define extra attributes applied to devices matched by a policy config.
+# Policies reference DeviceAttributes via label selectors.
 apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
-kind: SriovResourceFilter
+kind: DeviceAttributes
 metadata:
-  name: example-resource-filter
+  name: eth0-attrs
+  namespace: dra-sriov-driver
+  labels:
+    pool: eth0-resource
+spec:
+  attributes:
+    sriovnetwork.k8snetworkplumbingwg.io/resourceName:
+      string: "eth0_resource"
+---
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: DeviceAttributes
+metadata:
+  name: eth1-attrs
+  namespace: dra-sriov-driver
+  labels:
+    pool: eth1-resource
+spec:
+  attributes:
+    sriovnetwork.k8snetworkplumbingwg.io/resourceName:
+      string: "eth1_resource"
+---
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: SriovResourcePolicy
+metadata:
+  name: example-resource-policy
   namespace: dra-sriov-driver
 spec:
-  # NodeSelector to match specific nodes
-  # Empty nodeSelector matches all nodes
+  # NodeSelector to match specific nodes (uses v1.NodeSelector)
+  # Omit or leave empty to match all nodes
   nodeSelector:
-    kubernetes.io/hostname: dra-ctlplane-0.dra.lab
+    nodeSelectorTerms:
+    - matchExpressions:
+      - key: kubernetes.io/hostname
+        operator: In
+        values:
+        - dra-ctlplane-0.dra.lab
   # Configs define multiple resource configurations
   configs:
   - # First config for eth0 device
-    resourceName: "eth0_resource"
+    deviceAttributesSelector:
+      matchLabels:
+        pool: eth0-resource
     resourceFilters:
-    - # Filter by vendor ID (Intel)
-      vendors: ["8086"]
-      # Filter by device ID  
-      # devices: ["154c", "10ed"]
-      # Filter by specific PCI addresses (optional)
-      # pciAddresses: ["0000:01:00.0", "0000:01:00.1"]
-      # Filter by Physical Function names (optional)
+    - vendors: ["8086"]
       pfNames: ["eth0"]
       # Filter by PF PCI addresses (optional)
       # pfPciAddresses: ["0000:01:00.0"]
       # Filter by driver names (optional)
       # drivers: ["vfio-pci", "igb_uio"]
-  
   - # Second config for eth1 device
-    resourceName: "eth1_resource"
+    deviceAttributesSelector:
+      matchLabels:
+        pool: eth1-resource
     resourceFilters:
     - vendors: ["8086"]
       pfNames: ["eth1"]

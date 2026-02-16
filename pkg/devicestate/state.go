@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	netattdefv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -32,6 +33,10 @@ type Manager struct {
 	defaultInterfacePrefix string
 	allocatable            drasriovtypes.AllocatableDevices
 	republishCallback      func(context.Context) error
+	// policyAttrKeys tracks attribute keys set by policy per device, so they
+	// can be cleared without touching discovery attributes. Presence of a
+	// device key also indicates that the device is advertised (policy-matched).
+	policyAttrKeys map[string]map[resourceapi.QualifiedName]bool
 }
 
 func NewManager(config *drasriovtypes.Config, cdi *cdi.Handler) (*Manager, error) {
@@ -388,79 +393,131 @@ func (s *Manager) unprepareDevices(preparedDevices drasriovtypes.PreparedDevices
 	return nil
 }
 
-// UpdateDeviceResourceNames updates the resource names for devices and triggers a republish
-// deviceResourceMap is a map of device name to resource name. Empty resource name removes the attribute.
-func (s *Manager) UpdateDeviceResourceNames(ctx context.Context, deviceResourceMap map[string]string) error {
-	logger := klog.FromContext(ctx).WithName("UpdateDeviceResourceNames")
-	logger.V(2).Info("Updating device resource names", "deviceCount", len(deviceResourceMap))
+// GetAdvertisedDevices returns only devices that are matched by a policy.
+func (s *Manager) GetAdvertisedDevices() drasriovtypes.AllocatableDevices {
+	result := make(drasriovtypes.AllocatableDevices, len(s.policyAttrKeys))
+	for name := range s.policyAttrKeys {
+		if device, exists := s.allocatable[name]; exists {
+			result[name] = device
+		}
+	}
+	return result
+}
 
-	// Track if any changes were made
+// UpdatePolicyDevices updates the set of advertised devices and their policy-applied attributes.
+// Keys in policyDevices are device names matched by policies (these will be advertised).
+// Values are additional attributes from resolved DeviceAttributes objects.
+// Devices not in the map have their policy-set attributes cleared and are excluded from advertisement.
+func (s *Manager) UpdatePolicyDevices(ctx context.Context, policyDevices map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute) error {
+	logger := klog.FromContext(ctx).WithName("UpdatePolicyDevices")
+	logger.V(2).Info("Updating policy devices", "policyDeviceCount", len(policyDevices))
+
 	changesMade := false
 
-	// Update allocatable devices with resource names
-	for deviceName, resourceName := range deviceResourceMap {
-		if device, exists := s.allocatable[deviceName]; exists {
-			// Add or update the resource name attribute
-			if resourceName != "" {
-				// Set resource name
-				if device.Attributes == nil {
-					device.Attributes = make(map[resourceapi.QualifiedName]resourceapi.DeviceAttribute)
-				}
-
-				// Check if attribute already exists with the same value
-				if existingAttr, exists := device.Attributes[consts.AttributeResourceName]; !exists ||
-					existingAttr.StringValue == nil || *existingAttr.StringValue != resourceName {
-					device.Attributes[consts.AttributeResourceName] = resourceapi.DeviceAttribute{
-						StringValue: &resourceName,
-					}
-					s.allocatable[deviceName] = device
-					changesMade = true
-					logger.V(3).Info("Set resource name for device", "deviceName", deviceName, "resourceName", resourceName)
-				}
-			} else {
-				// Remove resource name attribute if it exists
-				if _, exists := device.Attributes[consts.AttributeResourceName]; exists {
-					delete(device.Attributes, consts.AttributeResourceName)
-					s.allocatable[deviceName] = device
-					changesMade = true
-					logger.V(3).Info("Cleared resource name for device", "deviceName", deviceName)
-				}
-			}
-		} else {
-			logger.V(2).Info("Device not found in allocatable devices", "deviceName", deviceName)
-		}
-	}
-
-	// Clear resource name attribute for devices not in the map
-	for deviceName, device := range s.allocatable {
-		if _, inMap := deviceResourceMap[deviceName]; !inMap {
-			if _, exists := device.Attributes[consts.AttributeResourceName]; exists {
-				delete(device.Attributes, consts.AttributeResourceName)
-				s.allocatable[deviceName] = device
+	// Clear policy attributes from devices no longer in the policy set
+	for deviceName := range s.policyAttrKeys {
+		if _, stillMatched := policyDevices[deviceName]; !stillMatched {
+			if s.clearPolicyAttributes(deviceName) {
 				changesMade = true
-				logger.V(3).Info("Cleared resource name for device not in filter", "deviceName", deviceName)
+				logger.V(3).Info("Cleared policy attributes for unadvertised device", "deviceName", deviceName)
 			}
 		}
 	}
 
-	if changesMade {
-		logger.Info("Device resource names updated", "totalDevices", len(s.allocatable), "filteredDevices", len(deviceResourceMap))
-
-		// Trigger resource republishing if callback is available
-		if s.republishCallback != nil {
-			if err := s.republishCallback(ctx); err != nil {
-				logger.Error(err, "Failed to republish resources after updating resource names")
-				return fmt.Errorf("failed to republish resources: %w", err)
-			}
-			logger.V(2).Info("Successfully republished resources after updating resource names")
+	// Detect advertised set changes
+	if !changesMade {
+		if len(policyDevices) != len(s.policyAttrKeys) {
+			changesMade = true
 		} else {
-			logger.V(2).Info("No republish callback available - resources will be updated on next periodic refresh")
+			for name := range policyDevices {
+				if _, ok := s.policyAttrKeys[name]; !ok {
+					changesMade = true
+					break
+				}
+			}
 		}
-	} else {
-		logger.V(2).Info("No changes made to device resource names")
+	}
+
+	// Apply policy attributes to matched devices
+	for deviceName, attrs := range policyDevices {
+		device, exists := s.allocatable[deviceName]
+		if !exists {
+			continue
+		}
+
+		if device.Attributes == nil {
+			device.Attributes = make(map[resourceapi.QualifiedName]resourceapi.DeviceAttribute)
+		}
+
+		// Track new policy attribute keys for this device
+		newKeys := make(map[resourceapi.QualifiedName]bool, len(attrs))
+		for key, val := range attrs {
+			newKeys[key] = true
+			if existing, ok := device.Attributes[key]; !ok || !deviceAttributeEqual(existing, val) {
+				device.Attributes[key] = val
+				changesMade = true
+				logger.V(3).Info("Set policy attribute", "deviceName", deviceName, "key", key)
+			}
+		}
+
+		// Clear old policy attributes that are no longer in the new set
+		if oldKeys, ok := s.policyAttrKeys[deviceName]; ok {
+			for oldKey := range oldKeys {
+				if !newKeys[oldKey] {
+					delete(device.Attributes, oldKey)
+					changesMade = true
+					logger.V(3).Info("Cleared stale policy attribute", "deviceName", deviceName, "key", oldKey)
+				}
+			}
+		}
+
+		s.allocatable[deviceName] = device
+		if s.policyAttrKeys == nil {
+			s.policyAttrKeys = make(map[string]map[resourceapi.QualifiedName]bool)
+		}
+		s.policyAttrKeys[deviceName] = newKeys
+	}
+
+	if !changesMade {
+		logger.V(2).Info("No changes to policy devices")
+		return nil
+	}
+
+	logger.Info("Policy devices updated", "totalDevices", len(s.allocatable), "advertisedDevices", len(s.policyAttrKeys))
+	if s.republishCallback != nil {
+		if err := s.republishCallback(ctx); err != nil {
+			logger.Error(err, "Failed to republish resources after policy update")
+			return fmt.Errorf("failed to republish resources: %w", err)
+		}
 	}
 
 	return nil
+}
+
+// clearPolicyAttributes removes all policy-set attributes from a device.
+func (s *Manager) clearPolicyAttributes(deviceName string) bool {
+	oldKeys, ok := s.policyAttrKeys[deviceName]
+	if !ok || len(oldKeys) == 0 {
+		delete(s.policyAttrKeys, deviceName)
+		return false
+	}
+
+	device, exists := s.allocatable[deviceName]
+	if !exists {
+		delete(s.policyAttrKeys, deviceName)
+		return false
+	}
+
+	for key := range oldKeys {
+		delete(device.Attributes, key)
+	}
+	s.allocatable[deviceName] = device
+	delete(s.policyAttrKeys, deviceName)
+	return true
+}
+
+func deviceAttributeEqual(a, b resourceapi.DeviceAttribute) bool {
+	return reflect.DeepEqual(a, b)
 }
 
 // SetRepublishCallback sets the callback function to trigger resource republishing

@@ -1,20 +1,49 @@
-# SriovResourceFilter with two configs — one per physical port
+# DeviceAttributes for port 1
 apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
-kind: SriovResourceFilter
+kind: DeviceAttributes
+metadata:
+  name: port1-attrs
+  namespace: dra-sriov-driver
+  labels:
+    pool: port1-vfs
+spec:
+  attributes:
+    sriovnetwork.k8snetworkplumbingwg.io/resourceName:
+      string: "port1-vfs"
+---
+# DeviceAttributes for port 2
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: DeviceAttributes
+metadata:
+  name: port2-attrs
+  namespace: dra-sriov-driver
+  labels:
+    pool: port2-vfs
+spec:
+  attributes:
+    sriovnetwork.k8snetworkplumbingwg.io/resourceName:
+      string: "port2-vfs"
+---
+# SriovResourcePolicy with two configs — one per physical port
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: SriovResourcePolicy
 metadata:
   name: dual-port-vfs
-  namespace: dra-sriov-system
+  namespace: dra-sriov-driver
 spec:
-  nodeSelector: {}
   configs:
-  - resourceName: "port1-vfs"
+  - deviceAttributesSelector:
+      matchLabels:
+        pool: port1-vfs
     resourceFilters:
     - pciAddresses:
       - "0000:08:00.2"
       - "0000:08:00.3"
       - "0000:08:00.4"
       - "0000:08:00.5"
-  - resourceName: "port2-vfs"
+  - deviceAttributesSelector:
+      matchLabels:
+        pool: port2-vfs
     resourceFilters:
     - pciAddresses:
       - "0000:08:02.2"

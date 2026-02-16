@@ -21,5 +21,8 @@ rules:
   resources: ["network-attachment-definitions"]
   verbs: ["get"]
 - apiGroups: ["sriovnetwork.k8snetworkplumbingwg.io"]
-  resources: ["sriovresourcefilters"]
-  verbs: ["get", "list", "watch"]  # SriovResourceFilter resources
+  resources: ["sriovresourcepolicies"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["sriovnetwork.k8snetworkplumbingwg.io"]
+  resources: ["deviceattributes"]
+  verbs: ["get", "list", "watch"]

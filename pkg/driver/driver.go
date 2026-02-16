@@ -107,10 +107,12 @@ func (d *Driver) Shutdown(logger klog.Logger) error {
 	return nil
 }
 
-// PublishResources publishes the devices to the DRA resoruce slice
+// PublishResources publishes policy-matched devices to the DRA resource slice.
+// Only devices matched by a SriovResourcePolicy are advertised.
 func (d *Driver) PublishResources(ctx context.Context) error {
-	devices := make([]resourceapi.Device, 0, len(d.deviceStateManager.GetAllocatableDevices()))
-	for device := range maps.Values(d.deviceStateManager.GetAllocatableDevices()) {
+	advertised := d.deviceStateManager.GetAdvertisedDevices()
+	devices := make([]resourceapi.Device, 0, len(advertised))
+	for device := range maps.Values(advertised) {
 		devices = append(devices, device)
 	}
 	resources := resourceslice.DriverResources{
