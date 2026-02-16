@@ -15,6 +15,7 @@ import (
 
 	types "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 	gomock "go.uber.org/mock/gomock"
+	v1 "k8s.io/api/resource/v1"
 )
 
 // MockDeviceState is a mock of DeviceState interface.
@@ -41,6 +42,20 @@ func (m *MockDeviceState) EXPECT() *MockDeviceStateMockRecorder {
 	return m.recorder
 }
 
+// GetAdvertisedDevices mocks base method.
+func (m *MockDeviceState) GetAdvertisedDevices() types.AllocatableDevices {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAdvertisedDevices")
+	ret0, _ := ret[0].(types.AllocatableDevices)
+	return ret0
+}
+
+// GetAdvertisedDevices indicates an expected call of GetAdvertisedDevices.
+func (mr *MockDeviceStateMockRecorder) GetAdvertisedDevices() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAdvertisedDevices", reflect.TypeOf((*MockDeviceState)(nil).GetAdvertisedDevices))
+}
+
 // GetAllocatableDevices mocks base method.
 func (m *MockDeviceState) GetAllocatableDevices() types.AllocatableDevices {
 	m.ctrl.T.Helper()
@@ -55,16 +70,16 @@ func (mr *MockDeviceStateMockRecorder) GetAllocatableDevices() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllocatableDevices", reflect.TypeOf((*MockDeviceState)(nil).GetAllocatableDevices))
 }
 
-// UpdateDeviceResourceNames mocks base method.
-func (m *MockDeviceState) UpdateDeviceResourceNames(ctx context.Context, deviceResourceMap map[string]string) error {
+// UpdatePolicyDevices mocks base method.
+func (m *MockDeviceState) UpdatePolicyDevices(ctx context.Context, policyDevices map[string]map[v1.QualifiedName]v1.DeviceAttribute) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateDeviceResourceNames", ctx, deviceResourceMap)
+	ret := m.ctrl.Call(m, "UpdatePolicyDevices", ctx, policyDevices)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// UpdateDeviceResourceNames indicates an expected call of UpdateDeviceResourceNames.
-func (mr *MockDeviceStateMockRecorder) UpdateDeviceResourceNames(ctx, deviceResourceMap any) *gomock.Call {
+// UpdatePolicyDevices indicates an expected call of UpdatePolicyDevices.
+func (mr *MockDeviceStateMockRecorder) UpdatePolicyDevices(ctx, policyDevices any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateDeviceResourceNames", reflect.TypeOf((*MockDeviceState)(nil).UpdateDeviceResourceNames), ctx, deviceResourceMap)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdatePolicyDevices", reflect.TypeOf((*MockDeviceState)(nil).UpdatePolicyDevices), ctx, policyDevices)
 }
