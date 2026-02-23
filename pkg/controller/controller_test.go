@@ -122,7 +122,6 @@ func defaultAllocatableDevices() drasriovtypes.AllocatableDevices {
 	pcieRoot := "pci0000:00"
 	// Immediate parent PCI address (e.g., bridge)
 	parentPci := "0000:00:00.0"
-	numa := int64(0)
 
 	return drasriovtypes.AllocatableDevices{
 		"devA": resourcev1.Device{
@@ -134,7 +133,6 @@ func defaultAllocatableDevices() drasriovtypes.AllocatableDevices {
 				sriovconsts.AttributePciAddress:       {StringValue: &pci},
 				sriovconsts.AttributePCIeRoot:         {StringValue: &pcieRoot},
 				sriovconsts.AttributeParentPciAddress: {StringValue: &parentPci},
-				sriovconsts.AttributeNumaNode:         {IntValue: &numa},
 			},
 		},
 		"devB": resourcev1.Device{

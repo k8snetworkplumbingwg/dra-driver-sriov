@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -327,18 +326,6 @@ func (r *SriovResourceFilterReconciler) deviceMatchesFilter(device resourceapi.D
 			return false
 		}
 		if !r.stringSliceContains(filter.RootDevices, *parentAttr.StringValue) {
-			return false
-		}
-	}
-
-	// Check NUMA nodes
-	if len(filter.NumaNodes) > 0 {
-		numaAttr, exists := device.Attributes[consts.AttributeNumaNode]
-		if !exists || numaAttr.IntValue == nil {
-			return false
-		}
-		numaStr := strconv.FormatInt(*numaAttr.IntValue, 10)
-		if !r.stringSliceContains(filter.NumaNodes, numaStr) {
 			return false
 		}
 	}

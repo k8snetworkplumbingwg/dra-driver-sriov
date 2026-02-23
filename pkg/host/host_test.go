@@ -273,45 +273,7 @@ var _ = Describe("Host", func() {
 		})
 	})
 
-	Describe("NUMA and Parent Functions", func() {
-		Context("GetNumaNode", func() {
-			It("should return NUMA node from file", func() {
-				fs.Dirs = []string{
-					"sys/bus/pci/devices/0000:01:00.0",
-				}
-				fs.Files = map[string][]byte{
-					"sys/bus/pci/devices/0000:01:00.0/numa_node": []byte("1"),
-				}
-				tearDown = fs.Use()
-
-				numaNode, err := h.GetNumaNode("0000:01:00.0")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(numaNode).To(Equal("1"))
-			})
-
-			It("should return '0' when NUMA node file contains -1", func() {
-				fs.Dirs = []string{
-					"sys/bus/pci/devices/0000:01:00.0",
-				}
-				fs.Files = map[string][]byte{
-					"sys/bus/pci/devices/0000:01:00.0/numa_node": []byte("-1"),
-				}
-				tearDown = fs.Use()
-
-				numaNode, err := h.GetNumaNode("0000:01:00.0")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(numaNode).To(Equal("0"))
-			})
-
-			It("should return '0' when NUMA node file does not exist", func() {
-				tearDown = fs.Use()
-
-				numaNode, err := h.GetNumaNode("0000:01:00.0")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(numaNode).To(Equal("0"))
-			})
-		})
-
+	Describe("Topology Functions", func() {
 		Context("GetPCIeRoot", func() {
 			It("should return error for invalid PCI address format", func() {
 				// Test with invalid format - this is validated by the upstream implementation

@@ -39,8 +39,6 @@ const (
 	AttributeResourceName = DriverName + "/resourceName"
 	AttributeLinkType     = DriverName + "/linkType"
 	AttributeRDMACapable  = DriverName + "/rdmaCapable"
-	// Use upstream Kubernetes standard attribute prefix for numaNode
-	AttributeNumaNode = deviceattribute.StandardDeviceAttributePrefix + "numaNode"
 	// Use upstream Kubernetes standard attribute prefix for pciAddress
 	AttributeStandardPciAddress = deviceattribute.StandardDeviceAttributePrefix + "pciBusID"
 	// AttributeParentPciAddress is for the immediate parent PCI device (e.g., bridge)

@@ -21,7 +21,6 @@ type PFInfo struct {
 	DeviceID         string
 	Address          string
 	EswitchMode      string
-	NumaNode         string
 	PCIeRoot         string
 	ParentPciAddress string
 	LinkType         string
@@ -76,14 +75,6 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 
 		eswitchMode := host.GetHelpers().GetNicSriovMode(device.Address)
 
-		// Get NUMA node information
-		// -1 indicates NUMA is not supported/enabled (standard Linux convention)
-		numaNode, err := host.GetHelpers().GetNumaNode(device.Address)
-		if err != nil {
-			logger.Error(err, "Failed to get NUMA node, using -1 (not supported)", "address", device.Address)
-			numaNode = "-1"
-		}
-
 		// Get PCIe Root Complex information using upstream Kubernetes implementation
 		pcieRoot, err := host.GetHelpers().GetPCIeRoot(device.Address)
 		if err != nil {
@@ -111,7 +102,6 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			"vendor", device.Vendor.ID,
 			"device", device.Product.ID,
 			"eswitchMode", eswitchMode,
-			"numaNode", numaNode,
 			"pcieRoot", pcieRoot,
 			"parentPciAddress", parentPciAddress,
 			"linkType", linkType)
@@ -123,7 +113,6 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			DeviceID:         device.Product.ID,
 			Address:          device.Address,
 			EswitchMode:      eswitchMode,
-			NumaNode:         numaNode,
 			PCIeRoot:         pcieRoot,
 			ParentPciAddress: parentPciAddress,
 			LinkType:         linkType,
@@ -142,17 +131,6 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 		}
 
 		logger.Info("Found VFs for PF", "pf", pfInfo.NetName, "vfCount", len(vfList))
-
-		// Parse NUMA node value. Keep the actual value including -1 which indicates
-		// NUMA is not supported/enabled (standard Linux convention).
-		// This allows users to filter devices based on NUMA availability.
-		numaNodeInt, err := strconv.ParseInt(pfInfo.NumaNode, 10, 64)
-		if err != nil {
-			logger.Error(err, "Failed to parse NUMA node, defaulting to -1",
-				"pf", pfInfo.NetName, "numaNodeStr", pfInfo.NumaNode)
-			numaNodeInt = -1
-		}
-		numaNodeIntPtr := ptr.To(numaNodeInt)
 
 		for _, vfInfo := range vfList {
 			deviceName := strings.ReplaceAll(vfInfo.PciAddress, ":", "-")
@@ -192,9 +170,6 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 				},
 				consts.AttributeVFID: {
 					IntValue: ptr.To(int64(vfInfo.VFID)),
-				},
-				consts.AttributeNumaNode: {
-					IntValue: numaNodeIntPtr,
 				},
 				// PCIe Root Complex (upstream Kubernetes standard) - for topology-aware scheduling
 				consts.AttributePCIeRoot: {

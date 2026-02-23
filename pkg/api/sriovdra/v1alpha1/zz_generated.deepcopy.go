@@ -74,11 +74,6 @@ func (in *ResourceFilter) DeepCopyInto(out *ResourceFilter) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
-	if in.NumaNodes != nil {
-		in, out := &in.NumaNodes, &out.NumaNodes
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
 	if in.Drivers != nil {
 		in, out := &in.Drivers, &out.Drivers
 		*out = make([]string, len(*in))

@@ -10,7 +10,7 @@ A Kubernetes Dynamic Resource Allocation (DRA) driver that enables exposure and 
 
 This project implements a DRA driver that allows Kubernetes workloads to request and use SR-IOV virtual functions through the native Kubernetes resource allocation system. The driver integrates with the kubelet plugin system to manage SR-IOV VF lifecycle, including discovery, allocation, and cleanup.
 
-The driver features an advanced resource filtering system that enables administrators to define fine-grained policies for how Virtual Functions are exposed and allocated based on hardware characteristics such as vendor ID, device ID, Physical Function names, PCI addresses, NUMA topology, and more.
+The driver features an advanced resource filtering system that enables administrators to define fine-grained policies for how Virtual Functions are exposed and allocated based on hardware characteristics such as vendor ID, device ID, Physical Function names, PCI addresses, PCIe topology, and more.
 
 ## Features
 
@@ -157,7 +157,6 @@ spec:
     resourceFilters:
     - vendors: ["8086"]           # Intel devices only
       pfNames: ["eth0"]           # Physical Function name
-      numaNodes: ["0"]            # NUMA node 0 only
   - resourceName: "eth1_resource"
     resourceFilters:  
     - vendors: ["8086"]
@@ -174,7 +173,6 @@ The resource filtering system supports multiple filtering criteria that can be c
 - **pciAddresses**: Filter by specific PCI addresses
 - **pfNames**: Filter by Physical Function name (e.g., "eth0", "eth1")
 - **rootDevices**: Filter by parent PCI address
-- **numaNodes**: Filter by NUMA node topology
 
 ### Node Selection
 
@@ -200,7 +198,6 @@ spec:
     resourceFilters:
     - vendors: ["8086"]
       pfNames: ["eth0"]
-      numaNodes: ["0"]
   - resourceName: "standard-networking"  
     resourceFilters:
     - vendors: ["8086"]  

@@ -54,10 +54,6 @@ spec:
                             items:
                               type: string
                             type: array
-                          numaNodes:
-                            items:
-                              type: string
-                            type: array
                           pciAddresses:
                             items:
                               type: string
