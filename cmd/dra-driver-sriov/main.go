@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/urfave/cli/v2"
 
@@ -91,6 +92,13 @@ func newApp() *cli.App {
 			Destination: &flagsOptions.Namespace,
 			EnvVars:     []string{"NAMESPACE"},
 		},
+		&cli.DurationFlag{
+			Name:        "device-sync-interval",
+			Usage:       "Interval for periodic device re-discovery and sync. Set to 0 to disable periodic sync.",
+			Value:       5 * time.Minute,
+			Destination: &flagsOptions.DeviceSyncInterval,
+			EnvVars:     []string{"DEVICE_SYNC_INTERVAL"},
+		},
 	}
 	cliFlags = append(cliFlags, flagsOptions.KubeClientConfig.Flags()...)
 	cliFlags = append(cliFlags, flagsOptions.LoggingConfig.Flags()...)
@@ -172,7 +180,7 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 	}
 
 	// start driver
-	dvr, err := driver.Start(ctx, config, deviceStateManager, podManager, cdi)
+	dvr, err := driver.Start(ctx, config, deviceStateManager, podManager, cdi, config.Flags.DeviceSyncInterval)
 	if err != nil {
 		return fmt.Errorf("failed to start DRA driver: %w", err)
 	}
@@ -215,6 +223,9 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 		return fmt.Errorf("failed to setup resource policy controller: %w", err)
 	}
 
+	// Set the policy controller reference in the driver for periodic sync
+	dvr.SetPolicyController(resourcePolicyController)
+
 	// start controller manager
 	go func() {
 		logger.Info("Starting controller manager")
@@ -232,6 +243,9 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 		return fmt.Errorf("cache not synced")
 	}
 	logger.Info("Cache synced")
+
+	// Start periodic device sync after cache is synced
+	dvr.StartPeriodicSync(ctx)
 
 	// create cni runtime
 	cniRuntime := cni.New(consts.DriverName, []string{"/opt/cni/bin"})

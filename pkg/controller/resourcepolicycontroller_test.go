@@ -19,6 +19,15 @@ type localFakeState struct {
 }
 
 func (l *localFakeState) GetAllocatableDevices() drasriovtypes.AllocatableDevices { return l.alloc }
+func (l *localFakeState) GetAdvertisableDevices() drasriovtypes.AllocatableDevices {
+	advertisable := make(drasriovtypes.AllocatableDevices)
+	for name, device := range l.alloc {
+		if _, hasResourceName := device.Attributes[sriovconsts.AttributeResourceName]; hasResourceName {
+			advertisable[name] = device
+		}
+	}
+	return advertisable
+}
 func (l *localFakeState) UpdateDeviceResourceNames(_ context.Context, _ map[string]string) error {
 	return nil
 }

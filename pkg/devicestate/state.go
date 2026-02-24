@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	netattdefv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	resourceapi "k8s.io/api/resource/v1"
@@ -26,6 +27,7 @@ import (
 )
 
 type Manager struct {
+	mu                     sync.RWMutex
 	k8sClient              flags.ClientSets
 	cdi                    *cdi.Handler
 	defaultInterfacePrefix string
@@ -51,10 +53,44 @@ func NewManager(config *drasriovtypes.Config, cdi *cdi.Handler) (*Manager, error
 
 // GetAllocatableDevices returns the allocatable devices
 func (s *Manager) GetAllocatableDevices() drasriovtypes.AllocatableDevices {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.allocatable
 }
 
+// GetAdvertisableDevices returns only devices that have a resourceName attribute set
+func (s *Manager) GetAdvertisableDevices() drasriovtypes.AllocatableDevices {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	advertisable := make(drasriovtypes.AllocatableDevices)
+	for name, device := range s.allocatable {
+		if resourceName, exists := device.Attributes[consts.AttributeResourceName]; exists {
+			if resourceName.StringValue != nil && *resourceName.StringValue != "" {
+				advertisable[name] = device
+			}
+		}
+	}
+	return advertisable
+}
+
+// SetAllocatableDevices sets the allocatable devices (used by periodic sync)
+func (s *Manager) SetAllocatableDevices(devices drasriovtypes.AllocatableDevices) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.allocatable = devices
+}
+
+// SetRepublishCallback sets the callback function for republishing resources
+func (s *Manager) SetRepublishCallback(callback func(context.Context) error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.republishCallback = callback
+}
+
 func (s *Manager) GetAllocatedDeviceByDeviceName(deviceName string) (resourceapi.Device, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	device, exist := s.allocatable[deviceName]
 	return device, exist
 }
@@ -307,6 +343,8 @@ func (s *Manager) UpdateDeviceResourceNames(ctx context.Context, deviceResourceM
 	logger := klog.FromContext(ctx).WithName("UpdateDeviceResourceNames")
 	logger.V(2).Info("Updating device resource names", "deviceCount", len(deviceResourceMap))
 
+	s.mu.Lock()
+
 	// Track if any changes were made
 	changesMade := false
 
@@ -359,24 +397,28 @@ func (s *Manager) UpdateDeviceResourceNames(ctx context.Context, deviceResourceM
 	if changesMade {
 		logger.Info("Device resource names updated", "totalDevices", len(s.allocatable), "filteredDevices", len(deviceResourceMap))
 
+		// Get callback reference before unlocking
+		callback := s.republishCallback
+
+		// IMPORTANT: Release lock before calling callback to avoid deadlock
+		// The callback (PublishResources) will call GetAdvertisableDevices which needs a read lock
+		s.mu.Unlock()
+
 		// Trigger resource republishing if callback is available
-		if s.republishCallback != nil {
-			if err := s.republishCallback(ctx); err != nil {
+		if callback != nil {
+			logger.Info("Calling republish callback")
+			if err := callback(ctx); err != nil {
 				logger.Error(err, "Failed to republish resources after updating resource names")
 				return fmt.Errorf("failed to republish resources: %w", err)
 			}
-			logger.V(2).Info("Successfully republished resources after updating resource names")
+			logger.Info("Successfully republished resources after updating resource names")
 		} else {
-			logger.V(2).Info("No republish callback available - resources will be updated on next periodic refresh")
+			logger.Info("No republish callback available")
 		}
 	} else {
+		s.mu.Unlock()
 		logger.V(2).Info("No changes made to device resource names")
 	}
 
 	return nil
-}
-
-// SetRepublishCallback sets the callback function to trigger resource republishing
-func (s *Manager) SetRepublishCallback(callback func(context.Context) error) {
-	s.republishCallback = callback
 }

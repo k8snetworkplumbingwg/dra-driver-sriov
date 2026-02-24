@@ -11,6 +11,7 @@ import (
 // DeviceState defines the minimal interface used by the controller for device state operations.
 type DeviceState interface {
 	GetAllocatableDevices() drasriovtypes.AllocatableDevices
+	GetAdvertisableDevices() drasriovtypes.AllocatableDevices
 	UpdateDeviceResourceNames(ctx context.Context, deviceResourceMap map[string]string) error
 }
 

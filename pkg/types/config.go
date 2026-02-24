@@ -2,6 +2,7 @@ package types
 
 import (
 	"path/filepath"
+	"time"
 
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
@@ -18,6 +19,7 @@ type Flags struct {
 	KubeletPluginsDirectoryPath   string
 	HealthcheckPort               int
 	DefaultInterfacePrefix        string
+	DeviceSyncInterval            time.Duration
 }
 
 type Config struct {
