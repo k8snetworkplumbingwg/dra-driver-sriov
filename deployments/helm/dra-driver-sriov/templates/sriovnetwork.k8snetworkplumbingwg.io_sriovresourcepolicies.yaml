@@ -4,20 +4,21 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.0
-  name: sriovresourcefilters.sriovnetwork.k8snetworkplumbingwg.io
+  name: sriovresourcepolicies.sriovnetwork.k8snetworkplumbingwg.io
 spec:
   group: sriovnetwork.k8snetworkplumbingwg.io
   names:
-    kind: SriovResourceFilter
-    listKind: SriovResourceFilterList
-    plural: sriovresourcefilters
-    singular: sriovresourcefilter
+    kind: SriovResourcePolicy
+    listKind: SriovResourcePolicyList
+    plural: sriovresourcepolicies
+    singular: sriovresourcepolicy
   scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: SriovResourceFilter is a filter for SR-IOV resources
+        description: SriovResourcePolicy defines a policy for advertising SR-IOV devices
+          as Kubernetes resources
         properties:
           apiVersion:
             description: |-
@@ -37,7 +38,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: SriovResourceFilterSpec is the spec for a SriovResourceFilter
+            description: SriovResourcePolicySpec is the spec for a SriovResourcePolicy
             properties:
               configs:
                 items:

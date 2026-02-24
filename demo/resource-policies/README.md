@@ -1,18 +1,18 @@
-# Resource Filtering Demo
+# Resource Policy Demo
 
-This demo showcases how to use `SriovResourceFilter` to filter and manage SR-IOV Virtual Functions based on various hardware and configuration criteria.
+This demo showcases how to use `SriovResourcePolicy` to control which SR-IOV Virtual Functions are advertised as Kubernetes resources based on various hardware and configuration criteria.
 
 ## Overview
 
 This scenario demonstrates:
-- Creating resource filters based on vendor IDs, Physical Function names, and other hardware attributes
+- Creating resource policies based on vendor IDs, Physical Function names, and other hardware attributes
 - Setting up multiple resource configurations for different network interfaces
-- Deploying a pod that uses filtered SR-IOV resources with specific network requirements
+- Deploying a pod that uses policy-filtered SR-IOV resources with specific network requirements
 
 ## Components
 
-### 1. SriovResourceFilter
-The `SriovResourceFilter` resource defines how to filter available SR-IOV devices:
+### 1. SriovResourcePolicy
+The `SriovResourcePolicy` resource defines which SR-IOV devices should be advertised as allocatable resources:
 - **nodeSelector**: Targets specific nodes (`dra-ctlplane-0.dra.lab` in this example)
 - **configs**: Defines multiple resource configurations:
   - `eth0_resource`: Filters devices connected to eth0 Physical Function
@@ -39,17 +39,20 @@ The `SriovResourceFilter` resource defines how to filter available SR-IOV device
 
 ## Usage
 
-1. Apply the resource filter to make filtered resources available:
+1. Apply the resource policy to advertise SR-IOV resources:
    ```bash
-   kubectl apply -f resource-filter.yaml
+   kubectl apply -f resource-policy.yaml
    ```
 
-2. The DRA driver will discover and filter SR-IOV devices based on the criteria
-3. Pods can then claim resources using the filtered resource names
+2. The DRA driver will discover SR-IOV devices and advertise only those matching the policy criteria
+3. Pods can then claim resources using the advertised resource names
 4. The pod will be scheduled on nodes where matching resources are available
+
+**Note**: Without a matching `SriovResourcePolicy`, no devices will be advertised (opt-in model).
 
 ## Key Features
 
+- **Opt-In Model**: Devices are only advertised when explicitly defined in a policy
 - **Granular Filtering**: Filter by vendor, device ID, PCI address, PF name, NUMA node, or driver
 - **Multi-Resource Support**: Configure multiple resource types on the same node
 - **CEL Integration**: Use Common Expression Language for advanced resource selection
