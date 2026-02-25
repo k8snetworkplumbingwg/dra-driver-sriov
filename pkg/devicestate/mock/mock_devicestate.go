@@ -41,6 +41,20 @@ func (m *MockDeviceState) EXPECT() *MockDeviceStateMockRecorder {
 	return m.recorder
 }
 
+// GetAdvertisableDevices mocks base method.
+func (m *MockDeviceState) GetAdvertisableDevices() types.AllocatableDevices {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAdvertisableDevices")
+	ret0, _ := ret[0].(types.AllocatableDevices)
+	return ret0
+}
+
+// GetAdvertisableDevices indicates an expected call of GetAdvertisableDevices.
+func (mr *MockDeviceStateMockRecorder) GetAdvertisableDevices() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAdvertisableDevices", reflect.TypeOf((*MockDeviceState)(nil).GetAdvertisableDevices))
+}
+
 // GetAllocatableDevices mocks base method.
 func (m *MockDeviceState) GetAllocatableDevices() types.AllocatableDevices {
 	m.ctrl.T.Helper()

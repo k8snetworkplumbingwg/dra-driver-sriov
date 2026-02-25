@@ -704,6 +704,7 @@ func (h *Host) IsKernelModuleLoaded(moduleName string) bool {
 func (h *Host) LoadKernelModule(moduleName string) error {
 	h.log.V(2).Info("LoadKernelModule(): loading kernel module", "module", moduleName)
 
+	// #nosec G204 -- moduleName is sourced from hard-coded safe values in calling functions
 	cmd := exec.Command("chroot", "/proc/1/root", "modprobe", moduleName)
 	output, err := cmd.CombinedOutput()
 	if err != nil {

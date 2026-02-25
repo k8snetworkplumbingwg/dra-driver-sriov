@@ -19,13 +19,22 @@ type localFakeState struct {
 }
 
 func (l *localFakeState) GetAllocatableDevices() drasriovtypes.AllocatableDevices { return l.alloc }
+func (l *localFakeState) GetAdvertisableDevices() drasriovtypes.AllocatableDevices {
+	advertisable := make(drasriovtypes.AllocatableDevices)
+	for name, device := range l.alloc {
+		if _, hasResourceName := device.Attributes[sriovconsts.AttributeResourceName]; hasResourceName {
+			advertisable[name] = device
+		}
+	}
+	return advertisable
+}
 func (l *localFakeState) UpdateDeviceResourceNames(_ context.Context, _ map[string]string) error {
 	return nil
 }
 
 var _ = Describe("matchesNodeSelector", func() {
 	It("handles empty, subset, and mismatch correctly", func() {
-		r := &SriovResourceFilterReconciler{}
+		r := &SriovResourcePolicyReconciler{}
 		node := map[string]string{"role": "dpdk", "zone": "a"}
 		Expect(r.matchesNodeSelector(node, map[string]string{})).To(BeTrue())
 		Expect(r.matchesNodeSelector(node, map[string]string{"role": "dpdk"})).To(BeTrue())
@@ -35,7 +44,7 @@ var _ = Describe("matchesNodeSelector", func() {
 
 var _ = Describe("stringSliceContains", func() {
 	It("returns expected presence results", func() {
-		r := &SriovResourceFilterReconciler{}
+		r := &SriovResourcePolicyReconciler{}
 		Expect(r.stringSliceContains([]string{"a", "b"}, "c")).To(BeFalse())
 		Expect(r.stringSliceContains([]string{"a", "b"}, "b")).To(BeTrue())
 	})
@@ -43,7 +52,7 @@ var _ = Describe("stringSliceContains", func() {
 
 var _ = Describe("deviceMatchesFilter", func() {
 	It("matches valid filters and rejects mismatches", func() {
-		r := &SriovResourceFilterReconciler{}
+		r := &SriovResourcePolicyReconciler{}
 		vendor := "8086"
 		dev := "154c"
 		pf := "eth0"
@@ -109,13 +118,13 @@ var _ = Describe("getFilteredDeviceResourceMap", func() {
 				},
 			},
 		}
-		r := &SriovResourceFilterReconciler{deviceStateManager: &localFakeState{alloc: alloc}}
+		r := &SriovResourcePolicyReconciler{deviceStateManager: &localFakeState{alloc: alloc}}
 
 		m := r.getFilteredDeviceResourceMap()
 		Expect(m).To(BeEmpty())
 
-		r.currentResourceFilter = &sriovdrav1alpha1.SriovResourceFilter{
-			Spec: sriovdrav1alpha1.SriovResourceFilterSpec{
+		r.currentResourcePolicy = &sriovdrav1alpha1.SriovResourcePolicy{
+			Spec: sriovdrav1alpha1.SriovResourcePolicySpec{
 				Configs: []sriovdrav1alpha1.Config{
 					{ResourceName: "resA", ResourceFilters: []sriovdrav1alpha1.ResourceFilter{{Vendors: []string{"8086"}}}},
 					{ResourceName: "", ResourceFilters: []sriovdrav1alpha1.ResourceFilter{{Devices: []string{"154c"}}}},

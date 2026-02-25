@@ -22,21 +22,21 @@ import (
 
 //nolint:gochecknoinits // Required for Kubernetes scheme registration
 func init() {
-	SchemeBuilder.Register(&SriovResourceFilter{}, &SriovResourceFilterList{})
+	SchemeBuilder.Register(&SriovResourcePolicy{}, &SriovResourcePolicyList{})
 }
 
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-// SriovResourceFilter is a filter for SR-IOV resources
-type SriovResourceFilter struct {
+// SriovResourcePolicy defines a policy for advertising SR-IOV devices as Kubernetes resources
+type SriovResourcePolicy struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
-	Spec              SriovResourceFilterSpec `json:"spec"`
+	Spec              SriovResourcePolicySpec `json:"spec"`
 }
 
-// SriovResourceFilterSpec is the spec for a SriovResourceFilter
-type SriovResourceFilterSpec struct {
+// SriovResourcePolicySpec is the spec for a SriovResourcePolicy
+type SriovResourcePolicySpec struct {
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 	Configs      []Config          `json:"configs,omitempty"`
 }
@@ -60,9 +60,9 @@ type ResourceFilter struct {
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-// SriovResourceFilterList contains a list of SriovResourceFilter
-type SriovResourceFilterList struct {
+// SriovResourcePolicyList contains a list of SriovResourcePolicy
+type SriovResourcePolicyList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []SriovResourceFilter `json:"items"`
+	Items           []SriovResourcePolicy `json:"items"`
 }

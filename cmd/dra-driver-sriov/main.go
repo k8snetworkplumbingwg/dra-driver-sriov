@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/urfave/cli/v2"
 
@@ -86,10 +87,17 @@ func newApp() *cli.App {
 		},
 		&cli.StringFlag{
 			Name:        "namespace",
-			Usage:       "Namespace where the driver should watch for SriovResourceFilter resources.",
+			Usage:       "Namespace where the driver should watch for SriovResourcePolicy resources.",
 			Value:       "dra-sriov-driver",
 			Destination: &flagsOptions.Namespace,
 			EnvVars:     []string{"NAMESPACE"},
+		},
+		&cli.DurationFlag{
+			Name:        "device-sync-interval",
+			Usage:       "Interval for periodic device re-discovery and sync. Set to 0 to disable periodic sync.",
+			Value:       5 * time.Minute,
+			Destination: &flagsOptions.DeviceSyncInterval,
+			EnvVars:     []string{"DEVICE_SYNC_INTERVAL"},
 		},
 	}
 	cliFlags = append(cliFlags, flagsOptions.KubeClientConfig.Flags()...)
@@ -172,7 +180,7 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 	}
 
 	// start driver
-	dvr, err := driver.Start(ctx, config, deviceStateManager, podManager, cdi)
+	dvr, err := driver.Start(ctx, config, deviceStateManager, podManager, cdi, config.Flags.DeviceSyncInterval)
 	if err != nil {
 		return fmt.Errorf("failed to start DRA driver: %w", err)
 	}
@@ -188,11 +196,11 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 
 	logger.Info("Configuring controller manager", "namespace", config.Flags.Namespace)
 
-	// Configure cache to only watch resources in the specified namespace for SriovResourceFilter
+	// Configure cache to only watch resources in the specified namespace for SriovResourcePolicy
 	// while allowing cluster-wide access for other resources like Nodes
 	cacheOpts := cache.Options{
 		ByObject: map[client.Object]cache.ByObject{
-			&sriovdrav1alpha1.SriovResourceFilter{}: {
+			&sriovdrav1alpha1.SriovResourcePolicy{}: {
 				Namespaces: map[string]cache.Config{
 					config.Flags.Namespace: {},
 				},
@@ -209,11 +217,14 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 		return fmt.Errorf("failed to create controller manager: %w", err)
 	}
 
-	// create and setup resource filter controller
-	resourceFilterController := controller.NewSriovResourceFilterReconciler(config.K8sClient.Client, config.Flags.NodeName, config.Flags.Namespace, deviceStateManager)
-	if err := resourceFilterController.SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("failed to setup resource filter controller: %w", err)
+	// create and setup resource policy controller
+	resourcePolicyController := controller.NewSriovResourcePolicyReconciler(config.K8sClient.Client, config.Flags.NodeName, config.Flags.Namespace, deviceStateManager)
+	if err := resourcePolicyController.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("failed to setup resource policy controller: %w", err)
 	}
+
+	// Set the policy controller reference in the driver for periodic sync
+	dvr.SetPolicyController(resourcePolicyController)
 
 	// start controller manager
 	go func() {
@@ -232,6 +243,9 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 		return fmt.Errorf("cache not synced")
 	}
 	logger.Info("Cache synced")
+
+	// Start periodic device sync after cache is synced
+	dvr.StartPeriodicSync(ctx)
 
 	// create cni runtime
 	cniRuntime := cni.New(consts.DriverName, []string{"/opt/cni/bin"})

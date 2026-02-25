@@ -1,7 +1,7 @@
 apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
-kind: SriovResourceFilter
+kind: SriovResourcePolicy
 metadata:
-  name: example-resource-filter
+  name: example-resource-policy
   namespace: dra-sriov-driver
 spec:
   # NodeSelector to match specific nodes
