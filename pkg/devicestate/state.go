@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	netattdefv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -215,6 +216,14 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 		})
 	}
 
+	// Add RDMA character devices if applicable
+	rdmaDeviceNodes, rdmaEnvs, err := s.handleRDMADevice(ctx, deviceInfo, pciAddress, result.Device)
+	if err != nil {
+		return nil, fmt.Errorf("error handling RDMA device: %w", err)
+	}
+	deviceNodes = append(deviceNodes, rdmaDeviceNodes...)
+	envs = append(envs, rdmaEnvs...)
+
 	edits := &cdispec.ContainerEdits{
 		Env:         envs,
 		DeviceNodes: deviceNodes,
@@ -252,6 +261,82 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 	}
 
 	return preparedDevice, nil
+}
+
+// handleRDMADevice handles RDMA device configuration and returns device nodes, environment variables, or an error
+func (s *Manager) handleRDMADevice(ctx context.Context, deviceInfo resourceapi.Device, pciAddress, deviceName string) ([]*cdispec.DeviceNode, []string, error) {
+	logger := klog.FromContext(ctx).WithName("handleRDMADevice")
+
+	// Check if device is RDMA capable
+	if rdmaCapableAttr, ok := deviceInfo.Attributes[consts.AttributeRDMACapable]; !ok || rdmaCapableAttr.BoolValue == nil || !*rdmaCapableAttr.BoolValue {
+		return nil, nil, nil
+	}
+
+	var deviceNodes []*cdispec.DeviceNode
+	var envs []string
+
+	rdmaDevices := host.GetHelpers().GetRDMADevicesForPCI(pciAddress)
+
+	if len(rdmaDevices) == 0 {
+		logger.V(2).Info("No RDMA devices found for PCI address", "device", pciAddress)
+		return nil, nil, fmt.Errorf("no RDMA devices found for PCI address %s", pciAddress)
+	}
+
+	if len(rdmaDevices) > 1 {
+		return nil, nil, fmt.Errorf("expected exactly one RDMA device for PCI address %s, but found %d: %v", pciAddress, len(rdmaDevices), rdmaDevices)
+	}
+
+	rdmaDevice := rdmaDevices[0]
+	logger.V(2).Info("Device is RDMA capable, adding RDMA character devices",
+		"device", pciAddress, "rdmaDevice", rdmaDevice)
+
+	// Get character devices for this RDMA device
+	charDevices, err := host.GetHelpers().GetRDMACharDevices(rdmaDevice)
+	if err != nil {
+		logger.Error(err, "Failed to get RDMA character devices",
+			"device", pciAddress, "rdmaDevice", rdmaDevice)
+		return nil, nil, err
+	}
+
+	if len(charDevices) == 0 {
+		logger.V(2).Info("No RDMA character devices found",
+			"device", pciAddress, "rdmaDevice", rdmaDevice)
+		return nil, nil, fmt.Errorf("no RDMA character devices found for RDMA device %s (PCI: %s)", rdmaDevice, pciAddress)
+	}
+
+	// Use RDMA device name in env var key to support multiple RDMA devices
+	devicePrefix := strings.ReplaceAll(deviceName, "-", "_")
+
+	// Add each character device to the CDI spec
+	for _, charDev := range charDevices {
+		deviceNodes = append(deviceNodes, &cdispec.DeviceNode{
+			Path:     charDev,
+			HostPath: charDev,
+			Type:     "c", // character device
+		})
+
+		// Add environment variable for each character device type
+		// Include RDMA device name to avoid collisions with multiple RDMA devices
+		switch {
+		case strings.HasPrefix(filepath.Base(charDev), "uverbs"):
+			envs = append(envs, fmt.Sprintf("SRIOVNETWORK_%s_RDMA_UVERB=%s", devicePrefix, charDev))
+		case strings.HasPrefix(filepath.Base(charDev), "umad"):
+			envs = append(envs, fmt.Sprintf("SRIOVNETWORK_%s_RDMA_UMAD=%s", devicePrefix, charDev))
+		case strings.HasPrefix(filepath.Base(charDev), "issm"):
+			envs = append(envs, fmt.Sprintf("SRIOVNETWORK_%s_RDMA_ISSM=%s", devicePrefix, charDev))
+		case filepath.Base(charDev) == "rdma_cm":
+			envs = append(envs, fmt.Sprintf("SRIOVNETWORK_%s_RDMA_CM=%s", devicePrefix, charDev))
+		}
+	}
+
+	logger.Info("Added RDMA character devices for device",
+		"device", pciAddress, "rdmaDevice", rdmaDevice, "charDevices", charDevices, "envs", envs)
+
+	// Add RDMA device name to environment variables
+	envs = append(envs, fmt.Sprintf("SRIOVNETWORK_%s_RDMA_DEVICE=%s",
+		devicePrefix, rdmaDevice))
+
+	return deviceNodes, envs, nil
 }
 
 func (s *Manager) getNetAttachDefRawConfig(ctx context.Context, namespace string, netAttachDefName string) (string, error) {

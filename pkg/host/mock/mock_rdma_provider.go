@@ -39,6 +39,20 @@ func (m *MockRdmaProvider) EXPECT() *MockRdmaProviderMockRecorder {
 	return m.recorder
 }
 
+// GetRdmaCharDevices mocks base method.
+func (m *MockRdmaProvider) GetRdmaCharDevices(rdmaDeviceName string) []string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRdmaCharDevices", rdmaDeviceName)
+	ret0, _ := ret[0].([]string)
+	return ret0
+}
+
+// GetRdmaCharDevices indicates an expected call of GetRdmaCharDevices.
+func (mr *MockRdmaProviderMockRecorder) GetRdmaCharDevices(rdmaDeviceName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRdmaCharDevices", reflect.TypeOf((*MockRdmaProvider)(nil).GetRdmaCharDevices), rdmaDeviceName)
+}
+
 // GetRdmaDevicesForPcidev mocks base method.
 func (m *MockRdmaProvider) GetRdmaDevicesForPcidev(pciAddr string) []string {
 	m.ctrl.T.Helper()
