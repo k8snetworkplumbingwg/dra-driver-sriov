@@ -23,8 +23,6 @@ spec:
       pfNames: ["eth0"]
       # Filter by root devices (optional)
       # rootDevices: ["0000:01:00.0"]
-      # Filter by NUMA nodes (optional)
-      # numaNodes: ["0"]
       # Filter by driver names (optional)
       # drivers: ["vfio-pci", "igb_uio"]
   

@@ -91,8 +91,7 @@ type Interface interface {
 	GetNicSriovMode(pciAddr string) string
 	GetLinkType(pciAddr string) (string, error)
 
-	// NUMA and topology functions
-	GetNumaNode(pciAddress string) (string, error)
+	// Topology functions
 	GetPCIeRoot(pciAddress string) (string, error)
 	GetParentPciAddress(pciAddress string) (string, error)
 
@@ -306,30 +305,6 @@ func (h *Host) GetLinkType(pciAddr string) (string, error) {
 		h.log.V(1).Info("Unsupported link type, defaulting to unknown", "interface", ifName, "type", typeInt)
 		return consts.LinkTypeUnknown, nil
 	}
-}
-
-// GetNumaNode returns the NUMA node for a given PCI device
-// Parse NUMA node value. Keep the actual value including -1 which indicates
-// NUMA is not supported/enabled (standard Linux convention).
-// This allows users to filter devices based on NUMA availability.
-func (h *Host) GetNumaNode(pciAddress string) (string, error) {
-	numaNodePath := buildSysBusPciPath(pciAddress, "numa_node")
-	content, err := os.ReadFile(numaNodePath) /* #nosec G304 */
-	if err != nil {
-		// If numa_node file doesn't exist, return "0" as default
-		if os.IsNotExist(err) {
-			return "0", nil
-		}
-		return "", fmt.Errorf("failed to read numa_node for %s: %v", pciAddress, err)
-	}
-
-	numaNode := strings.TrimSpace(string(content))
-	// If numa_node contains -1, it means NUMA is not available, default to "0"
-	if numaNode == "-1" {
-		return "0", nil
-	}
-
-	return numaNode, nil
 }
 
 // GetParentPciAddress returns the parent PCI device address

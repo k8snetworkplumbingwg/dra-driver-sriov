@@ -53,7 +53,6 @@ type ResourceFilter struct {
 	PciAddresses []string `json:"pciAddresses,omitempty"`
 	PfNames      []string `json:"pfNames,omitempty"`
 	RootDevices  []string `json:"rootDevices,omitempty"`
-	NumaNodes    []string `json:"numaNodes,omitempty"`
 	Drivers      []string `json:"drivers,omitempty"`
 }
 

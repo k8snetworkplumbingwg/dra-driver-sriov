@@ -52,7 +52,6 @@ var _ = Describe("deviceMatchesFilter", func() {
 		pcieRoot := "pci0000:00"
 		// Immediate parent PCI address (e.g., bridge)
 		parentPci := "0000:00:00.0"
-		numa := int64(0)
 		d := resourceapi.Device{
 			Name: "devA",
 			Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
@@ -62,7 +61,6 @@ var _ = Describe("deviceMatchesFilter", func() {
 				sriovconsts.AttributePciAddress:       {StringValue: &pci},
 				sriovconsts.AttributePCIeRoot:         {StringValue: &pcieRoot},
 				sriovconsts.AttributeParentPciAddress: {StringValue: &parentPci},
-				sriovconsts.AttributeNumaNode:         {IntValue: &numa},
 			},
 		}
 
@@ -75,7 +73,6 @@ var _ = Describe("deviceMatchesFilter", func() {
 			PfNames:      []string{"eth0"},
 			// RootDevices uses parent PCI address format (backward compatible)
 			RootDevices: []string{"0000:00:00.0"},
-			NumaNodes:   []string{"0"},
 		}
 		Expect(r.deviceMatchesFilter(d, f)).To(BeTrue())
 
@@ -85,7 +82,6 @@ var _ = Describe("deviceMatchesFilter", func() {
 		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{PfNames: []string{"eth9"}})).To(BeFalse())
 		// Test with a different parent PCI address
 		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{RootDevices: []string{"0000:00:ff.f"}})).To(BeFalse())
-		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{NumaNodes: []string{"2"}})).To(BeFalse())
 	})
 })
 
