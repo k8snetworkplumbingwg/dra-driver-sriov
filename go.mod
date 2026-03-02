@@ -15,14 +15,14 @@ require (
 	github.com/urfave/cli/v2 v2.27.7
 	go.uber.org/mock v0.6.0
 	google.golang.org/grpc v1.79.1
-	k8s.io/api v0.35.0
-	k8s.io/apimachinery v0.35.0
-	k8s.io/client-go v0.35.0
-	k8s.io/component-base v0.35.0
-	k8s.io/dynamic-resource-allocation v0.34.3
+	k8s.io/api v0.35.2
+	k8s.io/apimachinery v0.35.2
+	k8s.io/client-go v0.35.2
+	k8s.io/component-base v0.35.2
+	k8s.io/dynamic-resource-allocation v0.35.2
 	k8s.io/klog/v2 v2.130.1
-	k8s.io/kubelet v0.34.3
-	k8s.io/kubernetes v1.34.3
+	k8s.io/kubelet v0.35.2
+	k8s.io/kubernetes v1.35.2
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
 	sigs.k8s.io/controller-runtime v0.23.1
 	tags.cncf.io/container-device-interface v1.1.0
@@ -49,7 +49,6 @@ require (
 	github.com/go-openapi/jsonreference v0.21.0 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
-	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
@@ -67,7 +66,6 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/opencontainers/runtime-spec v1.3.0 // indirect
 	github.com/opencontainers/runtime-tools v0.9.1-0.20251114084447-edf4cb3d2116 // indirect
-	github.com/opencontainers/selinux v1.12.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
