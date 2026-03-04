@@ -7,7 +7,7 @@ VERSION=${VERSION:-}
 # github api token (needed only for read access)
 GITHUB_TOKEN=${GITHUB_TOKEN:-}
 # github repo owner e.g k8snetworkplumbingwg
-GITHUB_REPO_OWNER=${GITHUB_REPO_OWNER:-}
+GITHUB_REPO_OWNER=$(tr '[:upper:]' '[:lower:]' <<< "${GITHUB_REPO_OWNER:-}")
 
 BASE=${PWD}
 YQ_CMD="${BASE}/bin/yq"
