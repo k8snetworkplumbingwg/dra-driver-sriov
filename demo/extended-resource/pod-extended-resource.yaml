@@ -1,0 +1,63 @@
+# Pod requesting 1 VF from each port via extended resources.
+# The scheduler auto-creates two separate ResourceClaims — one per DeviceClass.
+#
+# Requires: DRAExtendedResource feature gate enabled on kube-apiserver, kube-scheduler,
+#           and kubelet.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ext-resource-dual-port
+  namespace: default
+  labels:
+    app: ext-resource-test
+spec:
+  terminationGracePeriodSeconds: 2
+  containers:
+  - name: test-container
+    image: quay.io/schseba/toolbox:latest
+    command:
+      - /bin/bash
+      - -c
+      - sleep INF
+    securityContext:
+      runAsUser: 0
+      allowPrivilegeEscalation: true
+      capabilities:
+        add: ["NET_ADMIN", "NET_RAW"]
+    resources:
+      requests:
+        example.com/sriov-port1: "1"
+        example.com/sriov-port2: "1"
+      limits:
+        example.com/sriov-port1: "1"
+        example.com/sriov-port2: "1"
+---
+# Pod requesting 2 VFs from each port (4 VFs total).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ext-resource-dual-port-2x2
+  namespace: default
+  labels:
+    app: ext-resource-test
+spec:
+  terminationGracePeriodSeconds: 2
+  containers:
+  - name: test-container
+    image: quay.io/schseba/toolbox:latest
+    command:
+      - /bin/bash
+      - -c
+      - sleep INF
+    securityContext:
+      runAsUser: 0
+      allowPrivilegeEscalation: true
+      capabilities:
+        add: ["NET_ADMIN", "NET_RAW"]
+    resources:
+      requests:
+        example.com/sriov-port1: "2"
+        example.com/sriov-port2: "2"
+      limits:
+        example.com/sriov-port1: "2"
+        example.com/sriov-port2: "2"

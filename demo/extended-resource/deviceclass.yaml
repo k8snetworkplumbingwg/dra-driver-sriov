@@ -1,0 +1,101 @@
+# SriovResourceFilter with two configs — one per physical port
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: SriovResourceFilter
+metadata:
+  name: dual-port-vfs
+  namespace: dra-sriov-system
+spec:
+  nodeSelector: {}
+  configs:
+  - resourceName: "port1-vfs"
+    resourceFilters:
+    - pciAddresses:
+      - "0000:08:00.2"
+      - "0000:08:00.3"
+      - "0000:08:00.4"
+      - "0000:08:00.5"
+  - resourceName: "port2-vfs"
+    resourceFilters:
+    - pciAddresses:
+      - "0000:08:02.2"
+      - "0000:08:02.3"
+      - "0000:08:02.4"
+      - "0000:08:02.5"
+---
+# DeviceClass for port 1 — extended resource: example.com/sriov-port1
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: sriov-port1
+spec:
+  selectors:
+  - cel:
+      expression: >-
+        device.driver == 'sriovnetwork.k8snetworkplumbingwg.io' &&
+        device.attributes["sriovnetwork.k8snetworkplumbingwg.io"].resourceName == "port1-vfs"
+  config:
+  - opaque:
+      driver: sriovnetwork.k8snetworkplumbingwg.io
+      parameters:
+        apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+        kind: VfConfig
+        netAttachDefName: sriov-port1-net
+  extendedResourceName: example.com/sriov-port1
+---
+# DeviceClass for port 2 — extended resource: example.com/sriov-port2
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: sriov-port2
+spec:
+  selectors:
+  - cel:
+      expression: >-
+        device.driver == 'sriovnetwork.k8snetworkplumbingwg.io' &&
+        device.attributes["sriovnetwork.k8snetworkplumbingwg.io"].resourceName == "port2-vfs"
+  config:
+  - opaque:
+      driver: sriovnetwork.k8snetworkplumbingwg.io
+      parameters:
+        apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+        kind: VfConfig
+        netAttachDefName: sriov-port2-net
+  extendedResourceName: example.com/sriov-port2
+---
+# NetworkAttachmentDefinition for port 1
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: sriov-port1-net
+  namespace: default
+spec:
+  config: |-
+    {
+        "cniVersion": "1.0.0",
+        "name": "sriov-port1-net",
+        "type": "sriov",
+        "vlan": 0,
+        "spoofchk": "off",
+        "trust": "on",
+        "vlanQoS": 0,
+        "logLevel": "info"
+    }
+---
+# NetworkAttachmentDefinition for port 2
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: sriov-port2-net
+  namespace: default
+spec:
+  config: |-
+    {
+        "cniVersion": "1.0.0",
+        "name": "sriov-port2-net",
+        "type": "sriov",
+        "vlan": 0,
+        "spoofchk": "off",
+        "trust": "on",
+        "vlanQoS": 0,
+        "logLevel": "info"
+    }
