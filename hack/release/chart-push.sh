@@ -3,7 +3,7 @@
 set -ex
 
 # github repo owner: e.g k8snetworkplumbingwg
-GITHUB_REPO_OWNER=${GITHUB_REPO_OWNER:-}
+GITHUB_REPO_OWNER=$(tr '[:upper:]' '[:lower:]' <<< "${GITHUB_REPO_OWNER:-}")
 # github api token with package:write permissions
 GITHUB_TOKEN=${GITHUB_TOKEN:-}
 # version: tag (e.g v1.2.3) or SHA (e.g a1b2c3d)
