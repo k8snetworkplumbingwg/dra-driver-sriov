@@ -172,7 +172,7 @@ The resource filtering system supports multiple filtering criteria that can be c
 - **devices**: Filter by PCI device ID 
 - **pciAddresses**: Filter by specific PCI addresses
 - **pfNames**: Filter by Physical Function name (e.g., "eth0", "eth1")
-- **rootDevices**: Filter by parent PCI address
+- **pfPciAddresses**: Filter by Physical Function PCI address
 
 ### Node Selection
 

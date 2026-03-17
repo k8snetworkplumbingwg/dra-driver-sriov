@@ -50,29 +50,27 @@ var _ = Describe("deviceMatchesFilter", func() {
 		pci := "0000:00:00.1"
 		// PCIe Root Complex in the new upstream format: "pci<domain>:<bus>"
 		pcieRoot := "pci0000:00"
-		// Immediate parent PCI address (e.g., bridge)
-		parentPci := "0000:00:00.0"
+		pfPci := "0000:01:00.0"
 		d := resourceapi.Device{
 			Name: "devA",
 			Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-				sriovconsts.AttributeVendorID:         {StringValue: &vendor},
-				sriovconsts.AttributeDeviceID:         {StringValue: &dev},
-				sriovconsts.AttributePFName:           {StringValue: &pf},
-				sriovconsts.AttributePciAddress:       {StringValue: &pci},
-				sriovconsts.AttributePCIeRoot:         {StringValue: &pcieRoot},
-				sriovconsts.AttributeParentPciAddress: {StringValue: &parentPci},
+				sriovconsts.AttributeVendorID:     {StringValue: &vendor},
+				sriovconsts.AttributeDeviceID:     {StringValue: &dev},
+				sriovconsts.AttributePFName:       {StringValue: &pf},
+				sriovconsts.AttributePciAddress:   {StringValue: &pci},
+				sriovconsts.AttributePCIeRoot:     {StringValue: &pcieRoot},
+				sriovconsts.AttributePfPciAddress: {StringValue: &pfPci},
 			},
 		}
 
 		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{})).To(BeTrue())
 
 		f := sriovdrav1alpha1.ResourceFilter{
-			Vendors:      []string{"8086"},
-			Devices:      []string{"154c"},
-			PciAddresses: []string{"0000:00:00.1"},
-			PfNames:      []string{"eth0"},
-			// RootDevices uses parent PCI address format (backward compatible)
-			RootDevices: []string{"0000:00:00.0"},
+			Vendors:        []string{"8086"},
+			Devices:        []string{"154c"},
+			PciAddresses:   []string{"0000:00:00.1"},
+			PfNames:        []string{"eth0"},
+			PfPciAddresses: []string{"0000:01:00.0"},
 		}
 		Expect(r.deviceMatchesFilter(d, f)).To(BeTrue())
 
@@ -81,7 +79,7 @@ var _ = Describe("deviceMatchesFilter", func() {
 		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{PciAddresses: []string{"0000:00:00.2"}})).To(BeFalse())
 		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{PfNames: []string{"eth9"}})).To(BeFalse())
 		// Test with a different parent PCI address
-		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{RootDevices: []string{"0000:00:ff.f"}})).To(BeFalse())
+		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{PfPciAddresses: []string{"0000:00:ff.f"}})).To(BeFalse())
 	})
 })
 

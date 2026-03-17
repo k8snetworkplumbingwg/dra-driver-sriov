@@ -327,37 +327,6 @@ var _ = Describe("Host", func() {
 			})
 		})
 
-		Context("GetParentPciAddress", func() {
-			It("should return parent address from symlink", func() {
-				fs.Dirs = []string{
-					"sys/bus/pci/devices/0000:01:00.0",
-					"sys/bus/pci/devices/0000:00:00.0",
-				}
-				tearDown = fs.Use()
-
-				// Create a proper directory structure for testing parent resolution
-				// The fallback logic should find the parent device
-				parentAddr, err := h.GetParentPciAddress("0000:01:00.0")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(parentAddr).To(Equal("0000:00:00.0"))
-			})
-
-			It("should return empty string when parent cannot be determined", func() {
-				tearDown = fs.Use()
-
-				parentAddr, err := h.GetParentPciAddress("0000:01:00.0")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(parentAddr).To(BeEmpty())
-			})
-
-			It("should return error for invalid PCI address format", func() {
-				tearDown = fs.Use()
-
-				_, err := h.GetParentPciAddress("invalid-address")
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("invalid PCI address format"))
-			})
-		})
 	})
 
 	Describe("Driver Management Functions", func() {

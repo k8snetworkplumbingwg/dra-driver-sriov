@@ -21,8 +21,8 @@ spec:
       # pciAddresses: ["0000:01:00.0", "0000:01:00.1"]
       # Filter by Physical Function names (optional)
       pfNames: ["eth0"]
-      # Filter by root devices (optional)
-      # rootDevices: ["0000:01:00.0"]
+      # Filter by PF PCI addresses (optional)
+      # pfPciAddresses: ["0000:01:00.0"]
       # Filter by driver names (optional)
       # drivers: ["vfio-pci", "igb_uio"]
   

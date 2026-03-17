@@ -93,7 +93,6 @@ type Interface interface {
 
 	// Topology functions
 	GetPCIeRoot(pciAddress string) (string, error)
-	GetParentPciAddress(pciAddress string) (string, error)
 
 	// Driver binding operations
 	BindDeviceDriver(pciAddress string, config *configapi.VfConfig) (string, error)
@@ -305,48 +304,6 @@ func (h *Host) GetLinkType(pciAddr string) (string, error) {
 		h.log.V(1).Info("Unsupported link type, defaulting to unknown", "interface", ifName, "type", typeInt)
 		return consts.LinkTypeUnknown, nil
 	}
-}
-
-// GetParentPciAddress returns the parent PCI device address
-func (h *Host) GetParentPciAddress(pciAddress string) (string, error) {
-	// Parse the PCI address to get bus information
-	// PCI address format: DDDD:BB:DD.F (domain:bus:device.function)
-	parts := strings.Split(pciAddress, ":")
-	if len(parts) != 3 {
-		return "", fmt.Errorf("invalid PCI address format: %s", pciAddress)
-	}
-
-	domain := parts[0]
-	deviceFunc := parts[2]
-
-	// For most cases, we can try to find the parent by checking if there's a bridge
-	// at bus 00 or look for the immediate parent in the PCI hierarchy
-
-	// First, try to get parent from sysfs
-	parentPath := buildSysBusPciPath(pciAddress, "../")
-	parentDir, err := filepath.EvalSymlinks(parentPath)
-	if err == nil {
-		parentAddr := filepath.Base(parentDir)
-		// Validate the parent address format
-		if len(strings.Split(parentAddr, ":")) == 3 {
-			return parentAddr, nil
-		}
-	}
-
-	// Fallback: construct potential parent addresses
-	// Try the root bus first (usually the PCIe root complex)
-	deviceParts := strings.Split(deviceFunc, ".")
-	if len(deviceParts) == 2 {
-		// Try to find a bridge on bus 00
-		parentAddr := fmt.Sprintf("%s:00:00.0", domain)
-		parentDevPath := buildSysBusPciPath(parentAddr, "")
-		if _, err := os.Stat(parentDevPath); err == nil {
-			return parentAddr, nil
-		}
-	}
-
-	// If we can't find a specific parent, return empty string
-	return "", nil
 }
 
 // GetPCIeRoot returns the PCIe Root Complex for a given PCI device using the upstream Kubernetes implementation.
