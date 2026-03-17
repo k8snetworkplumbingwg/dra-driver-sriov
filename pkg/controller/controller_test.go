@@ -120,19 +120,18 @@ func defaultAllocatableDevices() drasriovtypes.AllocatableDevices {
 	pci := "0000:00:00.1"
 	// PCIe Root Complex in the new upstream format: "pci<domain>:<bus>"
 	pcieRoot := "pci0000:00"
-	// Immediate parent PCI address (e.g., bridge)
-	parentPci := "0000:00:00.0"
+	pfPci := "0000:01:00.0"
 
 	return drasriovtypes.AllocatableDevices{
 		"devA": resourcev1.Device{
 			Name: "devA",
 			Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{
-				sriovconsts.AttributeVendorID:         {StringValue: &vendor},
-				sriovconsts.AttributeDeviceID:         {StringValue: &dev},
-				sriovconsts.AttributePFName:           {StringValue: &pf},
-				sriovconsts.AttributePciAddress:       {StringValue: &pci},
-				sriovconsts.AttributePCIeRoot:         {StringValue: &pcieRoot},
-				sriovconsts.AttributeParentPciAddress: {StringValue: &parentPci},
+				sriovconsts.AttributeVendorID:     {StringValue: &vendor},
+				sriovconsts.AttributeDeviceID:     {StringValue: &dev},
+				sriovconsts.AttributePFName:       {StringValue: &pf},
+				sriovconsts.AttributePciAddress:   {StringValue: &pci},
+				sriovconsts.AttributePCIeRoot:     {StringValue: &pcieRoot},
+				sriovconsts.AttributePfPciAddress: {StringValue: &pfPci},
 			},
 		},
 		"devB": resourcev1.Device{

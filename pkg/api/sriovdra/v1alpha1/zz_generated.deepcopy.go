@@ -69,8 +69,8 @@ func (in *ResourceFilter) DeepCopyInto(out *ResourceFilter) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
-	if in.RootDevices != nil {
-		in, out := &in.RootDevices, &out.RootDevices
+	if in.PfPciAddresses != nil {
+		in, out := &in.PfPciAddresses, &out.PfPciAddresses
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}

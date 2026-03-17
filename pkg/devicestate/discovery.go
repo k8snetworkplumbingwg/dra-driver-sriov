@@ -15,15 +15,14 @@ import (
 )
 
 type PFInfo struct {
-	PciAddress       string
-	NetName          string
-	VendorID         string
-	DeviceID         string
-	Address          string
-	EswitchMode      string
-	PCIeRoot         string
-	ParentPciAddress string
-	LinkType         string
+	PciAddress  string
+	NetName     string
+	VendorID    string
+	DeviceID    string
+	Address     string
+	EswitchMode string
+	PCIeRoot    string
+	LinkType    string
 }
 
 func DiscoverSriovDevices() (types.AllocatableDevices, error) {
@@ -82,13 +81,6 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			pcieRoot = "" // Leave empty if we can't determine it
 		}
 
-		// Get immediate parent PCI address (e.g., bridge) for granular filtering
-		parentPciAddress, err := host.GetHelpers().GetParentPciAddress(device.Address)
-		if err != nil {
-			logger.Error(err, "Failed to get parent PCI address", "address", device.Address)
-			parentPciAddress = "" // Leave empty if we can't determine it
-		}
-
 		// Get link type (ethernet, infiniband, etc.)
 		linkType, err := host.GetHelpers().GetLinkType(device.Address)
 		if err != nil {
@@ -103,19 +95,17 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			"device", device.Product.ID,
 			"eswitchMode", eswitchMode,
 			"pcieRoot", pcieRoot,
-			"parentPciAddress", parentPciAddress,
 			"linkType", linkType)
 
 		pfList = append(pfList, PFInfo{
-			PciAddress:       device.Address,
-			NetName:          pfNetName,
-			VendorID:         device.Vendor.ID,
-			DeviceID:         device.Product.ID,
-			Address:          device.Address,
-			EswitchMode:      eswitchMode,
-			PCIeRoot:         pcieRoot,
-			ParentPciAddress: parentPciAddress,
-			LinkType:         linkType,
+			PciAddress:  device.Address,
+			NetName:     pfNetName,
+			VendorID:    device.Vendor.ID,
+			DeviceID:    device.Product.ID,
+			Address:     device.Address,
+			EswitchMode: eswitchMode,
+			PCIeRoot:    pcieRoot,
+			LinkType:    linkType,
 		})
 	}
 
@@ -175,9 +165,8 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 				consts.AttributePCIeRoot: {
 					StringValue: ptr.To(pfInfo.PCIeRoot),
 				},
-				// Immediate parent PCI address - for granular filtering
-				consts.AttributeParentPciAddress: {
-					StringValue: ptr.To(pfInfo.ParentPciAddress),
+				consts.AttributePfPciAddress: {
+					StringValue: ptr.To(pfInfo.PciAddress),
 				},
 				// Standard Kubernetes PCI address attribute
 				consts.AttributeStandardPciAddress: {

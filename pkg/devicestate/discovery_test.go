@@ -75,7 +75,6 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
-			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("0000:00:01.0", nil)
 			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
@@ -96,7 +95,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			Expect(dev1.Attributes[consts.AttributeEswitchMode].StringValue).To(Equal(ptr.To("legacy")))
 			Expect(dev1.Attributes[consts.AttributeVFID].IntValue).To(Equal(ptr.To(int64(0))))
 			Expect(dev1.Attributes[consts.AttributePCIeRoot].StringValue).To(Equal(ptr.To("pci0000:00")))
-			Expect(dev1.Attributes[consts.AttributeParentPciAddress].StringValue).To(Equal(ptr.To("0000:00:01.0")))
+			Expect(dev1.Attributes[consts.AttributePfPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.0")))
 			Expect(dev1.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.1")))
 			Expect(dev1.Attributes[consts.AttributeLinkType].StringValue).To(Equal(ptr.To(consts.LinkTypeEthernet)))
 
@@ -139,7 +138,6 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
-			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("0000:00:01.0", nil)
 			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
 
 			// Second PF
@@ -147,7 +145,6 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().TryGetInterfaceName("0000:02:00.0").Return("eth1")
 			mockHost.EXPECT().GetNicSriovMode("0000:02:00.0").Return("switchdev")
 			mockHost.EXPECT().GetPCIeRoot("0000:02:00.0").Return("pci0000:00", nil)
-			mockHost.EXPECT().GetParentPciAddress("0000:02:00.0").Return("0000:00:02.0", nil)
 			mockHost.EXPECT().GetLinkType("0000:02:00.0").Return(consts.LinkTypeInfiniband, nil)
 
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList1, nil)
@@ -178,7 +175,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			Expect(dev2.Attributes[consts.AttributeLinkType].StringValue).To(Equal(ptr.To(consts.LinkTypeInfiniband)))
 		})
 
-		It("should handle parent PCI address detection failure gracefully", func() {
+		It("should set PF PCI address on VF devices", func() {
 			pciInfo := &pci.Info{
 				Devices: []*pci.Device{
 					{
@@ -200,7 +197,6 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 
 			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("", nil)
-			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", fmt.Errorf("parent not found"))
 			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
@@ -209,10 +205,8 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(devices).To(HaveLen(1))
 
-			// Parent PCI address should be empty
 			dev := devices["0000-01-00-1"]
-			Expect(dev.Attributes[consts.AttributeParentPciAddress].StringValue).To(Equal(ptr.To("")))
-			// Standard PCI address should still be set
+			Expect(dev.Attributes[consts.AttributePfPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.0")))
 			Expect(dev.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.1")))
 		})
 
@@ -238,7 +232,6 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 
 			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
-			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("0000:00:01.0", nil)
 			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return("", fmt.Errorf("lookup failed"))
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
@@ -287,7 +280,6 @@ var _ = Describe("DiscoverSriovDevices", func() {
 				mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("ib0")
 				mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("switchdev")
 				mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
-				mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("0000:00:01.0", nil)
 				mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeInfiniband, nil)
 			})
 
@@ -328,7 +320,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 				Expect(dev1.Attributes[consts.AttributeEswitchMode].StringValue).To(Equal(ptr.To("switchdev")))
 				Expect(dev1.Attributes[consts.AttributeVFID].IntValue).To(Equal(ptr.To(int64(0))))
 				Expect(dev1.Attributes[consts.AttributePCIeRoot].StringValue).To(Equal(ptr.To("pci0000:00")))
-				Expect(dev1.Attributes[consts.AttributeParentPciAddress].StringValue).To(Equal(ptr.To("0000:00:01.0")))
+				Expect(dev1.Attributes[consts.AttributePfPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.0")))
 				Expect(dev1.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.1")))
 				// RDMA-specific attributes
 				Expect(dev1.Attributes[consts.AttributeRDMACapable].BoolValue).To(Equal(ptr.To(true)))
@@ -414,7 +406,6 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 
 			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("", nil)
-			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
@@ -512,7 +503,6 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 
 			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("", nil)
-			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(nil, fmt.Errorf("failed to get VF list"))
 
@@ -546,7 +536,6 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 
 			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("", nil)
-			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:af:10.7").Return(false)
@@ -579,7 +568,6 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
 
 			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("", nil)
-			mockHost.EXPECT().GetParentPciAddress("0000:01:00.0").Return("", nil)
 			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return([]host.VFInfo{}, nil) // Empty list
 

@@ -62,7 +62,7 @@ spec:
                             items:
                               type: string
                             type: array
-                          rootDevices:
+                          pfPciAddresses:
                             items:
                               type: string
                             type: array

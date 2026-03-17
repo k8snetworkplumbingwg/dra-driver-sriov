@@ -32,15 +32,15 @@ var _ = Describe("Consts", func() {
 
 		It("should have correct attributes with driver name prefix", func() {
 			expectedAttributes := map[string]string{
-				"pciAddress":       consts.DriverName + "/pciAddress",
-				"PFName":           consts.DriverName + "/PFName",
-				"EswitchMode":      consts.DriverName + "/EswitchMode",
-				"vendor":           consts.DriverName + "/vendor",
-				"deviceID":         consts.DriverName + "/deviceID",
-				"pfDeviceID":       consts.DriverName + "/pfDeviceID",
-				"vfID":             consts.DriverName + "/vfID",
-				"resourceName":     consts.DriverName + "/resourceName",
-				"parentPciAddress": consts.DriverName + "/parentPciAddress",
+				"pciAddress":   consts.DriverName + "/pciAddress",
+				"PFName":       consts.DriverName + "/PFName",
+				"EswitchMode":  consts.DriverName + "/EswitchMode",
+				"vendor":       consts.DriverName + "/vendor",
+				"deviceID":     consts.DriverName + "/deviceID",
+				"pfDeviceID":   consts.DriverName + "/pfDeviceID",
+				"vfID":         consts.DriverName + "/vfID",
+				"resourceName": consts.DriverName + "/resourceName",
+				"pfPciAddress": consts.DriverName + "/pfPciAddress",
 			}
 
 			Expect(consts.AttributePciAddress).To(Equal(expectedAttributes["pciAddress"]))
@@ -51,7 +51,7 @@ var _ = Describe("Consts", func() {
 			Expect(consts.AttributePFDeviceID).To(Equal(expectedAttributes["pfDeviceID"]))
 			Expect(consts.AttributeVFID).To(Equal(expectedAttributes["vfID"]))
 			Expect(consts.AttributeResourceName).To(Equal(expectedAttributes["resourceName"]))
-			Expect(consts.AttributeParentPciAddress).To(Equal(expectedAttributes["parentPciAddress"]))
+			Expect(consts.AttributePfPciAddress).To(Equal(expectedAttributes["pfPciAddress"]))
 		})
 
 		It("should have correct attributes with standard prefix", func() {

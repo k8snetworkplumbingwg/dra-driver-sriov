@@ -48,12 +48,12 @@ type Config struct {
 
 // ResourceFilter is a filter for a resource
 type ResourceFilter struct {
-	Vendors      []string `json:"vendors,omitempty"`
-	Devices      []string `json:"devices,omitempty"`
-	PciAddresses []string `json:"pciAddresses,omitempty"`
-	PfNames      []string `json:"pfNames,omitempty"`
-	RootDevices  []string `json:"rootDevices,omitempty"`
-	Drivers      []string `json:"drivers,omitempty"`
+	Vendors        []string `json:"vendors,omitempty"`
+	Devices        []string `json:"devices,omitempty"`
+	PciAddresses   []string `json:"pciAddresses,omitempty"`
+	PfNames        []string `json:"pfNames,omitempty"`
+	PfPciAddresses []string `json:"pfPciAddresses,omitempty"`
+	Drivers        []string `json:"drivers,omitempty"`
 }
 
 // +genclient
