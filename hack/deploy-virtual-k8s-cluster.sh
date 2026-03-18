@@ -330,8 +330,8 @@ sudo su
 if [ $(ip a | grep 10.85.0 | wc -l) -eq 0 ]; then ip link del cni0; fi
 EOF
 
-kubectl -n ${MULTUS_NAMESPACE} get po | grep multus | awk '{print "kubectl -n kube-system delete po",$1}' | sh
-kubectl -n kube-system get po | grep coredns | awk '{print "kubectl -n kube-system delete po",$1}' | sh
+kubectl -n ${MULTUS_NAMESPACE} delete po -l name=multus --ignore-not-found=true
+kubectl -n kube-system delete po -l k8s-app=kube-dns --ignore-not-found=true
 
 TIMEOUT=400
 echo "## wait for coredns"
