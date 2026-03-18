@@ -362,9 +362,11 @@ func (s *Manager) Unprepare(claimUID string, preparedDevices drasriovtypes.Prepa
 		return fmt.Errorf("unable to delete CDI spec file for PodUID: %v", err)
 	}
 
-	err = s.cdi.DeleteSpecFile(preparedDevices[0].PodUID)
-	if err != nil {
-		return fmt.Errorf("unable to delete CDI spec file for PodUID: %v", err)
+	if len(preparedDevices) > 0 {
+		err = s.cdi.DeleteSpecFile(preparedDevices[0].PodUID)
+		if err != nil {
+			return fmt.Errorf("unable to delete CDI spec file for PodUID: %v", err)
+		}
 	}
 
 	return nil
