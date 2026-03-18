@@ -44,6 +44,10 @@ const (
 	// AttributePfPciAddress is for the PCI address of the Physical Function (PF).
 	AttributePfPciAddress = DriverName + "/pfPciAddress"
 
+	// this is the most-common nonstandard prefix, supported by dranet and dracpu
+	DraNetCompatPrefix = "dra.net"
+	AttributeNUMANode  = DraNetCompatPrefix + "/numaNode"
+
 	// Network device constants
 	NetClass  = 0x02 // Network controller class
 	SysBusPci = "/sys/bus/pci/devices"

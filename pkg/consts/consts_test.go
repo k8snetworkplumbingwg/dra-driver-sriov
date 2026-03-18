@@ -60,6 +60,10 @@ var _ = Describe("Consts", func() {
 			Expect(consts.AttributeStandardPciAddress).To(Equal(deviceattribute.StandardDeviceAttributePrefix + "pciBusID"))
 		})
 
+		It("should have compatibility attributes", func() {
+			Expect(consts.AttributeNUMANode).To(Equal(consts.DraNetCompatPrefix + "/numaNode"))
+		})
+
 		It("should have correct network device constants", func() {
 			Expect(consts.NetClass).To(Equal(0x02))
 			Expect(consts.SysBusPci).To(Equal("/sys/bus/pci/devices"))
