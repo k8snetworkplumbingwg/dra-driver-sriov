@@ -15,11 +15,13 @@ The driver features an advanced resource filtering system that enables administr
 ## Features
 
 - **Dynamic Resource Allocation**: Leverages Kubernetes DRA framework for SR-IOV VF management
-- **Advanced Resource Filtering**: Fine-grained filtering of Virtual Functions based on hardware attributes
-- **Custom Resource Definitions**: SriovResourceFilter CRD for configuring device filtering policies
-- **Controller-based Management**: Kubernetes controller pattern for resource filter lifecycle management
+- **Opt-In Device Advertisement**: Devices are only advertised when explicitly defined in a policy
+- **Custom Resource Definitions**:
+  - SriovResourcePolicy CRD for configuring device advertisement policies
+  - DeviceAttributes CRD defines a set of arbitrary attributes that can be applied to devices selected by a SriovResourcePolicy. Policies reference DeviceAttributes objects via label selectors.
+- **Controller-based Management**: Kubernetes controller pattern for resource policy lifecycle management
 - **Multiple Resource Types**: Support for exposing different VF pools as distinct resource types
-- **Node-targeted Filtering**: Per-node resource filtering with node selector support
+- **Node-targeted Policies**: Per-node resource policies with node selector support
 - **CDI Integration**: Uses Container Device Interface for device injection into containers
 - **NRI Integration**: Node Resource Interface support for advanced container runtime interaction
 - **Kubernetes Native**: Integrates seamlessly with standard Kubernetes resource request/limit model
@@ -79,7 +81,7 @@ The Helm chart supports various configuration options through `values.yaml`:
 - **Image Configuration**: Customize image repository, tag, and pull policy
 - **Resource Limits**: Set resource requests and limits for driver components  
 - **Node Selection**: Configure node selectors and tolerations
-- **Namespace Configuration**: Configure the namespace where SriovResourceFilter resources are watched
+- **Namespace Configuration**: Configure the namespace where SriovResourcePolicy resources are watched
 - **Default Interface Prefix**: Set the default interface prefix for virtual functions
 - **CDI Root**: Configure the directory for CDI file generation
 - **Logging**: Adjust log verbosity and format
@@ -137,32 +139,71 @@ spec:
 
 ## Resource Filtering System
 
-The DRA driver includes an advanced resource filtering system that allows administrators to define fine-grained policies for how SR-IOV Virtual Functions are exposed and allocated. This system uses Custom Resource Definitions (CRDs) and a Kubernetes controller to manage device filtering based on hardware characteristics.
+The DRA driver uses an opt-in model where administrators explicitly define which SR-IOV Virtual Functions should be advertised as Kubernetes resources. This system uses Custom Resource Definitions (CRDs) and a Kubernetes controller to manage device advertisement policies based on hardware characteristics.
 
-### SriovResourceFilter CRD
+**Important**: Without a matching `SriovResourcePolicy`, no devices will be advertised.
 
-The `SriovResourceFilter` custom resource allows you to define filtering policies for SR-IOV devices:
+### SriovResourcePolicy CRD
+
+The `SriovResourcePolicy` custom resource defines which SR-IOV devices should be advertised as allocatable resources. Attributes are decoupled into a separate `DeviceAttributes` CRD and linked via label selectors:
 
 ```yaml
+# 1. Define attributes to apply to matched devices
 apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
-kind: SriovResourceFilter
+kind: DeviceAttributes
 metadata:
-  name: example-filter
+  name: eth0-attrs
+  namespace: dra-sriov-driver
+  labels:
+    pool: eth0-resource
+spec:
+  attributes:
+    sriovnetwork.k8snetworkplumbingwg.io/resourceName:
+      string: "eth0_resource"
+---
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: DeviceAttributes
+metadata:
+  name: eth1-attrs
+  namespace: dra-sriov-driver
+  labels:
+    pool: eth1-resource
+spec:
+  attributes:
+    sriovnetwork.k8snetworkplumbingwg.io/resourceName:
+      string: "eth1_resource"
+---
+# 2. Policy selects devices and references attributes by label
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: SriovResourcePolicy
+metadata:
+  name: example-policy
   namespace: dra-sriov-driver
 spec:
   nodeSelector:
-    kubernetes.io/hostname: worker-node-1
+    nodeSelectorTerms:
+    - matchExpressions:
+      - key: kubernetes.io/hostname
+        operator: In
+        values:
+        - worker-node-1
   configs:
-  - resourceName: "eth0_resource"  
+  - deviceAttributesSelector:
+      matchLabels:
+        pool: eth0-resource
     resourceFilters:
     - vendors: ["8086"]           # Intel devices only
       pfNames: ["eth0"]           # Physical Function name
-  - resourceName: "eth1_resource"
-    resourceFilters:  
+  - deviceAttributesSelector:
+      matchLabels:
+        pool: eth1-resource
+    resourceFilters:
     - vendors: ["8086"]
       pfNames: ["eth1"]
       drivers: ["vfio-pci"]       # Only VFIO-bound devices
 ```
+
+Each `Config` entry pairs a `deviceAttributesSelector` (label selector matching `DeviceAttributes` objects) with `resourceFilters` (device hardware criteria). Devices matching the filters are advertised, and attributes from all matching `DeviceAttributes` objects are merged onto them.
 
 ### Filtering Criteria
 
@@ -173,40 +214,48 @@ The resource filtering system supports multiple filtering criteria that can be c
 - **pciAddresses**: Filter by specific PCI addresses
 - **pfNames**: Filter by Physical Function name (e.g., "eth0", "eth1")
 - **pfPciAddresses**: Filter by Physical Function PCI address
+- **drivers**: Filter by bound driver name (e.g., "vfio-pci", "igb_uio")
 
 ### Node Selection
 
-Use `nodeSelector` to target specific nodes:
+Use `nodeSelector` (a `v1.NodeSelector`) to target specific nodes. Omit it to match all nodes:
 
 ```yaml
 spec:
   nodeSelector:
-    kubernetes.io/hostname: specific-node
-    # or
-    node-type: sriov-enabled
-    # Empty nodeSelector matches all nodes
+    nodeSelectorTerms:
+    - matchExpressions:
+      - key: kubernetes.io/hostname
+        operator: In
+        values:
+        - specific-node
+    # Multiple terms are ORed; expressions within a term are ANDed
 ```
 
 ### Multiple Resource Types
 
-Define multiple resource configurations to create different pools of Virtual Functions:
+Define multiple configs to create different pools of Virtual Functions, each referencing a `DeviceAttributes` object via label selector:
 
 ```yaml
 spec:
   configs:
-  - resourceName: "high-performance"
+  - deviceAttributesSelector:
+      matchLabels:
+        pool: high-performance
     resourceFilters:
     - vendors: ["8086"]
       pfNames: ["eth0"]
-  - resourceName: "standard-networking"  
+  - deviceAttributesSelector:
+      matchLabels:
+        pool: standard-networking
     resourceFilters:
-    - vendors: ["8086"]  
+    - vendors: ["8086"]
       pfNames: ["eth1"]
 ```
 
-### Using Filtered Resources
+### Using Policy-Defined Resources
 
-Once a `SriovResourceFilter` is applied, pods can request specific resource types using CEL expressions:
+Once a `SriovResourcePolicy` is applied, devices matching the policy are advertised and pods can request specific resource types using CEL expressions:
 
 ```yaml
 apiVersion: resource.k8s.io/v1
@@ -299,11 +348,11 @@ Demonstrates requesting multiple Virtual Functions in a single resource claim:
 - VfConfig applies to all allocated VFs in the claim
 - Automatic interface naming (typically net1, net2, etc.)
 
-#### Resource Filtering (`demo/resource-filtering/`)  
-Shows how to use SriovResourceFilter for advanced device management:
-- Filter VFs based on vendor ID, Physical Function names, and hardware attributes
+#### Resource Policies (`demo/resource-policies/`)  
+Shows how to use SriovResourcePolicy for controlling device advertisement:
+- Advertise VFs based on vendor ID, Physical Function names, and hardware attributes
 - Multiple resource configurations for different network interfaces
-- Node-targeted filtering with selector support
+- Node-targeted policies with selector support
 
 #### VFIO Driver Configuration (`demo/vfio-driver/`)
 Illustrates VFIO-PCI driver configuration for userspace applications:
@@ -323,10 +372,10 @@ Illustrates VFIO-PCI driver configuration for userspace applications:
 │   └── dra-driver-sriov/          # Main driver executable
 ├── pkg/
 │   ├── driver/                    # Core driver implementation
-│   ├── controller/                # Kubernetes controller for resource filtering
+│   ├── controller/                # Kubernetes controller for resource policies
 │   ├── devicestate/               # Device state management and discovery
 │   ├── api/                       # API definitions
-│   │   ├── sriovdra/v1alpha1/     # SriovResourceFilter CRD definitions
+│   │   ├── sriovdra/v1alpha1/     # SriovResourcePolicy and DeviceAttributes CRD definitions
 │   │   └── virtualfunction/v1alpha1/ # Virtual Function API types
 │   ├── cdi/                       # CDI integration
 │   ├── cni/                       # CNI plugin integration
@@ -342,8 +391,8 @@ Illustrates VFIO-PCI driver configuration for userspace applications:
 ├── demo/                          # Example workload configurations
 │   ├── single-vf-claim/           # Single VF allocation example
 │   ├── multiple-vf-claim/         # Multiple VF allocation example
-│   ├── resource-filtering/        # Resource filtering configuration example
-│   └── vfio-driver/              # VFIO-PCI driver configuration example
+│   ├── resource-policies/         # Resource policy configuration example
+│   └── vfio-driver/               # VFIO-PCI driver configuration example
 ├── hack/                          # Build and development scripts
 ├── test/                          # Test suites
 └── vendor/                        # Go module dependencies
@@ -352,9 +401,10 @@ Illustrates VFIO-PCI driver configuration for userspace applications:
 ### Key Components
 
 - **Driver**: Main gRPC service implementing DRA kubelet plugin interface
-- **Resource Filter Controller**: Kubernetes controller managing SriovResourceFilter lifecycle and device filtering
-- **Device State Manager**: Tracks available and allocated SR-IOV virtual functions with filtering support
-- **SriovResourceFilter CRD**: Custom resource for defining device filtering policies  
+- **Resource Policy Controller**: Kubernetes controller managing SriovResourcePolicy lifecycle and device advertisement
+- **Device State Manager**: Tracks available and allocated SR-IOV virtual functions
+- **SriovResourcePolicy CRD**: Custom resource for defining device advertisement policies (opt-in model)
+- **DeviceAttributes CRD**: Custom resource for defining arbitrary attributes applied to policy-matched devices via label selectors
 - **CDI Generator**: Creates Container Device Interface specifications for VFs
 - **NRI Plugin**: Node Resource Interface integration for container runtime interaction
 - **Pod Manager**: Manages pod lifecycle and resource allocation

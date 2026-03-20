@@ -634,37 +634,73 @@ var _ = Describe("Manager", func() {
 		})
 	})
 
-	Context("UpdateDeviceResourceNames", func() {
-		It("adds, updates, and clears resource names correctly", func() {
+	Context("UpdatePolicyDevices", func() {
+		It("advertises devices present in the map and applies attributes", func() {
+			s := &Manager{
+				allocatable: map[string]resourceapi.Device{
+					"devA": {Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{}},
+					"devB": {Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{}},
+				},
+			}
+
+			resName := "vendor.com/resA"
+			policyDevices := map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+				"devA": {
+					consts.AttributeResourceName: {StringValue: &resName},
+				},
+			}
+			err := s.UpdatePolicyDevices(context.Background(), policyDevices)
+			Expect(err).ToNot(HaveOccurred())
+
+			Expect(s.policyAttrKeys).To(HaveKey("devA"))
+			Expect(s.policyAttrKeys).ToNot(HaveKey("devB"))
+
+			val := s.allocatable["devA"].Attributes[consts.AttributeResourceName].StringValue
+			Expect(val).ToNot(BeNil())
+			Expect(*val).To(Equal("vendor.com/resA"))
+		})
+
+		It("clears policy attributes when device is removed from map", func() {
+			resName := "vendor.com/resA"
+			s := &Manager{
+				allocatable: map[string]resourceapi.Device{
+					"devA": {Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+						consts.AttributeResourceName: {StringValue: &resName},
+						consts.AttributeVendorID:     {StringValue: ptr.To("8086")},
+					}},
+				},
+				policyAttrKeys: map[string]map[resourceapi.QualifiedName]bool{
+					"devA": {consts.AttributeResourceName: true},
+				},
+			}
+
+			// Remove devA from policy
+			err := s.UpdatePolicyDevices(context.Background(), map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{})
+			Expect(err).ToNot(HaveOccurred())
+
+			Expect(s.policyAttrKeys).To(BeEmpty())
+			// Policy attribute (resourceName) should be cleared
+			_, exists := s.allocatable["devA"].Attributes[consts.AttributeResourceName]
+			Expect(exists).To(BeFalse())
+			// Discovery attribute (vendorID) should still exist
+			_, exists = s.allocatable["devA"].Attributes[consts.AttributeVendorID]
+			Expect(exists).To(BeTrue())
+		})
+
+		It("GetAdvertisedDevices returns only advertised devices", func() {
 			s := &Manager{
 				allocatable: map[string]resourceapi.Device{
 					"devA": {},
 					"devB": {},
 				},
+				policyAttrKeys: map[string]map[resourceapi.QualifiedName]bool{
+					"devA": {},
+				},
 			}
 
-			// Add resource name to devA
-			err := s.UpdateDeviceResourceNames(context.Background(), map[string]string{"devA": "vendor.com/resA"})
-			Expect(err).ToNot(HaveOccurred())
-			Expect(s.allocatable["devA"].Attributes).ToNot(BeNil())
-			Expect(s.allocatable["devA"].Attributes).To(HaveKey(resourceapi.QualifiedName(consts.AttributeResourceName)))
-
-			// Update to same value should be a no-op but still succeed
-			err = s.UpdateDeviceResourceNames(context.Background(), map[string]string{"devA": "vendor.com/resA"})
-			Expect(err).ToNot(HaveOccurred())
-
-			// Change value and clear for devB
-			err = s.UpdateDeviceResourceNames(context.Background(), map[string]string{"devA": "vendor.com/resA2", "devB": ""})
-			Expect(err).ToNot(HaveOccurred())
-
-			// Ensure attribute exists for devA with new value
-			val := s.allocatable["devA"].Attributes[consts.AttributeResourceName].StringValue
-			Expect(val).ToNot(BeNil())
-			Expect(*val).To(Equal("vendor.com/resA2"))
-
-			// Ensure attribute is cleared for devB when value empty
-			_, exists := s.allocatable["devB"].Attributes[consts.AttributeResourceName]
-			Expect(exists).To(BeFalse())
+			advertised := s.GetAdvertisedDevices()
+			Expect(advertised).To(HaveLen(1))
+			Expect(advertised).To(HaveKey("devA"))
 		})
 
 		It("should trigger republish callback when changes are made", func() {
@@ -681,7 +717,12 @@ var _ = Describe("Manager", func() {
 				republishCallback: callback,
 			}
 
-			err := s.UpdateDeviceResourceNames(context.Background(), map[string]string{"devA": "vendor.com/resA"})
+			resName := "vendor.com/resA"
+			err := s.UpdatePolicyDevices(context.Background(), map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+				"devA": {
+					consts.AttributeResourceName: {StringValue: &resName},
+				},
+			})
 			Expect(err).ToNot(HaveOccurred())
 			Expect(callbackCalled).To(BeTrue())
 		})
@@ -703,11 +744,18 @@ var _ = Describe("Manager", func() {
 						},
 					},
 				},
+				policyAttrKeys: map[string]map[resourceapi.QualifiedName]bool{
+					"devA": {consts.AttributeResourceName: true},
+				},
 				republishCallback: callback,
 			}
 
-			// Same value - no change
-			err := s.UpdateDeviceResourceNames(context.Background(), map[string]string{"devA": "vendor.com/resA"})
+			resName := "vendor.com/resA"
+			err := s.UpdatePolicyDevices(context.Background(), map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+				"devA": {
+					consts.AttributeResourceName: {StringValue: &resName},
+				},
+			})
 			Expect(err).ToNot(HaveOccurred())
 			Expect(callbackCalled).To(BeFalse())
 		})
@@ -724,7 +772,12 @@ var _ = Describe("Manager", func() {
 				republishCallback: callback,
 			}
 
-			err := s.UpdateDeviceResourceNames(context.Background(), map[string]string{"devA": "vendor.com/resA"})
+			resName := "vendor.com/resA"
+			err := s.UpdatePolicyDevices(context.Background(), map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+				"devA": {
+					consts.AttributeResourceName: {StringValue: &resName},
+				},
+			})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("failed to republish resources"))
 		})
@@ -732,7 +785,6 @@ var _ = Describe("Manager", func() {
 
 	Context("RDMA Device Preparation", func() {
 		It("should skip RDMA preparation when device is not RDMA capable", func() {
-			// Create device without RDMA capability
 			nonRdmaDevice := &resourceapi.Device{
 				Name: "0000-08-00-1",
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
@@ -745,22 +797,13 @@ var _ = Describe("Manager", func() {
 				},
 			}
 
-			// Verify device is not RDMA capable
 			rdmaCapable, exists := nonRdmaDevice.Attributes[consts.AttributeRDMACapable]
 			Expect(exists).To(BeTrue())
 			Expect(rdmaCapable.BoolValue).ToNot(BeNil())
 			Expect(*rdmaCapable.BoolValue).To(BeFalse())
 
-			// Test the conditional logic that determines if RDMA preparation should occur
-			// This replicates the production code condition:
-			// if rdmaCapableAttr, ok := deviceInfo.Attributes[consts.AttributeRDMACapable]; ok && rdmaCapableAttr.BoolValue != nil && *rdmaCapableAttr.BoolValue
 			shouldPrepareRDMA := exists && rdmaCapable.BoolValue != nil && *rdmaCapable.BoolValue
 			Expect(shouldPrepareRDMA).To(BeFalse(), "RDMA preparation should be skipped for non-RDMA capable devices")
-
-			// When this condition is false, the production code never calls:
-			// - GetRDMADevicesForPCI
-			// - GetRDMACharDevices
-			// This test verifies the condition evaluates correctly for non-RDMA devices
 		})
 	})
 
@@ -775,7 +818,6 @@ var _ = Describe("Manager", func() {
 		BeforeEach(func() {
 			mockCtrl = gomock.NewController(GinkgoT())
 			mockHost = mock_host.NewMockInterface(mockCtrl)
-			// Save original helpers and replace with mock
 			_ = host.GetHelpers()
 			origHelpers = host.Helpers
 			host.Helpers = mockHost
@@ -784,7 +826,6 @@ var _ = Describe("Manager", func() {
 		})
 
 		AfterEach(func() {
-			// Restore original helpers
 			host.Helpers = origHelpers
 			mockCtrl.Finish()
 		})
@@ -794,17 +835,13 @@ var _ = Describe("Manager", func() {
 			deviceName := "device-1"
 			rdmaDeviceName := "mlx5_0"
 
-			// Create device info with RDMA capability
 			deviceInfo := resourceapi.Device{
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 					consts.AttributeRDMACapable: {BoolValue: ptr.To(true)},
 				},
 			}
 
-			// Mock GetRDMADevicesForPCI to return one RDMA device
 			mockHost.EXPECT().GetRDMADevicesForPCI(pciAddress).Return([]string{rdmaDeviceName})
-
-			// Mock GetRDMACharDevices to return various character devices
 			mockHost.EXPECT().GetRDMACharDevices(rdmaDeviceName).Return([]string{
 				"/dev/infiniband/uverbs0",
 				"/dev/infiniband/umad0",
@@ -812,13 +849,9 @@ var _ = Describe("Manager", func() {
 				"/dev/infiniband/rdma_cm",
 			}, nil)
 
-			// Call the function
 			deviceNodes, envs, err := manager.handleRDMADevice(context.Background(), deviceInfo, pciAddress, deviceName)
 
-			// Verify no error
 			Expect(err).ToNot(HaveOccurred())
-
-			// Verify device nodes
 			Expect(deviceNodes).To(HaveLen(4))
 			Expect(deviceNodes[0].Path).To(Equal("/dev/infiniband/uverbs0"))
 			Expect(deviceNodes[0].HostPath).To(Equal("/dev/infiniband/uverbs0"))
@@ -827,7 +860,6 @@ var _ = Describe("Manager", func() {
 			Expect(deviceNodes[2].Path).To(Equal("/dev/infiniband/issm0"))
 			Expect(deviceNodes[3].Path).To(Equal("/dev/infiniband/rdma_cm"))
 
-			// Verify environment variables
 			Expect(envs).To(HaveLen(5))
 			Expect(envs).To(ContainElement("SRIOVNETWORK_device_1_RDMA_UVERB=/dev/infiniband/uverbs0"))
 			Expect(envs).To(ContainElement("SRIOVNETWORK_device_1_RDMA_UMAD=/dev/infiniband/umad0"))
@@ -840,20 +872,16 @@ var _ = Describe("Manager", func() {
 			pciAddress := "0000:08:00.1"
 			deviceName := "device-1"
 
-			// Create device info with RDMA capability
 			deviceInfo := resourceapi.Device{
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 					consts.AttributeRDMACapable: {BoolValue: ptr.To(true)},
 				},
 			}
 
-			// Mock GetRDMADevicesForPCI to return two RDMA devices
 			mockHost.EXPECT().GetRDMADevicesForPCI(pciAddress).Return([]string{"mlx5_0", "mlx5_1"})
 
-			// Call the function
 			deviceNodes, envs, err := manager.handleRDMADevice(context.Background(), deviceInfo, pciAddress, deviceName)
 
-			// Verify error is returned
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("expected exactly one RDMA device"))
 			Expect(deviceNodes).To(BeNil())
@@ -864,17 +892,14 @@ var _ = Describe("Manager", func() {
 			pciAddress := "0000:08:00.1"
 			deviceName := "device-1"
 
-			// Create device info without RDMA capability
 			deviceInfo := resourceapi.Device{
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 					consts.AttributeRDMACapable: {BoolValue: ptr.To(false)},
 				},
 			}
 
-			// Call the function
 			deviceNodes, envs, err := manager.handleRDMADevice(context.Background(), deviceInfo, pciAddress, deviceName)
 
-			// Verify no error and empty lists
 			Expect(err).ToNot(HaveOccurred())
 			Expect(deviceNodes).To(BeEmpty())
 			Expect(envs).To(BeEmpty())
@@ -884,20 +909,16 @@ var _ = Describe("Manager", func() {
 			pciAddress := "0000:08:00.1"
 			deviceName := "device-1"
 
-			// Create device info with RDMA capability
 			deviceInfo := resourceapi.Device{
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 					consts.AttributeRDMACapable: {BoolValue: ptr.To(true)},
 				},
 			}
 
-			// Mock GetRDMADevicesForPCI to return empty list
 			mockHost.EXPECT().GetRDMADevicesForPCI(pciAddress).Return([]string{})
 
-			// Call the function
 			deviceNodes, envs, err := manager.handleRDMADevice(context.Background(), deviceInfo, pciAddress, deviceName)
 
-			// Verify error is returned
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("no RDMA devices found"))
 			Expect(deviceNodes).To(BeNil())
@@ -909,23 +930,17 @@ var _ = Describe("Manager", func() {
 			deviceName := "device-1"
 			rdmaDeviceName := "mlx5_0"
 
-			// Create device info with RDMA capability
 			deviceInfo := resourceapi.Device{
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 					consts.AttributeRDMACapable: {BoolValue: ptr.To(true)},
 				},
 			}
 
-			// Mock GetRDMADevicesForPCI to return one RDMA device
 			mockHost.EXPECT().GetRDMADevicesForPCI(pciAddress).Return([]string{rdmaDeviceName})
-
-			// Mock GetRDMACharDevices to return an error
 			mockHost.EXPECT().GetRDMACharDevices(rdmaDeviceName).Return(nil, fmt.Errorf("failed to get char devices"))
 
-			// Call the function
 			deviceNodes, envs, err := manager.handleRDMADevice(context.Background(), deviceInfo, pciAddress, deviceName)
 
-			// Verify error is returned
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("failed to get char devices"))
 			Expect(deviceNodes).To(BeNil())
@@ -937,23 +952,17 @@ var _ = Describe("Manager", func() {
 			deviceName := "device-1"
 			rdmaDeviceName := "mlx5_0"
 
-			// Create device info with RDMA capability
 			deviceInfo := resourceapi.Device{
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 					consts.AttributeRDMACapable: {BoolValue: ptr.To(true)},
 				},
 			}
 
-			// Mock GetRDMADevicesForPCI to return one RDMA device
 			mockHost.EXPECT().GetRDMADevicesForPCI(pciAddress).Return([]string{rdmaDeviceName})
-
-			// Mock GetRDMACharDevices to return empty list
 			mockHost.EXPECT().GetRDMACharDevices(rdmaDeviceName).Return([]string{}, nil)
 
-			// Call the function
 			deviceNodes, envs, err := manager.handleRDMADevice(context.Background(), deviceInfo, pciAddress, deviceName)
 
-			// Verify error is returned
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("no RDMA character devices found"))
 			Expect(deviceNodes).To(BeNil())

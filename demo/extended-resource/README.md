@@ -21,8 +21,8 @@ In both cases, the scheduler transparently creates a ResourceClaim with an `Exac
 
 ## Components
 
-### 1. SriovResourceFilter (Dual-Port)
-The `SriovResourceFilter` defines two resource groups — one per physical NIC port:
+### 1. SriovResourcePolicy (Dual-Port)
+The `SriovResourcePolicy` defines two resource groups — one per physical NIC port:
 - **port1-vfs**: VFs on PCI bus `08:00.{2,3,4,5}`
 - **port2-vfs**: VFs on PCI bus `08:02.{2,3,4,5}`
 
@@ -52,7 +52,7 @@ Pods use standard `resources.requests` / `resources.limits` — no `resourceClai
                     deviceclass.yaml
 ┌──────────────────────────────────────────────────────────┐
 │                                                          │
-│  SriovResourceFilter "dual-port-vfs"                     │
+│  SriovResourcePolicy "dual-port-vfs"                     │
 │  ┌───────────────────┐  ┌───────────────────┐            │
 │  │ port1-vfs         │  │ port2-vfs         │            │
 │  │ 08:00.{2,3,4,5}   │  │ 08:02.{2,3,4,5}   │            │
@@ -91,7 +91,7 @@ Extended resource allocation is ideal for:
 
 ## Usage
 
-1. Deploy the DeviceClasses, SriovResourceFilter, and NetworkAttachmentDefinitions:
+1. Deploy the DeviceClasses, SriovResourcePolicy, and NetworkAttachmentDefinitions:
    ```bash
    kubectl apply -f deviceclass.yaml
    ```
@@ -167,7 +167,7 @@ The other demos in this repository (`single-vf-claim/`, `resourceclaim/`, `vfio-
 
 ### Changing PCI Addresses
 
-Update the `SriovResourceFilter` in `deviceclass.yaml` with your actual VF PCI addresses:
+Update the `SriovResourcePolicy` in `deviceclass.yaml` with your actual VF PCI addresses:
 
 ```bash
 # Find VF PCI addresses on your host

@@ -86,7 +86,7 @@ func newApp() *cli.App {
 		},
 		&cli.StringFlag{
 			Name:        "namespace",
-			Usage:       "Namespace where the driver should watch for SriovResourceFilter resources.",
+			Usage:       "Namespace where the driver should watch for SriovResourcePolicy resources.",
 			Value:       "dra-sriov-driver",
 			Destination: &flagsOptions.Namespace,
 			EnvVars:     []string{"NAMESPACE"},
@@ -188,11 +188,11 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 
 	logger.Info("Configuring controller manager", "namespace", config.Flags.Namespace)
 
-	// Configure cache to only watch resources in the specified namespace for SriovResourceFilter
+	// Configure cache to only watch resources in the specified namespace for SriovResourcePolicy
 	// while allowing cluster-wide access for other resources like Nodes
 	cacheOpts := cache.Options{
 		ByObject: map[client.Object]cache.ByObject{
-			&sriovdrav1alpha1.SriovResourceFilter{}: {
+			&sriovdrav1alpha1.SriovResourcePolicy{}: {
 				Namespaces: map[string]cache.Config{
 					config.Flags.Namespace: {},
 				},
@@ -209,10 +209,10 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 		return fmt.Errorf("failed to create controller manager: %w", err)
 	}
 
-	// create and setup resource filter controller
-	resourceFilterController := controller.NewSriovResourceFilterReconciler(config.K8sClient.Client, config.Flags.NodeName, config.Flags.Namespace, deviceStateManager)
-	if err := resourceFilterController.SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("failed to setup resource filter controller: %w", err)
+	// create and setup resource policy controller
+	resourcePolicyController := controller.NewSriovResourcePolicyReconciler(config.K8sClient.Client, config.Flags.NodeName, config.Flags.Namespace, deviceStateManager)
+	if err := resourcePolicyController.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("failed to setup resource policy controller: %w", err)
 	}
 
 	// start controller manager
