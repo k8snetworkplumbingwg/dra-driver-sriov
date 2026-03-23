@@ -71,7 +71,7 @@ GOOS=linux GOARCH=amd64 make cmds
 Deploy the DRA driver using Helm:
 
 ```bash
-helm upgrade -i sriov-dra --create-namespace -n dra-driver-sriov ./deployments/helm/dra-driver-sriov/
+helm upgrade -i dra-driver-sriov --create-namespace -n dra-sriov-driver ./deployments/helm/dra-driver-sriov/
 ```
 
 ### Configuration Options
@@ -91,11 +91,10 @@ The Helm chart supports various configuration options through `values.yaml`:
 Example custom deployment:
 
 ```bash
-helm upgrade -i sriov-dra \
+helm upgrade -i dra-driver-sriov \
   --create-namespace -n dra-sriov-driver \
   --set image.tag=v0.1.0 \
   --set logging.level=5 \
-  --set driver.namespace=dra-sriov-driver \
   --set driver.defaultInterfacePrefix=net \
   ./deployments/helm/dra-driver-sriov/
 ```
@@ -142,6 +141,21 @@ spec:
 The DRA driver uses an opt-in model where administrators explicitly define which SR-IOV Virtual Functions should be advertised as Kubernetes resources. This system uses Custom Resource Definitions (CRDs) and a Kubernetes controller to manage device advertisement policies based on hardware characteristics.
 
 **Important**: Without a matching `SriovResourcePolicy`, no devices will be advertised.
+
+To quickly advertise **all** SR-IOV devices on **all** nodes (no filtering, no extra attributes), create a policy with a single empty config:
+
+```yaml
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: SriovResourcePolicy
+metadata:
+  name: all-devices
+  namespace: dra-sriov-driver
+spec:
+  configs:
+  - {}
+```
+
+An empty `resourceFilters` list matches every device, and omitting `nodeSelector` matches every node. This is useful for initial testing before defining more targeted policies.
 
 ### SriovResourcePolicy CRD
 

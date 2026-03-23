@@ -1,4 +1,15 @@
 ---
+# Advertise all SR-IOV devices on all nodes (required for device discovery).
+# Adjust namespace to match the driver's Helm release namespace.
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: SriovResourcePolicy
+metadata:
+  name: all-devices
+  namespace: dra-sriov-driver
+spec:
+  configs:
+  - {}
+---
 apiVersion: v1
 kind: Namespace
 metadata:
