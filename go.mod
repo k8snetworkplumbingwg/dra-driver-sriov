@@ -3,7 +3,7 @@ module github.com/k8snetworkplumbingwg/dra-driver-sriov
 go 1.25.3
 
 require (
-	github.com/Mellanox/rdmamap v1.1.0
+	github.com/Mellanox/rdmamap v1.2.0
 	github.com/containerd/nri v0.11.0
 	github.com/containernetworking/cni v1.3.0
 	github.com/jaypipes/ghw v0.23.0
@@ -94,7 +94,7 @@ require (
 	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/sys v0.40.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/term v0.39.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
 	golang.org/x/time v0.9.0 // indirect
