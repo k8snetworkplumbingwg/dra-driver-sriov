@@ -100,6 +100,7 @@ var _ = Describe("deviceMatchesFilter", func() {
 		pci := "0000:00:00.1"
 		pcieRoot := "pci0000:00"
 		pfPci := "0000:01:00.0"
+		linkType := "ethernet"
 		d := resourceapi.Device{
 			Name: "devA",
 			Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
@@ -109,6 +110,7 @@ var _ = Describe("deviceMatchesFilter", func() {
 				sriovconsts.AttributePciAddress:   {StringValue: &pci},
 				sriovconsts.AttributePCIeRoot:     {StringValue: &pcieRoot},
 				sriovconsts.AttributePfPciAddress: {StringValue: &pfPci},
+				sriovconsts.AttributeLinkType:     {StringValue: &linkType},
 			},
 		}
 
@@ -120,6 +122,7 @@ var _ = Describe("deviceMatchesFilter", func() {
 			PciAddresses:   []string{"0000:00:00.1"},
 			PfNames:        []string{"eth0"},
 			PfPciAddresses: []string{"0000:01:00.0"},
+			LinkType:       sriovconsts.LinkTypeEthernet,
 		}
 		Expect(r.deviceMatchesFilter(d, f)).To(BeTrue())
 
@@ -129,6 +132,85 @@ var _ = Describe("deviceMatchesFilter", func() {
 		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{PfNames: []string{"eth9"}})).To(BeFalse())
 		// Test with a different parent PCI address
 		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{PfPciAddresses: []string{"0000:00:ff.f"}})).To(BeFalse())
+		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{LinkType: sriovconsts.LinkTypeInfiniband})).To(BeFalse())
+
+		// Multiple filters set: all must match
+		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{
+			Vendors:  []string{"8086"},
+			LinkType: sriovconsts.LinkTypeEthernet,
+		})).To(BeTrue())
+		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{
+			Vendors:  []string{"8086"},
+			LinkType: sriovconsts.LinkTypeInfiniband,
+		})).To(BeFalse())
+		Expect(r.deviceMatchesFilter(d, sriovdrav1alpha1.ResourceFilter{
+			Vendors:  []string{"1234"},
+			LinkType: sriovconsts.LinkTypeEthernet,
+		})).To(BeFalse())
+	})
+})
+
+var _ = Describe("deviceMatchesFilters linkType", func() {
+	var r *SriovResourcePolicyReconciler
+
+	BeforeEach(func() {
+		r = &SriovResourcePolicyReconciler{}
+	})
+
+	makeDevice := func(lt string) resourceapi.Device {
+		return resourceapi.Device{
+			Name: "dev-lt",
+			Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+				sriovconsts.AttributeLinkType: {StringValue: &lt},
+			},
+		}
+	}
+
+	filters := func(lt string) []sriovdrav1alpha1.ResourceFilter {
+		return []sriovdrav1alpha1.ResourceFilter{{LinkType: lt}}
+	}
+
+	It("matches ethernet device with 'eth' (lowercase)", func() {
+		d := makeDevice(sriovconsts.LinkTypeEthernet)
+		Expect(r.deviceMatchesFilters(d, filters("eth"))).To(BeTrue())
+	})
+
+	It("matches ethernet device with 'ETH' (uppercase)", func() {
+		d := makeDevice(sriovconsts.LinkTypeEthernet)
+		Expect(r.deviceMatchesFilters(d, filters("ETH"))).To(BeTrue())
+	})
+
+	It("matches ethernet device with 'Eth' (mixed case)", func() {
+		d := makeDevice(sriovconsts.LinkTypeEthernet)
+		Expect(r.deviceMatchesFilters(d, filters("Eth"))).To(BeTrue())
+	})
+
+	It("matches infiniband device with 'ib' (lowercase)", func() {
+		d := makeDevice(sriovconsts.LinkTypeInfiniband)
+		Expect(r.deviceMatchesFilters(d, filters("ib"))).To(BeTrue())
+	})
+
+	It("matches infiniband device with 'IB' (uppercase)", func() {
+		d := makeDevice(sriovconsts.LinkTypeInfiniband)
+		Expect(r.deviceMatchesFilters(d, filters("IB"))).To(BeTrue())
+	})
+
+	It("does not match ethernet device with 'ib' filter", func() {
+		d := makeDevice(sriovconsts.LinkTypeEthernet)
+		Expect(r.deviceMatchesFilters(d, filters("ib"))).To(BeFalse())
+	})
+
+	It("does not match infiniband device with 'eth' filter", func() {
+		d := makeDevice(sriovconsts.LinkTypeInfiniband)
+		Expect(r.deviceMatchesFilters(d, filters("eth"))).To(BeFalse())
+	})
+
+	It("does not match when device has no linkType attribute", func() {
+		d := resourceapi.Device{
+			Name:       "dev-no-lt",
+			Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{},
+		}
+		Expect(r.deviceMatchesFilters(d, filters("eth"))).To(BeFalse())
 	})
 })
 

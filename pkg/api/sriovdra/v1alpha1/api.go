@@ -17,9 +17,13 @@
 package v1alpha1
 
 import (
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 	resourceapi "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 )
 
 //nolint:gochecknoinits // Required for Kubernetes scheme registration
@@ -64,6 +68,9 @@ type ResourceFilter struct {
 	PfNames        []string `json:"pfNames,omitempty"`
 	PfPciAddresses []string `json:"pfPciAddresses,omitempty"`
 	Drivers        []string `json:"drivers,omitempty"`
+	// +kubebuilder:validation:Enum=eth;ib;ethernet;infiniband
+	// NIC Link Type. Accepted values: "eth", "ib", "ethernet", "infiniband".
+	LinkType string `json:"linkType,omitempty"`
 }
 
 // +genclient
@@ -103,4 +110,18 @@ type DeviceAttributesList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []DeviceAttributes `json:"items"`
+}
+
+// NormalizeLinkType normalizes a link type string to a canonical form.
+// "eth" and "ethernet" (case-insensitive) map to consts.LinkTypeEthernet,
+// "ib" and "infiniband" (case-insensitive) map to consts.LinkTypeInfiniband.
+func NormalizeLinkType(val string) string {
+	switch strings.ToLower(val) {
+	case consts.LinkTypeEth, consts.LinkTypeEthernet:
+		return consts.LinkTypeEthernet
+	case consts.LinkTypeIB, consts.LinkTypeInfiniband:
+		return consts.LinkTypeInfiniband
+	default:
+		return strings.ToLower(val)
+	}
 }
