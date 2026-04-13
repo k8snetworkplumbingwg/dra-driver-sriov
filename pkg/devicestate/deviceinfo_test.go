@@ -284,7 +284,7 @@ var _ = Describe("DeviceInfo compatibility", Serial, func() {
 			},
 		}
 
-		mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", gomock.Any()).Return("ixgbevf", nil)
+		mockHost.EXPECT().BindDeviceDriverWithMAC("0000:01:00.1", gomock.Any(), "").Return("ixgbevf", nil)
 		mockHost.EXPECT().GetVFIODeviceFile("0000:01:00.1").Return("/dev/vfio/1", "/dev/vfio/1", nil)
 		mockHost.EXPECT().GetRDMADevicesForPCI("0000:01:00.1").Return([]string{})
 		mockHost.EXPECT().RestoreDeviceDriver("0000:01:00.1", "ixgbevf").Return(nil)
@@ -326,7 +326,7 @@ var _ = Describe("DeviceInfo compatibility", Serial, func() {
 		}
 
 		ifNameIndex := 0
-		_, err = manager.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+		_, err = manager.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim, nil)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("unable to create device-info files for claim"))
 	})
@@ -364,7 +364,7 @@ var _ = Describe("DeviceInfo compatibility", Serial, func() {
 			},
 		}
 
-		mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", gomock.Any()).Return("", nil)
+		mockHost.EXPECT().BindDeviceDriverWithMAC("0000:01:00.1", gomock.Any(), "").Return("", nil)
 
 		claim := &resourceapi.ResourceClaim{
 			ObjectMeta: metav1.ObjectMeta{
@@ -401,7 +401,7 @@ var _ = Describe("DeviceInfo compatibility", Serial, func() {
 		}
 
 		ifNameIndex := 0
-		_, err = manager.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+		_, err = manager.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fakeUtils.saveCalls).To(BeEmpty())
 	})
