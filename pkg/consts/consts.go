@@ -53,8 +53,11 @@ const (
 	AttributeNUMANode  = DraNetCompatPrefix + "/numaNode"
 
 	// Network device constants
-	NetClass  = 0x02 // Network controller class
-	SysBusPci = "/sys/bus/pci/devices"
+	NetClass      = 0x02 // Network controller class
+	SysBusPci     = "/sys/bus/pci/devices"
+	DriverVFIOPCI = "vfio-pci"
+	DriverUIOPCI  = "uio_pci_generic"
+	DriverIGBUIO  = "igb_uio"
 
 	// Link type constants
 	LinkTypeEthernet   = "ethernet"
