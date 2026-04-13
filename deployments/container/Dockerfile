@@ -46,5 +46,5 @@ LABEL release="N/A"
 LABEL summary="Dynamic Resource Allocation (DRA) resource driver for SR-IOV devices"
 LABEL description="See summary"
 
-RUN yum -y install hwdata pciutils delve && yum clean all
+RUN yum -y install hwdata pciutils delve iproute && yum clean all
 COPY --from=build /artifacts/dra-driver-sriov /usr/bin/dra-driver-sriov
