@@ -254,7 +254,7 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 			RequestNames: []string{result.Request},
 			PoolName:     result.Pool,
 			DeviceName:   result.Device,
-			CDIDeviceIDs: []string{s.cdi.GetClaimDevices(string(claim.UID), result.Device), s.cdi.GetPodSpecName(string(claim.Status.ReservedFor[0].UID))},
+			CdiDeviceIds: []string{s.cdi.GetClaimDevices(string(claim.UID), result.Device), s.cdi.GetPodSpecName(string(claim.Status.ReservedFor[0].UID))},
 		},
 		ContainerEdits:     &cdiapi.ContainerEdits{ContainerEdits: edits},
 		NetAttachDefConfig: netAttachDefRawConfig,
