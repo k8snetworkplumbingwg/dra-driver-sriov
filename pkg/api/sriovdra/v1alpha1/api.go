@@ -22,12 +22,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-//nolint:gochecknoinits // Required for Kubernetes scheme registration
-func init() {
-	SchemeBuilder.Register(&SriovResourcePolicy{}, &SriovResourcePolicyList{})
-	SchemeBuilder.Register(&DeviceAttributes{}, &DeviceAttributesList{})
-}
-
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
