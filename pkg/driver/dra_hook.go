@@ -139,7 +139,7 @@ func (d *Driver) prepareResourceClaim(ctx context.Context, ifNameIndex *int, cla
 				Requests:     preparedDevice.Device.GetRequestNames(),
 				PoolName:     preparedDevice.Device.GetPoolName(),
 				DeviceName:   preparedDevice.Device.GetDeviceName(),
-				CDIDeviceIDs: preparedDevice.Device.GetCDIDeviceIDs(),
+				CDIDeviceIDs: preparedDevice.Device.GetCdiDeviceIds(),
 			})
 		}
 		return kubeletplugin.PrepareResult{Devices: prepared}
@@ -160,7 +160,7 @@ func (d *Driver) prepareResourceClaim(ctx context.Context, ifNameIndex *int, cla
 			Requests:     preparedDevice.Device.GetRequestNames(),
 			PoolName:     preparedDevice.Device.GetPoolName(),
 			DeviceName:   preparedDevice.Device.GetDeviceName(),
-			CDIDeviceIDs: preparedDevice.Device.GetCDIDeviceIDs(),
+			CDIDeviceIDs: preparedDevice.Device.GetCdiDeviceIds(),
 		})
 	}
 
