@@ -201,16 +201,18 @@ systemctl enable --now load-br-netfilter
 
 echo '[Unit]
 Description=create sriov vfs
-After=network.target
+# PF drivers can reject sriov_numvfs writes after the link is up.
+# Run this before the network stack configures the PF interfaces.
+Before=network-pre.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/bash -c "echo 5 > /sys/bus/pci/devices/0000\:01\:00.0/sriov_numvfs && echo 5 > /sys/bus/pci/devices/0000\:02\:00.0/sriov_numvfs"
+ExecStart=/usr/bin/bash -ec "echo 0 > /sys/bus/pci/devices/0000\:01\:00.0/sriov_numvfs || true; echo 5 > /sys/bus/pci/devices/0000\:01\:00.0/sriov_numvfs; echo 0 > /sys/bus/pci/devices/0000\:02\:00.0/sriov_numvfs || true; echo 5 > /sys/bus/pci/devices/0000\:02\:00.0/sriov_numvfs"
 StandardOutput=journal+console
 StandardError=journal+console
 
 [Install]
-WantedBy=default.target' > /etc/systemd/system/create-sriov-vfs.service
+WantedBy=network-pre.target' > /etc/systemd/system/create-sriov-vfs.service
 
 systemctl daemon-reload
 systemctl enable --now create-sriov-vfs
@@ -366,7 +368,7 @@ done
 set +e
 make helm
 set -e
-${root}/bin/helm upgrade -i dra-driver-sriov deployments/helm/dra-driver-sriov/ --namespace dra-driver-sriov --create-namespace --set image.repository=${SRIOV_DRIVER_IMAGE}
+${root}/bin/helm upgrade -i dra-driver-sriov deployments/helm/dra-driver-sriov/ --namespace dra-driver-sriov --create-namespace --set kubeletPlugin.configurationMode=${DRA_DRIVER_MODE} --set image.repository=${SRIOV_DRIVER_IMAGE}
 
 # Wait for the daemonset to be fully deployed
 echo "## Waiting for daemonset to be ready..."

@@ -101,6 +101,8 @@ spec:
           value: {{ .Values.kubeletPlugin.nriPluginIndex | quote }}
         - name: DEFAULT_INTERFACE_PREFIX
           value: {{ .Values.kubeletPlugin.defaultInterfacePrefix | quote }}
+        - name: CONFIGURATION_MODE
+          value: {{ .Values.kubeletPlugin.configurationMode | quote }}
         - name: NODE_NAME
           valueFrom:
             fieldRef:
@@ -109,7 +111,7 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        {{- if .Values.kubeletPlugin.containers.plugin.healthcheckPort }}
+        {{- if ge (int .Values.kubeletPlugin.containers.plugin.healthcheckPort) 0 }}
         - name: HEALTHCHECK_PORT
           value: {{ .Values.kubeletPlugin.containers.plugin.healthcheckPort | quote }}
         {{- end }}
@@ -137,8 +139,14 @@ spec:
           mountPath: {{ .Values.kubeletPlugin.kubeletPluginsDirectoryPath | quote }}
         - name: cdi
           mountPath: /var/run/cdi
+        {{- if eq .Values.kubeletPlugin.configurationMode "MULTUS" }}
+        - name: cni-devinfo
+          mountPath: /var/run/k8s.cni.cncf.io/devinfo
+        {{- end }}
+        {{- if ne .Values.kubeletPlugin.configurationMode "MULTUS" }}
         - name: cri-socket
           mountPath: /var/run/nri/nri.sock
+        {{- end }}
         - name: netns
           mountPath: /var/run/netns
           mountPropagation: HostToContainer
@@ -153,10 +161,12 @@ spec:
       - name: netns
         hostPath:
           path: /var/run/netns
+      {{- if ne .Values.kubeletPlugin.configurationMode "MULTUS" }}
       - name: cri-socket
         hostPath:
           path: /var/run/nri/nri.sock
           type: Socket
+      {{- end }}
       - name: plugins-registry
         hostPath:
           path: {{ .Values.kubeletPlugin.kubeletRegistrarDirectoryPath | quote }}
@@ -166,6 +176,12 @@ spec:
       - name: cdi
         hostPath:
           path: /var/run/cdi
+      {{- if eq .Values.kubeletPlugin.configurationMode "MULTUS" }}
+      - name: cni-devinfo
+        hostPath:
+          path: /var/run/k8s.cni.cncf.io/devinfo
+          type: DirectoryOrCreate
+      {{- end }}
       - hostPath:
           path: /opt/cni/bin
         name: cni-bin

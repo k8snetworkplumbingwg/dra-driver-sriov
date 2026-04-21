@@ -480,7 +480,7 @@ var _ = Describe("getMapOfOpaqueDeviceConfigForDevice", func() {
 			Expect(err.Error()).To(ContainSubstring("error decoding config parameters"))
 		})
 
-		It("should return error when no configs match driver", func() {
+		It("should return empty result when no configs match driver", func() {
 			configs := []resourceapi.DeviceAllocationConfiguration{
 				{
 					Source:   resourceapi.AllocationConfigSourceClass,
@@ -496,9 +496,9 @@ var _ = Describe("getMapOfOpaqueDeviceConfigForDevice", func() {
 				},
 			}
 
-			_, err := getMapOfOpaqueDeviceConfigForDevice(decoder, configs)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(Equal("no configs constructed for driver"))
+			result, err := getMapOfOpaqueDeviceConfigForDevice(decoder, configs)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeEmpty())
 		})
 
 		It("should return error for wrong config type", func() {
@@ -536,9 +536,9 @@ var _ = Describe("getMapOfOpaqueDeviceConfigForDevice", func() {
 		It("should handle empty configs list", func() {
 			configs := []resourceapi.DeviceAllocationConfiguration{}
 
-			_, err := getMapOfOpaqueDeviceConfigForDevice(decoder, configs)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(Equal("no configs constructed for driver"))
+			result, err := getMapOfOpaqueDeviceConfigForDevice(decoder, configs)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeEmpty())
 		})
 
 		It("should handle config with empty requests list", func() {
@@ -568,9 +568,9 @@ var _ = Describe("getMapOfOpaqueDeviceConfigForDevice", func() {
 				},
 			}
 
-			_, err = getMapOfOpaqueDeviceConfigForDevice(decoder, configs)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(Equal("no configs constructed for driver"))
+			result, err := getMapOfOpaqueDeviceConfigForDevice(decoder, configs)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeEmpty())
 		})
 
 		It("should handle multiple class and claim configs with different requests", func() {

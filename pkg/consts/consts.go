@@ -28,17 +28,20 @@ const (
 	GroupName                  = "sriovnetwork.k8snetworkplumbingwg.io"
 	DriverName                 = "sriovnetwork.k8snetworkplumbingwg.io"
 	DriverPluginCheckpointFile = "checkpoint.json"
+	MultusAttributePrefix      = "k8s.cni.cncf.io"
 
-	AttributePciAddress   = DriverName + "/pciAddress"
-	AttributePFName       = DriverName + "/PFName"
-	AttributeEswitchMode  = DriverName + "/EswitchMode"
-	AttributeVendorID     = DriverName + "/vendor"
-	AttributeDeviceID     = DriverName + "/deviceID"
-	AttributePFDeviceID   = DriverName + "/pfDeviceID"
-	AttributeVFID         = DriverName + "/vfID"
-	AttributeResourceName = DriverName + "/resourceName"
-	AttributeLinkType     = DriverName + "/linkType"
-	AttributeRDMACapable  = DriverName + "/rdmaCapable"
+	AttributePciAddress         = DriverName + "/pciAddress"
+	AttributePFName             = DriverName + "/PFName"
+	AttributeEswitchMode        = DriverName + "/EswitchMode"
+	AttributeVendorID           = DriverName + "/vendor"
+	AttributeDeviceID           = DriverName + "/deviceID"
+	AttributePFDeviceID         = DriverName + "/pfDeviceID"
+	AttributeVFID               = DriverName + "/vfID"
+	AttributeResourceName       = DriverName + "/resourceName"
+	AttributeLinkType           = DriverName + "/linkType"
+	AttributeRDMACapable        = DriverName + "/rdmaCapable"
+	AttributeMultusDeviceID     = MultusAttributePrefix + "/deviceID"
+	AttributeMultusResourceName = MultusAttributePrefix + "/resourceName"
 	// Use upstream Kubernetes standard attribute prefix for pciAddress
 	AttributeStandardPciAddress = deviceattribute.StandardDeviceAttributePrefix + "pciBusID"
 	// AttributePfPciAddress is for the PCI address of the Physical Function (PF).
@@ -65,6 +68,13 @@ const (
 var (
 	// AttributePCIeRoot identifies the PCIe root complex of the device
 	AttributePCIeRoot resourceapi.QualifiedName = deviceattribute.StandardDeviceAttributePCIeRoot
+)
+
+type ConfigurationMode string
+
+const (
+	ConfigurationModeStandalone ConfigurationMode = "STANDALONE"
+	ConfigurationModeMultus     ConfigurationMode = "MULTUS"
 )
 
 var Backoff = wait.Backoff{

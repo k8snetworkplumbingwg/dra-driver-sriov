@@ -26,7 +26,7 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("errors when no prepared devices exist for the pod after processing", func() {
-			flags := &types.Flags{KubeletPluginsDirectoryPath: "/tmp"}
+			flags := &types.Flags{KubeletPluginsDirectoryPath: GinkgoT().TempDir()}
 			cfg := &types.Config{Flags: flags}
 			pm, err := podmanager.NewPodManager(cfg)
 			Expect(err).ToNot(HaveOccurred())
@@ -40,6 +40,26 @@ var _ = Describe("Driver", func() {
 			_, err = d.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claim})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("no prepared devices found for pod"))
+		})
+
+		It("returns error instead of panicking when no claim contains pod info", func() {
+			flags := &types.Flags{KubeletPluginsDirectoryPath: GinkgoT().TempDir()}
+			cfg := &types.Config{Flags: flags}
+			pm, err := podmanager.NewPodManager(cfg)
+			Expect(err).ToNot(HaveOccurred())
+
+			d := &Driver{podManager: pm}
+			claim := &resourceapi.ResourceClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "rc1",
+					UID:       k8stypes.UID("rc-uid"),
+				},
+			}
+
+			_, err = d.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claim})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("no pod info found for prepared claims"))
 		})
 	})
 

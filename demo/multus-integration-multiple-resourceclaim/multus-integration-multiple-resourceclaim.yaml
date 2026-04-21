@@ -1,0 +1,188 @@
+---
+# DeviceAttributes define extra attributes applied to devices matched by a policy config.
+# Policies reference DeviceAttributes via label selectors.
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: DeviceAttributes
+metadata:
+  name: sriov1-attrs
+  namespace: dra-driver-sriov
+  labels:
+    pool: sriov1
+spec:
+  attributes:
+    k8s.cni.cncf.io/resourceName:
+      string: "sriov_nic_1"
+---
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: DeviceAttributes
+metadata:
+  name: sriov2-attrs
+  namespace: dra-driver-sriov
+  labels:
+    pool: sriov2
+spec:
+  attributes:
+    k8s.cni.cncf.io/resourceName:
+      string: "sriov_nic_2"
+---
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: SriovResourcePolicy
+metadata:
+  name: multus-two-pools
+  namespace: dra-driver-sriov
+spec:
+  # NodeSelector to match specific nodes (uses v1.NodeSelector)
+  # Omit or leave empty to match all nodes
+  # Configs define multiple resource configurations
+  configs:
+  - deviceAttributesSelector:
+      matchLabels:
+        pool: sriov1
+    resourceFilters:
+    - pfNames: ["eth0"]
+  - deviceAttributesSelector:
+      matchLabels:
+        pool: sriov2
+    resourceFilters:
+    - pfNames: ["eth1"]
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vf-test9
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: vf-test1
+  namespace: vf-test9
+  annotations:
+    k8s.v1.cni.cncf.io/resourceName: sriov_nic_1
+spec:
+  config: |-
+    {
+        "cniVersion": "1.0.0",
+        "name": "vf-test1",
+        "type": "sriov",
+        "vlan": 0,
+        "spoofchk": "on",
+        "trust": "on",
+        "vlanQoS": 0,
+        "logLevel": "info",
+        "ipam": {
+            "type": "host-local",
+            "ranges": [
+                [
+                    {
+                        "subnet": "10.0.2.0/24"
+                    }
+                ]
+            ]
+        }
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: vf-test2
+  namespace: vf-test9
+  annotations:
+    k8s.v1.cni.cncf.io/resourceName: sriov_nic_2
+spec:
+  config: |-
+    {
+        "cniVersion": "1.0.0",
+        "name": "vf-test2",
+        "type": "sriov",
+        "vlan": 0,
+        "spoofchk": "on",
+        "trust": "on",
+        "vlanQoS": 0,
+        "logLevel": "info",
+        "ipam": {
+            "type": "host-local",
+            "ranges": [
+                [
+                    {
+                        "subnet": "10.0.2.0/24"
+                    }
+                ]
+            ]
+        }
+    }
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  namespace: vf-test9
+  name: sriov-nic-1-resource-claim-template
+spec:
+  spec:
+    devices:
+      requests:
+      - name: vf
+        exactly:
+          selectors:
+          - cel:
+              expression: device.attributes["k8s.cni.cncf.io"].resourceName == "sriov_nic_1"
+          deviceClassName: sriovnetwork.k8snetworkplumbingwg.io
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  namespace: vf-test9
+  name: sriov-nic-2-resource-claim-template
+spec:
+  spec:
+    devices:
+      requests:
+      - name: vf
+        exactly:
+          selectors:
+          - cel:
+              expression: device.attributes["k8s.cni.cncf.io"].resourceName == "sriov_nic_2"
+          deviceClassName: sriovnetwork.k8snetworkplumbingwg.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: vf-test9
+  name: pod0
+  labels:
+    app: pod0
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pod0
+  template:
+    metadata:
+      labels:
+        app: pod0
+      annotations:
+        k8s.v1.cni.cncf.io/networks: vf-test1,vf-test2
+    spec:
+      terminationGracePeriodSeconds: 2
+      containers:
+      - name: ctr0
+        image: quay.io/schseba/toolbox:latest
+        command:
+          - /bin/bash
+          - -c
+          - sleep INF
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: true
+          capabilities:
+            add:
+              - NET_ADMIN
+              - NET_RAW
+        resources:
+          claims:
+          - name: sriov1
+          - name: sriov2
+      resourceClaims:
+      - name: sriov1
+        resourceClaimTemplateName: sriov-nic-1-resource-claim-template
+      - name: sriov2
+        resourceClaimTemplateName: sriov-nic-2-resource-claim-template

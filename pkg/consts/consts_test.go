@@ -62,6 +62,8 @@ var _ = Describe("Consts", func() {
 
 		It("should have compatibility attributes", func() {
 			Expect(consts.AttributeNUMANode).To(Equal(consts.DraNetCompatPrefix + "/numaNode"))
+			Expect(consts.AttributeMultusDeviceID).To(Equal(consts.MultusAttributePrefix + "/deviceID"))
+			Expect(consts.AttributeMultusResourceName).To(Equal(consts.MultusAttributePrefix + "/resourceName"))
 		})
 
 		It("should have correct network device constants", func() {

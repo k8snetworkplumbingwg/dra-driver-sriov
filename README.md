@@ -36,7 +36,8 @@ The driver features an advanced resource filtering system that enables administr
 - Kubernetes 1.34.0 or later (with DRA support enabled)
 - SR-IOV capable network hardware  
 - Container runtime with CDI support
-- Container runtime with NRI plugins support
+- For `STANDALONE` mode: container runtime with NRI plugins support
+- For `MULTUS` mode: Multus CNI installed and configured
 
 
 ## Building
@@ -95,9 +96,47 @@ helm upgrade -i dra-driver-sriov \
   --create-namespace -n dra-driver-sriov \
   --set image.tag=v0.1.0 \
   --set logging.level=5 \
-  --set driver.defaultInterfacePrefix=net \
+  --set kubeletPlugin.defaultInterfacePrefix=net \
   ./deployments/helm/dra-driver-sriov/
 ```
+
+### Configuration Modes (`STANDALONE` vs `MULTUS`)
+
+The driver supports two networking modes controlled by `kubeletPlugin.configurationMode`.
+
+#### `STANDALONE` mode (default)
+
+- The driver starts its NRI plugin and handles CNI attach/detach through NRI pod sandbox events.
+- During device preparation, the driver fetches `NetworkAttachmentDefinition` config and injects `deviceID` into the SR-IOV CNI config.
+- If `ifName` is not provided, the driver auto-generates interface names using `kubeletPlugin.defaultInterfacePrefix` (for example `vfnet0`, `vfnet1`).
+
+Deploy in `STANDALONE` mode:
+
+```bash
+helm upgrade -i dra-driver-sriov \
+  --create-namespace -n dra-sriov-driver \
+  --set kubeletPlugin.configurationMode=STANDALONE \
+  ./deployments/helm/dra-driver-sriov/
+```
+
+#### `MULTUS` mode
+
+- The driver **does not start** the NRI plugin (`NRI plugin disabled due to MULTUS configuration mode`).
+- The driver skips standalone-specific network preparation (no NAD config fetch and no automatic `ifName` generation).
+- Multus performs network attachment and uses DRA-provided device attributes:
+  - `k8s.cni.cncf.io/resourceName` must match NAD annotation `k8s.v1.cni.cncf.io/resourceName`
+  - `k8s.cni.cncf.io/deviceID` is passed by Multus to the CNI plugin
+
+Deploy in `MULTUS` mode:
+
+```bash
+helm upgrade -i dra-driver-sriov \
+  --create-namespace -n dra-driver-sriov \
+  --set kubeletPlugin.configurationMode=MULTUS \
+  ./deployments/helm/dra-driver-sriov/
+```
+
+When running in `MULTUS` mode, create `SriovResourcePolicy` and `DeviceAttributes` in the same namespace watched by the driver (see [`demo/multus-integration-single-vf/README.md`](demo/multus-integration-single-vf/README.md)).
 
 ## Usage
 
@@ -172,7 +211,7 @@ metadata:
     pool: eth0-resource
 spec:
   attributes:
-    sriovnetwork.k8snetworkplumbingwg.io/resourceName:
+    k8s.cni.cncf.io/resourceName:
       string: "eth0_resource"
 ---
 apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
@@ -184,7 +223,7 @@ metadata:
     pool: eth1-resource
 spec:
   attributes:
-    sriovnetwork.k8snetworkplumbingwg.io/resourceName:
+    k8s.cni.cncf.io/resourceName:
       string: "eth1_resource"
 ---
 # 2. Policy selects devices and references attributes by label
@@ -218,6 +257,12 @@ spec:
 ```
 
 Each `Config` entry pairs a `deviceAttributesSelector` (label selector matching `DeviceAttributes` objects) with `resourceFilters` (device hardware criteria). Devices matching the filters are advertised, and attributes from all matching `DeviceAttributes` objects are merged onto them.
+
+For Multus integration with `resource.k8s.io/v1` (as described in [multus-cni PR #1492](https://github.com/k8snetworkplumbingwg/multus-cni/pull/1492)), each allocated device should include:
+<!-- TODO: Remove this PR reference after multus-cni PR #1492 is merged. -->
+
+- `k8s.cni.cncf.io/resourceName`: must exactly match the NAD annotation `k8s.v1.cni.cncf.io/resourceName`
+- `k8s.cni.cncf.io/deviceID`: device identifier Multus passes to the CNI plugin
 
 ### Filtering Criteria
 
@@ -285,7 +330,7 @@ spec:
           deviceClassName: sriovnetwork.k8snetworkplumbingwg.io
           selectors:
           - cel:
-              expression: device.attributes["sriovnetwork.k8snetworkplumbingwg.io"].resourceName == "eth0_resource"
+              expression: device.attributes["k8s.cni.cncf.io"].resourceName == "eth0_resource"
 ```
 
 ## VfConfig Parameters
@@ -379,6 +424,24 @@ Illustrates VFIO-PCI driver configuration for userspace applications:
   - `ifName`: Interface name (optional for VFIO mode)
   - `netAttachDefName`: Network attachment definition for management interface
 
+#### Multus Integration: Single VF (`demo/multus-integration-single-vf/`)
+Shows end-to-end Multus + DRA attachment for one VF:
+- Uses `DeviceAttributes` and `SriovResourcePolicy` to publish `k8s.cni.cncf.io/resourceName`
+- Demonstrates exact match between device `resourceName` and NAD annotation
+- Uses one `ResourceClaimTemplate` and one Multus secondary interface
+
+#### Multus Integration: Multiple VFs (`demo/multus-integration-multiple-vf/`)
+Demonstrates consuming two VFs from one claim:
+- Requests `count: 2` from one `ResourceClaimTemplate`
+- Uses repeated network annotation (`vf-test1,vf-test1`) for two interfaces
+- Relies on Multus-required device attributes (`resourceName`, `deviceID`)
+
+#### Multus Integration: Multiple Resource Claims (`demo/multus-integration-multiple-resourceclaim/`)
+Demonstrates independent claims mapped to different Multus networks:
+- Two NADs with different `resourceName` values
+- Two separate claim references in one pod (`sriov1`, `sriov2`)
+- Useful for isolated control/data-plane style topologies
+
 ## Project Structure
 
 ```
@@ -405,8 +468,15 @@ Illustrates VFIO-PCI driver configuration for userspace applications:
 ├── demo/                          # Example workload configurations
 │   ├── single-vf-claim/           # Single VF allocation example
 │   ├── multiple-vf-claim/         # Multiple VF allocation example
+│   ├── claim-for-deployment/      # Deployment with claim template example
 │   ├── resource-policies/         # Resource policy configuration example
-│   └── vfio-driver/               # VFIO-PCI driver configuration example
+│   ├── resourceclaim/             # Direct ResourceClaim examples
+│   ├── resource-alignment/        # Resource alignment and placement examples
+│   ├── extended-resource/         # Extended resource based examples
+│   ├── vfio-driver/               # VFIO-PCI driver configuration example
+│   ├── multus-integration-single-vf/ # Multus single VF integration
+│   ├── multus-integration-multiple-vf/ # Multus multiple VF integration
+│   └── multus-integration-multiple-resourceclaim/ # Multus multiple claims integration
 ├── hack/                          # Build and development scripts
 ├── test/                          # Test suites
 └── vendor/                        # Go module dependencies

@@ -240,7 +240,7 @@ deploy-virtual-k8s-cluster:
 delete-virtual-k8s-cluster:
 	./hack/delete-virtual-k8s-cluster.sh
 
-redeploy-operator-virtual-cluster:
+redeploy-dra-driver-virtual-cluster:
 	./hack/virtual-cluster-redeploy.sh
 
 e2e-tests:

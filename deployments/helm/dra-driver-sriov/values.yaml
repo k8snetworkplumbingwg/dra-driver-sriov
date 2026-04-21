@@ -58,6 +58,7 @@ kubeletPlugin:
   nriPluginName: dra-driver-sriov
   nriPluginIndex: 42
   defaultInterfacePrefix: vfnet
+  configurationMode: STANDALONE
   containers:
     init:
       securityContext: {}
