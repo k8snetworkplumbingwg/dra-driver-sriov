@@ -313,6 +313,16 @@ func (r *SriovResourcePolicyReconciler) deviceMatchesFilter(device resourceapi.D
 		}
 	}
 
+	if filter.LinkType != "" {
+		linkAttr, exists := device.Attributes[consts.AttributeLinkType]
+		if !exists || linkAttr.StringValue == nil {
+			return false
+		}
+		if sriovdrav1alpha1.NormalizeLinkType(filter.LinkType) != *linkAttr.StringValue {
+			return false
+		}
+	}
+
 	// TODO: Implement driver checking if needed
 	if len(filter.Drivers) > 0 {
 		r.log.V(3).Info("Driver filtering not yet implemented", "deviceName", device.Name)

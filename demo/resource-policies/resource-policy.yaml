@@ -52,6 +52,8 @@ spec:
       # pfPciAddresses: ["0000:01:00.0"]
       # Filter by driver names (optional)
       # drivers: ["vfio-pci", "igb_uio"]
+      # Filter by NIC link type (optional): "eth", "ib", "ethernet", or "infiniband"
+      # linkType: eth
   - # Second config for eth1 device
     deviceAttributesSelector:
       matchLabels:
