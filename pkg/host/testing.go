@@ -1,10 +1,46 @@
 package host
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path"
+
+	"k8s.io/klog/v2"
 )
+
+// NewHostForTest creates a Host with injectable providers, for use in unit tests.
+// Pass nil to use the default production implementation.
+func NewHostForTest(netlinkProvider NetlinkProvider) Interface {
+	if netlinkProvider == nil {
+		netlinkProvider = &defaultNetlinkProvider{}
+	}
+	return &Host{
+		log:             klog.FromContext(context.Background()).WithName("Host"),
+		rdmaProvider:    newRdmaProvider(),
+		netlinkProvider: netlinkProvider,
+	}
+}
+
+// FakeNetlinkProvider is a configurable NetlinkProvider for use in unit tests.
+type FakeNetlinkProvider struct {
+	EswitchMode  string
+	EswitchError error
+
+	// IsPhysicalPort / IsPhysicalPortError control IsDevlinkPhysicalPort.
+	// Set IsPhysicalPortError to a non-nil error to simulate devlink being
+	// unavailable (the sysfs result will be trusted without validation).
+	IsPhysicalPort      bool
+	IsPhysicalPortError error
+}
+
+func (f *FakeNetlinkProvider) GetDevLinkDeviceEswitchMode(_ string) (string, error) {
+	return f.EswitchMode, f.EswitchError
+}
+
+func (f *FakeNetlinkProvider) IsDevlinkPhysicalPort(_ string) (bool, error) {
+	return f.IsPhysicalPort, f.IsPhysicalPortError
+}
 
 // FakeFilesystem allows to setup isolated fake files structure used for the tests.
 type FakeFilesystem struct {
