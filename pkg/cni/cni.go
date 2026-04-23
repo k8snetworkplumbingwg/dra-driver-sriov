@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/containernetworking/cni/libcni"
@@ -60,6 +61,60 @@ func New(
 	return rntm
 }
 
+// buildNetworkConfigList normalizes a CNI network configuration into list form.
+// It accepts both a single-plugin config and a CNI config list.
+func buildNetworkConfigList(rawNetConf []byte) (*libcni.NetworkConfigList, error) {
+	netConfList, confListErr := libcni.NetworkConfFromBytes(rawNetConf)
+	if confListErr == nil && len(netConfList.Plugins) > 0 {
+		return netConfList, nil
+	}
+
+	listParseErr := confListErr
+	if listParseErr == nil {
+		listParseErr = fmt.Errorf("parsed CNI config list has no plugins")
+	}
+
+	pluginConf, pluginErr := libcni.NetworkPluginConfFromBytes(rawNetConf)
+	if pluginErr != nil {
+		return nil, fmt.Errorf("failed to parse CNI config as list (%v) or plugin (%w)", listParseErr, pluginErr)
+	}
+
+	pluginRaw := map[string]interface{}{}
+	if err := json.Unmarshal(pluginConf.Bytes, &pluginRaw); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal CNI plugin config: %w", err)
+	}
+
+	wrappedRaw := map[string]interface{}{
+		"name":       pluginConf.Network.Name,
+		"cniVersion": pluginConf.Network.CNIVersion,
+		"plugins":    []interface{}{pluginRaw},
+	}
+	wrappedBytes, err := json.Marshal(wrappedRaw)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal wrapped CNI config list: %w", err)
+	}
+
+	netConfList, err = libcni.NetworkConfFromBytes(wrappedBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse wrapped CNI config list: %w", err)
+	}
+	if len(netConfList.Plugins) == 0 {
+		return nil, fmt.Errorf("failed to parse wrapped CNI config list: no plugins configured")
+	}
+
+	return netConfList, nil
+}
+
+// isMissingNetNSDeleteError reports whether CNI DEL failed because the network
+// namespace path was already removed.
+func isMissingNetNSDeleteError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errMsg := err.Error()
+	return strings.Contains(errMsg, "failed to open netns") && strings.Contains(errMsg, "no such file or directory")
+}
+
 // AttachNetworks attaches network interfaces to a pod based on the provided ResourceClaim.
 // It processes the ResourceClaim's device allocation status, extracts CNI configuration for each device,
 // and invokes the CNI ADD operation for each relevant device. The results of the CNI operations are used
@@ -84,15 +139,15 @@ func (rntm *Runtime) AttachNetwork(ctx context.Context, pod *api.PodSandbox, pod
 		return nil, nil, fmt.Errorf("failed to GetCNIConfigFromSpec: %v", err)
 	}
 
-	pluginConf, err := libcni.NetworkPluginConfFromBytes(rawNetConf)
+	netConfList, err := buildNetworkConfigList(rawNetConf)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to NetworkPluginConfFromBytes: %v", err)
+		return nil, nil, fmt.Errorf("failed to build CNI network config list: %v", err)
 	}
 	klog.FromContext(ctx).V(3).Info("Runtime.AttachNetwork", "deviceConfig", deviceConfig)
 
-	cniResult, err := rntm.CNIConfig.AddNetwork(ctx, pluginConf, rt)
+	cniResult, err := rntm.CNIConfig.AddNetworkList(ctx, netConfList, rt)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to AddNetwork: %v", err)
+		return nil, nil, fmt.Errorf("failed to AddNetworkList: %v", err)
 	}
 	if cniResult == nil {
 		return nil, nil, fmt.Errorf("cni result is nil")
@@ -148,14 +203,28 @@ func (rntm *Runtime) DetachNetwork(
 		return fmt.Errorf("failed to GetCNIConfigFromSpec: %v", err)
 	}
 
-	pluginConf, err := libcni.NetworkPluginConfFromBytes(rawNetConf)
+	netConfList, err := buildNetworkConfigList(rawNetConf)
 	if err != nil {
-		return fmt.Errorf("failed to NetworkPluginConfFromBytes: %v", err)
+		return fmt.Errorf("failed to build CNI network config list: %v", err)
 	}
-	klog.FromContext(ctx).V(3).Info("Runtime.DetachNetwork", "deviceConfig", deviceConfig)
-	err = rntm.CNIConfig.DelNetwork(ctx, pluginConf, rt)
+	logger := klog.FromContext(ctx)
+	logger.V(3).Info("Runtime.DetachNetwork", "deviceConfig", deviceConfig)
+	err = rntm.CNIConfig.DelNetworkList(ctx, netConfList, rt)
+	if err != nil && isMissingNetNSDeleteError(err) && rt.NetNS != "" {
+		// The pod netns may already be gone by the time NRI receives sandbox stop.
+		// Retry with an empty NetNS to let CNI clean up cached attachment state.
+		logger.Info("Retrying CNI DEL without netns because namespace path was already removed",
+			"netns", rt.NetNS, "ifName", rt.IfName, "containerID", rt.ContainerID)
+		retryRT := *rt
+		retryRT.NetNS = ""
+		retryErr := rntm.CNIConfig.DelNetworkList(ctx, netConfList, &retryRT)
+		if retryErr != nil {
+			return fmt.Errorf("failed to DelNetworkList (%v), and retry without netns failed: %v", err, retryErr)
+		}
+		return nil
+	}
 	if err != nil {
-		return fmt.Errorf("failed to DelNetwork: %v", err)
+		return fmt.Errorf("failed to DelNetworkList: %v", err)
 	}
 
 	return nil
