@@ -109,6 +109,7 @@ the following chart parameters are available.
 | `selectorLabelsOverride` | object | `{}` | Override selector labels |
 | `allowDefaultNamespace` | bool | `false` | Allow deployment in the default namespace |
 | `imagePullSecrets` | list | `[]` | Image pull secrets for private registries |
+| `cniBinPath` | string | `/opt/cni/bin` | Host path for CNI binaries mounted into the daemonset |
 
 ### Image Parameters
 
@@ -167,6 +168,16 @@ The kubelet plugin runs as a DaemonSet on all nodes where SR-IOV devices should 
 ```bash
 helm install dra-driver-sriov oci://ghcr.io/k8snetworkplumbingwg/dra-driver-sriov-chart \
   -n dra-driver-sriov --create-namespace
+```
+
+### OpenShift Installation
+
+OpenShift uses a different host CNI binary directory. Set `cniBinPath` to `/var/lib/cni/bin`:
+
+```bash
+helm install dra-driver-sriov oci://ghcr.io/k8snetworkplumbingwg/dra-driver-sriov-chart \
+  -n dra-sriov-driver --create-namespace \
+  --set cniBinPath=/var/lib/cni/bin
 ```
 
 ### Installation with Custom Node Selection

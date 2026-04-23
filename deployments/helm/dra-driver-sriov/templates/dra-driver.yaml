@@ -42,6 +42,7 @@ spec:
       initContainers:
       - args:
         - --no-sleep
+        - --cni-bin-dir=$(CNI_BIN_DIR)
         image: ghcr.io/k8snetworkplumbingwg/sriov-cni:v2.10.0
         imagePullPolicy: IfNotPresent
         name: sriov-cni
@@ -51,10 +52,13 @@ spec:
             memory: 10Mi
         securityContext:
           privileged: true
+        env:
+        - name: CNI_BIN_DIR
+          value: {{ printf "/host%s" .Values.cniBinPath | quote }}
         terminationMessagePath: /dev/termination-log
         terminationMessagePolicy: File
         volumeMounts:
-        - mountPath: /host/opt/cni/bin
+        - mountPath: {{ printf "/host%s" .Values.cniBinPath | quote }}
           name: cni-bin
         - mountPath: /host/etc/os-release
           name: os-release
@@ -183,7 +187,7 @@ spec:
           type: DirectoryOrCreate
       {{- end }}
       - hostPath:
-          path: /opt/cni/bin
+          path: {{ .Values.cniBinPath | quote }}
         name: cni-bin
       - hostPath:
           path: /etc/os-release
