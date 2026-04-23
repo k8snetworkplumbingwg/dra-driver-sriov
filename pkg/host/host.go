@@ -23,6 +23,9 @@ const (
 	// from include/uapi/linux/if_arp.h
 	ArphrdEther      = 1
 	ArphrdInfiniband = 32
+
+	ovsSystemMasterName  = "ovs-system"
+	maxMasterLookupDepth = 16
 )
 
 var (
@@ -88,6 +91,8 @@ type Interface interface {
 
 	// Network interface functions
 	TryGetInterfaceName(pciAddr string) string
+	HasDefaultRoute(pciAddr string) (bool, error)
+	HasBridgeMaster(pciAddr string) (bool, error)
 	GetNicSriovMode(pciAddr string) string
 	GetLinkType(pciAddr string) (string, error)
 
@@ -245,22 +250,249 @@ func (h *Host) PCI() (*ghw.PCIInfo, error) {
 
 // TryGetInterfaceName tries to find the network interface name based on PCI address
 func (h *Host) TryGetInterfaceName(pciAddr string) string {
-	netDir := buildSysBusPciPath(pciAddr, "net")
-	if _, err := os.Lstat(netDir); err != nil {
-		return ""
-	}
-
-	fInfos, err := os.ReadDir(netDir)
+	interfaceNames, err := h.getInterfaceNames(pciAddr)
 	if err != nil {
 		return ""
 	}
-
-	if len(fInfos) == 0 {
+	if len(interfaceNames) == 0 {
 		return ""
 	}
+	return interfaceNames[0]
+}
 
-	// Return the first network interface name found
-	return fInfos[0].Name()
+// HasDefaultRoute checks whether any interface of the PCI device has an IPv4 or IPv6 default route.
+func (h *Host) HasDefaultRoute(pciAddr string) (bool, error) {
+	interfaceNames, err := h.getInterfaceNames(pciAddr)
+	if err != nil {
+		return false, fmt.Errorf("failed to get interfaces for PCI address %s: %w", pciAddr, err)
+	}
+	if len(interfaceNames) == 0 {
+		return false, nil
+	}
+
+	routeLookupInterfaces := h.routeLookupInterfaces(interfaceNames)
+
+	hasIPv4DefaultRoute, err := h.hasDefaultRouteInIPv4Table(routeLookupInterfaces)
+	if err != nil {
+		return false, err
+	}
+	if hasIPv4DefaultRoute {
+		return true, nil
+	}
+
+	hasIPv6DefaultRoute, err := h.hasDefaultRouteInIPv6Table(routeLookupInterfaces)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return hasIPv6DefaultRoute, nil
+}
+
+// hasDefaultRouteInIPv4Table checks /proc/net/route for IPv4 default routes on target interfaces.
+func (h *Host) hasDefaultRouteInIPv4Table(interfaceNames []string) (bool, error) {
+	routeTablePath := buildProcPath("/proc/net/route")
+	routeTableContent, err := os.ReadFile(routeTablePath)
+	if err != nil {
+		return false, fmt.Errorf("failed to read route table: %w", err)
+	}
+
+	lines := strings.Split(string(routeTableContent), "\n")
+	for index, line := range lines {
+		// Skip header line and empty rows.
+		if index == 0 || strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		// /proc/net/route has at least iface, destination and mask columns.
+		if len(fields) < 8 {
+			continue
+		}
+		ifaceName := fields[0]
+		destination := fields[1]
+		mask := fields[7]
+		if destination != "00000000" || mask != "00000000" {
+			continue
+		}
+		if routeBelongsToInterface(interfaceNames, ifaceName) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// hasDefaultRouteInIPv6Table checks /proc/net/ipv6_route for IPv6 default routes on target interfaces.
+func (h *Host) hasDefaultRouteInIPv6Table(interfaceNames []string) (bool, error) {
+	const zeroIPv6Address = "00000000000000000000000000000000"
+
+	routeTablePath := buildProcPath("/proc/net/ipv6_route")
+	routeTableContent, err := os.ReadFile(routeTablePath)
+	if err != nil {
+		return false, fmt.Errorf("failed to read IPv6 route table: %w", err)
+	}
+
+	lines := strings.Split(string(routeTableContent), "\n")
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		// /proc/net/ipv6_route fields include destination, destination prefix, and interface name.
+		if len(fields) < 10 {
+			continue
+		}
+		destination := fields[0]
+		destinationPrefixLen := fields[1]
+		if destination != zeroIPv6Address || destinationPrefixLen != "00" {
+			continue
+		}
+		ifaceName := fields[len(fields)-1]
+		if routeBelongsToInterface(interfaceNames, ifaceName) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// routeBelongsToInterface checks whether a route interface matches a target interface name.
+func routeBelongsToInterface(interfaceNames []string, routeIfaceName string) bool {
+	for _, interfaceName := range interfaceNames {
+		// Consider direct interface routes and common derived names (for example VLAN subinterfaces).
+		if routeIfaceName == interfaceName ||
+			strings.HasPrefix(routeIfaceName, interfaceName+".") ||
+			strings.HasPrefix(routeIfaceName, interfaceName+":") {
+			return true
+		}
+	}
+	return false
+}
+
+// routeLookupInterfaces expands base interfaces with their master chain for route ownership checks.
+func (h *Host) routeLookupInterfaces(interfaceNames []string) []string {
+	lookupSet := make(map[string]struct{}, len(interfaceNames))
+	for _, interfaceName := range interfaceNames {
+		current := interfaceName
+		for depth := 0; depth < maxMasterLookupDepth; depth++ {
+			if _, exists := lookupSet[current]; exists {
+				break
+			}
+			lookupSet[current] = struct{}{}
+
+			masterName, hasMaster, err := h.getMasterName(current)
+			if err != nil || !hasMaster {
+				break
+			}
+			current = masterName
+		}
+	}
+
+	lookupInterfaces := make([]string, 0, len(lookupSet))
+	for name := range lookupSet {
+		lookupInterfaces = append(lookupInterfaces, name)
+	}
+	return lookupInterfaces
+}
+
+// HasBridgeMaster checks whether any interface of the PCI device is enslaved to a Linux or OVS bridge.
+func (h *Host) HasBridgeMaster(pciAddr string) (bool, error) {
+	interfaceNames, err := h.getInterfaceNames(pciAddr)
+	if err != nil {
+		return false, fmt.Errorf("failed to get interfaces for PCI address %s: %w", pciAddr, err)
+	}
+	if len(interfaceNames) == 0 {
+		return false, nil
+	}
+
+	var lookupErrs []error
+	for _, interfaceName := range interfaceNames {
+		isBridgeMaster, masterErr := h.interfaceHasBridgeMaster(interfaceName)
+		if masterErr != nil {
+			lookupErrs = append(lookupErrs, masterErr)
+			continue
+		}
+		if isBridgeMaster {
+			return true, nil
+		}
+	}
+
+	if len(lookupErrs) > 0 {
+		return false, errors.Join(lookupErrs...)
+	}
+	return false, nil
+}
+
+// interfaceHasBridgeMaster follows the interface master chain and reports whether any master is a bridge.
+func (h *Host) interfaceHasBridgeMaster(interfaceName string) (bool, error) {
+	visited := map[string]struct{}{}
+	current := interfaceName
+	for depth := 0; depth < maxMasterLookupDepth; depth++ {
+		if _, alreadyVisited := visited[current]; alreadyVisited {
+			return false, nil
+		}
+		visited[current] = struct{}{}
+
+		masterName, hasMaster, err := h.getMasterName(current)
+		if err != nil {
+			return false, err
+		}
+		if !hasMaster {
+			return false, nil
+		}
+
+		isBridge, err := h.isBridgeInterface(masterName)
+		if err != nil {
+			return false, err
+		}
+		if isBridge {
+			return true, nil
+		}
+		current = masterName
+	}
+
+	return false, nil
+}
+
+// getMasterName resolves the immediate master interface for a network interface.
+func (h *Host) getMasterName(interfaceName string) (string, bool, error) {
+	masterLinkPath := buildSysPath(fmt.Sprintf("/sys/class/net/%s/master", interfaceName))
+	masterTarget, readLinkErr := os.Readlink(masterLinkPath)
+	if readLinkErr != nil {
+		if errors.Is(readLinkErr, os.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("failed to read master link for interface %s: %w", interfaceName, readLinkErr)
+	}
+
+	masterName := filepath.Base(masterTarget)
+	if masterName == "" || masterName == "." {
+		return "", false, nil
+	}
+	return masterName, true, nil
+}
+
+// isBridgeInterface reports whether the given interface name is a Linux bridge or OVS bridge datapath.
+func (h *Host) isBridgeInterface(interfaceName string) (bool, error) {
+	if interfaceName == ovsSystemMasterName {
+		return true, nil
+	}
+
+	linuxBridgePath := buildSysPath(fmt.Sprintf("/sys/class/net/%s/bridge", interfaceName))
+	if _, statErr := os.Stat(linuxBridgePath); statErr == nil {
+		return true, nil
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return false, fmt.Errorf("failed to inspect bridge state for master interface %s: %w", interfaceName, statErr)
+	}
+
+	ovsBridgePath := buildSysPath(fmt.Sprintf("/sys/class/net/%s/openvswitch", interfaceName))
+	if _, statErr := os.Stat(ovsBridgePath); statErr == nil {
+		return true, nil
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return false, fmt.Errorf("failed to inspect openvswitch state for master interface %s: %w", interfaceName, statErr)
+	}
+
+	return false, nil
 }
 
 // GetNicSriovMode returns the interface mode (simplified implementation)
@@ -305,6 +537,28 @@ func (h *Host) GetLinkType(pciAddr string) (string, error) {
 		h.log.V(1).Info("Unsupported link type, defaulting to unknown", "interface", ifName, "type", typeInt)
 		return consts.LinkTypeUnknown, nil
 	}
+}
+
+// getInterfaceNames returns network interface names under a PCI device's sysfs net directory.
+func (h *Host) getInterfaceNames(pciAddr string) ([]string, error) {
+	netDir := buildSysBusPciPath(pciAddr, "net")
+	if _, err := os.Lstat(netDir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	fInfos, err := os.ReadDir(netDir)
+	if err != nil {
+		return nil, err
+	}
+
+	interfaceNames := make([]string, 0, len(fInfos))
+	for _, info := range fInfos {
+		interfaceNames = append(interfaceNames, info.Name())
+	}
+	return interfaceNames, nil
 }
 
 // GetNumaNode returns the NUMA node for a given PCI device.

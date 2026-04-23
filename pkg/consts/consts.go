@@ -37,6 +37,7 @@ const (
 	AttributeDeviceID           = DriverName + "/deviceID"
 	AttributePFDeviceID         = DriverName + "/pfDeviceID"
 	AttributeVFID               = DriverName + "/vfID"
+	AttributeInterfaceType      = DriverName + "/interfaceType"
 	AttributeResourceName       = DriverName + "/resourceName"
 	AttributeLinkType           = DriverName + "/linkType"
 	AttributeRDMACapable        = DriverName + "/rdmaCapable"
@@ -60,6 +61,12 @@ const (
 	LinkTypeInfiniband = "infiniband"
 	LinkTypeUnknown    = "unknown"
 
+	// Interface type constants
+	// VirtualFunction is a virtual function of a physical function present on the host
+	InterfaceTypeVirtualFunction = "VirtualFunction"
+	// Regular is a regular network interface present on the host with valid pci address
+	InterfaceTypeRegular = "Regular"
+
 	// RDMA device constants
 	SysClassInfiniband = "/sys/class/infiniband"
 )
@@ -75,6 +82,10 @@ type ConfigurationMode string
 const (
 	ConfigurationModeStandalone ConfigurationMode = "STANDALONE"
 	ConfigurationModeMultus     ConfigurationMode = "MULTUS"
+)
+
+const (
+	VFIODriverName = "vfio-pci"
 )
 
 var Backoff = wait.Backoff{

@@ -30,6 +30,8 @@ var _ = Describe("DiscoverSriovDevices", func() {
 		_ = host.GetHelpers()
 		origHelpers = host.Helpers
 		host.Helpers = mockHost
+		mockHost.EXPECT().HasBridgeMaster(gomock.Any()).Return(false, nil).AnyTimes()
+		mockHost.EXPECT().HasDefaultRoute(gomock.Any()).Return(false, nil).AnyTimes()
 	})
 
 	AfterEach(func() {
@@ -95,6 +97,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			Expect(dev1.Attributes[consts.AttributePFName].StringValue).To(Equal(ptr.To("eth0")))
 			Expect(dev1.Attributes[consts.AttributeEswitchMode].StringValue).To(Equal(ptr.To("legacy")))
 			Expect(dev1.Attributes[consts.AttributeVFID].IntValue).To(Equal(ptr.To(int64(0))))
+			Expect(dev1.Attributes[consts.AttributeInterfaceType].StringValue).To(Equal(ptr.To(consts.InterfaceTypeVirtualFunction)))
 			Expect(dev1.Attributes[consts.AttributePCIeRoot].StringValue).To(Equal(ptr.To("pci0000:00")))
 			Expect(dev1.Attributes[consts.AttributePfPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.0")))
 			Expect(dev1.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.1")))
@@ -106,7 +109,40 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			dev2 := devices["0000-01-00-2"]
 			Expect(dev2.Name).To(Equal("0000-01-00-2"))
 			Expect(dev2.Attributes[consts.AttributeVFID].IntValue).To(Equal(ptr.To(int64(1))))
+			Expect(dev2.Attributes[consts.AttributeInterfaceType].StringValue).To(Equal(ptr.To(consts.InterfaceTypeVirtualFunction)))
 			Expect(dev2.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.2")))
+		})
+
+		It("ignores nil PCI device entries during discovery", func() {
+			pciInfo := &pci.Info{
+				Devices: []*pci.Device{
+					nil,
+					{
+						Address: "0000:01:00.0",
+						Class:   &pcidb.Class{ID: "02"},
+						Vendor:  &pcidb.Vendor{ID: "8086"},
+						Product: &pcidb.Product{ID: "1572"},
+					},
+				},
+			}
+			vfList := []host.VFInfo{
+				{PciAddress: "0000:01:00.1", VFID: 0, DeviceID: "154c"},
+			}
+
+			mockHost.EXPECT().PCI().Return(pciInfo, nil)
+			mockHost.EXPECT().IsSriovVF("0000:01:00.0").Return(false)
+			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
+			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
+			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
+			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
+			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
+			mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
+
+			devices, err := DiscoverSriovDevices()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(devices).To(HaveLen(1))
+			Expect(devices).To(HaveKey("0000-01-00-1"))
 		})
 
 		It("should discover multiple PFs with VFs", func() {
@@ -216,6 +252,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 
 			dev := devices["0000-01-00-1"]
 			Expect(dev.Attributes[consts.AttributePfPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.0")))
+			Expect(dev.Attributes[consts.AttributeInterfaceType].StringValue).To(Equal(ptr.To(consts.InterfaceTypeVirtualFunction)))
 			Expect(dev.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.1")))
 		})
 
@@ -587,5 +624,462 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(devices).To(HaveLen(0))
 		})
+	})
+})
+
+var _ = Describe("Default route filtering in discovery", func() {
+	var (
+		mockCtrl    *gomock.Controller
+		mockHost    *mock_host.MockInterface
+		origHelpers host.Interface
+	)
+
+	BeforeEach(func() {
+		mockCtrl = gomock.NewController(GinkgoT())
+		mockHost = mock_host.NewMockInterface(mockCtrl)
+		_ = host.GetHelpers()
+		origHelpers = host.Helpers
+		host.Helpers = mockHost
+	})
+
+	AfterEach(func() {
+		host.Helpers = origHelpers
+		mockCtrl.Finish()
+	})
+
+	It("keeps VF discovery when PF carries default route", func() {
+		pciInfo := &pci.Info{
+			Devices: []*pci.Device{
+				{
+					Address: "0000:01:00.0",
+					Class:   &pcidb.Class{ID: "02"},
+					Vendor:  &pcidb.Vendor{ID: "8086"},
+					Product: &pcidb.Product{ID: "1572"},
+				},
+			},
+		}
+
+		vfList := []host.VFInfo{
+			{PciAddress: "0000:01:00.1", VFID: 0, DeviceID: "154c"},
+		}
+
+		mockHost.EXPECT().PCI().Return(pciInfo, nil)
+		mockHost.EXPECT().IsSriovVF("0000:01:00.0").Return(false)
+		mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
+		mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
+		mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+		mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
+		mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
+		mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
+		mockHost.EXPECT().HasBridgeMaster("0000:01:00.1").Return(false, nil)
+		mockHost.EXPECT().HasDefaultRoute("0000:01:00.1").Return(false, nil)
+		mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
+
+		devices, err := DiscoverSriovDevices()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(devices).To(HaveLen(1))
+		Expect(devices).To(HaveKey("0000-01-00-1"))
+	})
+
+	It("skips only VF interfaces that carry default route", func() {
+		pciInfo := &pci.Info{
+			Devices: []*pci.Device{
+				{
+					Address: "0000:01:00.0",
+					Class:   &pcidb.Class{ID: "02"},
+					Vendor:  &pcidb.Vendor{ID: "8086"},
+					Product: &pcidb.Product{ID: "1572"},
+				},
+			},
+		}
+
+		vfList := []host.VFInfo{
+			{PciAddress: "0000:01:00.1", VFID: 0, DeviceID: "154c"},
+			{PciAddress: "0000:01:00.2", VFID: 1, DeviceID: "154c"},
+		}
+
+		mockHost.EXPECT().PCI().Return(pciInfo, nil)
+		mockHost.EXPECT().IsSriovVF("0000:01:00.0").Return(false)
+		mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
+		mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
+		mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+		mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
+		mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
+		mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
+		mockHost.EXPECT().HasBridgeMaster("0000:01:00.1").Return(false, nil)
+		mockHost.EXPECT().HasDefaultRoute("0000:01:00.1").Return(true, nil)
+		mockHost.EXPECT().HasBridgeMaster("0000:01:00.2").Return(false, nil)
+		mockHost.EXPECT().HasDefaultRoute("0000:01:00.2").Return(false, nil)
+		mockHost.EXPECT().VerifyRDMACapability("0000:01:00.2").Return(false)
+
+		devices, err := DiscoverSriovDevices()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(devices).To(HaveLen(1))
+		Expect(devices).To(HaveKey("0000-01-00-2"))
+		Expect(devices).NotTo(HaveKey("0000-01-00-1"))
+	})
+
+	It("keeps VF eligible when default-route lookup errors", func() {
+		pciInfo := &pci.Info{
+			Devices: []*pci.Device{
+				{
+					Address: "0000:01:00.0",
+					Class:   &pcidb.Class{ID: "02"},
+					Vendor:  &pcidb.Vendor{ID: "8086"},
+					Product: &pcidb.Product{ID: "1572"},
+				},
+			},
+		}
+
+		vfList := []host.VFInfo{
+			{PciAddress: "0000:01:00.1", VFID: 0, DeviceID: "154c"},
+		}
+
+		mockHost.EXPECT().PCI().Return(pciInfo, nil)
+		mockHost.EXPECT().IsSriovVF("0000:01:00.0").Return(false)
+		mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
+		mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
+		mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+		mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
+		mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
+		mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
+		mockHost.EXPECT().HasBridgeMaster("0000:01:00.1").Return(false, nil)
+		mockHost.EXPECT().HasDefaultRoute("0000:01:00.1").Return(false, fmt.Errorf("route lookup failed"))
+		mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
+
+		devices, err := DiscoverSriovDevices()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(devices).To(HaveLen(1))
+		Expect(devices).To(HaveKey("0000-01-00-1"))
+	})
+
+	It("skips bridged VFs during SR-IOV discovery", func() {
+		pciInfo := &pci.Info{
+			Devices: []*pci.Device{
+				{
+					Address: "0000:01:00.0",
+					Class:   &pcidb.Class{ID: "02"},
+					Vendor:  &pcidb.Vendor{ID: "8086"},
+					Product: &pcidb.Product{ID: "1572"},
+				},
+			},
+		}
+		vfList := []host.VFInfo{
+			{PciAddress: "0000:01:00.1", VFID: 0, DeviceID: "154c"},
+			{PciAddress: "0000:01:00.2", VFID: 1, DeviceID: "154c"},
+		}
+
+		mockHost.EXPECT().PCI().Return(pciInfo, nil)
+		mockHost.EXPECT().IsSriovVF("0000:01:00.0").Return(false)
+		mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
+		mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
+		mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+		mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
+		mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
+		mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
+		mockHost.EXPECT().HasBridgeMaster("0000:01:00.1").Return(true, nil)
+		mockHost.EXPECT().HasBridgeMaster("0000:01:00.2").Return(false, nil)
+		mockHost.EXPECT().HasDefaultRoute("0000:01:00.2").Return(false, nil)
+		mockHost.EXPECT().VerifyRDMACapability("0000:01:00.2").Return(false)
+
+		devices, err := DiscoverSriovDevices()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(devices).To(HaveLen(1))
+		Expect(devices).To(HaveKey("0000-01-00-2"))
+		Expect(devices).NotTo(HaveKey("0000-01-00-1"))
+	})
+
+	It("skips physical PCI inventory devices with default route", func() {
+		pciInfo := &pci.Info{
+			Devices: []*pci.Device{
+				{
+					Address: "0000:01:00.0",
+					Class:   &pcidb.Class{ID: "02"},
+					Vendor:  &pcidb.Vendor{ID: "8086"},
+					Product: &pcidb.Product{ID: "1572"},
+				},
+				{
+					Address: "0000:02:00.0",
+					Class:   &pcidb.Class{ID: "02"},
+					Vendor:  &pcidb.Vendor{ID: "8086"},
+					Product: &pcidb.Product{ID: "1889"},
+				},
+			},
+		}
+
+		mockHost.EXPECT().PCI().Return(pciInfo, nil)
+		mockHost.EXPECT().IsSriovVF("0000:01:00.0").Return(false)
+		mockHost.EXPECT().HasBridgeMaster("0000:01:00.0").Return(false, nil)
+		mockHost.EXPECT().HasDefaultRoute("0000:01:00.0").Return(true, nil)
+		mockHost.EXPECT().IsSriovVF("0000:02:00.0").Return(false)
+		mockHost.EXPECT().HasBridgeMaster("0000:02:00.0").Return(false, nil)
+		mockHost.EXPECT().HasDefaultRoute("0000:02:00.0").Return(false, nil)
+		mockHost.EXPECT().GetNumaNode("0000:02:00.0").Return("0", nil)
+		mockHost.EXPECT().GetPCIeRoot("0000:02:00.0").Return("pci0000:00", nil)
+		mockHost.EXPECT().GetLinkType("0000:02:00.0").Return(consts.LinkTypeEthernet, nil)
+		mockHost.EXPECT().VerifyRDMACapability("0000:02:00.0").Return(false)
+
+		devices, err := DiscoverPhysicalPciDevices()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(devices).To(HaveLen(1))
+		Expect(devices).To(HaveKey("0000-02-00-0"))
+		Expect(devices).NotTo(HaveKey("0000-01-00-0"))
+	})
+
+	It("keeps PCI inventory devices eligible when default-route lookup errors", func() {
+		pciInfo := &pci.Info{
+			Devices: []*pci.Device{
+				{
+					Address: "0000:03:00.0",
+					Class:   &pcidb.Class{ID: "02"},
+					Vendor:  &pcidb.Vendor{ID: "8086"},
+					Product: &pcidb.Product{ID: "1889"},
+				},
+			},
+		}
+
+		mockHost.EXPECT().PCI().Return(pciInfo, nil)
+		mockHost.EXPECT().IsSriovVF("0000:03:00.0").Return(false)
+		mockHost.EXPECT().HasBridgeMaster("0000:03:00.0").Return(false, nil)
+		mockHost.EXPECT().HasDefaultRoute("0000:03:00.0").Return(false, fmt.Errorf("route lookup failed"))
+		mockHost.EXPECT().GetNumaNode("0000:03:00.0").Return("0", nil)
+		mockHost.EXPECT().GetPCIeRoot("0000:03:00.0").Return("pci0000:00", nil)
+		mockHost.EXPECT().GetLinkType("0000:03:00.0").Return(consts.LinkTypeEthernet, nil)
+		mockHost.EXPECT().VerifyRDMACapability("0000:03:00.0").Return(false)
+
+		devices, err := DiscoverPhysicalPciDevices()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(devices).To(HaveLen(1))
+		Expect(devices).To(HaveKey("0000-03-00-0"))
+	})
+
+	It("skips physical PCI inventory devices attached to bridge", func() {
+		pciInfo := &pci.Info{
+			Devices: []*pci.Device{
+				{
+					Address: "0000:04:00.0",
+					Class:   &pcidb.Class{ID: "02"},
+					Vendor:  &pcidb.Vendor{ID: "8086"},
+					Product: &pcidb.Product{ID: "1889"},
+				},
+				{
+					Address: "0000:05:00.0",
+					Class:   &pcidb.Class{ID: "02"},
+					Vendor:  &pcidb.Vendor{ID: "8086"},
+					Product: &pcidb.Product{ID: "1890"},
+				},
+			},
+		}
+
+		mockHost.EXPECT().PCI().Return(pciInfo, nil)
+		mockHost.EXPECT().IsSriovVF("0000:04:00.0").Return(false)
+		mockHost.EXPECT().HasBridgeMaster("0000:04:00.0").Return(true, nil)
+		mockHost.EXPECT().IsSriovVF("0000:05:00.0").Return(false)
+		mockHost.EXPECT().HasBridgeMaster("0000:05:00.0").Return(false, nil)
+		mockHost.EXPECT().HasDefaultRoute("0000:05:00.0").Return(false, nil)
+		mockHost.EXPECT().GetNumaNode("0000:05:00.0").Return("0", nil)
+		mockHost.EXPECT().GetPCIeRoot("0000:05:00.0").Return("pci0000:00", nil)
+		mockHost.EXPECT().GetLinkType("0000:05:00.0").Return(consts.LinkTypeEthernet, nil)
+		mockHost.EXPECT().VerifyRDMACapability("0000:05:00.0").Return(false)
+
+		devices, err := DiscoverPhysicalPciDevices()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(devices).To(HaveLen(1))
+		Expect(devices).To(HaveKey("0000-05-00-0"))
+		Expect(devices).NotTo(HaveKey("0000-04-00-0"))
+	})
+
+	It("keeps PCI inventory devices eligible when bridge lookup errors", func() {
+		pciInfo := &pci.Info{
+			Devices: []*pci.Device{
+				{
+					Address: "0000:06:00.0",
+					Class:   &pcidb.Class{ID: "02"},
+					Vendor:  &pcidb.Vendor{ID: "8086"},
+					Product: &pcidb.Product{ID: "1889"},
+				},
+			},
+		}
+
+		mockHost.EXPECT().PCI().Return(pciInfo, nil)
+		mockHost.EXPECT().IsSriovVF("0000:06:00.0").Return(false)
+		mockHost.EXPECT().HasBridgeMaster("0000:06:00.0").Return(false, fmt.Errorf("bridge lookup failed"))
+		mockHost.EXPECT().HasDefaultRoute("0000:06:00.0").Return(false, nil)
+		mockHost.EXPECT().GetNumaNode("0000:06:00.0").Return("0", nil)
+		mockHost.EXPECT().GetPCIeRoot("0000:06:00.0").Return("pci0000:00", nil)
+		mockHost.EXPECT().GetLinkType("0000:06:00.0").Return(consts.LinkTypeEthernet, nil)
+		mockHost.EXPECT().VerifyRDMACapability("0000:06:00.0").Return(false)
+
+		devices, err := DiscoverPhysicalPciDevices()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(devices).To(HaveLen(1))
+		Expect(devices).To(HaveKey("0000-06-00-0"))
+	})
+
+	It("still skips PCI inventory devices when bridge lookup fails but default route exists", func() {
+		pciInfo := &pci.Info{
+			Devices: []*pci.Device{
+				{
+					Address: "0000:07:00.0",
+					Class:   &pcidb.Class{ID: "02"},
+					Vendor:  &pcidb.Vendor{ID: "8086"},
+					Product: &pcidb.Product{ID: "1889"},
+				},
+			},
+		}
+
+		mockHost.EXPECT().PCI().Return(pciInfo, nil)
+		mockHost.EXPECT().IsSriovVF("0000:07:00.0").Return(false)
+		mockHost.EXPECT().HasBridgeMaster("0000:07:00.0").Return(false, fmt.Errorf("bridge lookup failed"))
+		mockHost.EXPECT().HasDefaultRoute("0000:07:00.0").Return(true, nil)
+
+		devices, err := DiscoverPhysicalPciDevices()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(devices).To(BeEmpty())
+	})
+})
+
+var _ = Describe("DiscoverPhysicalPciDevices", func() {
+	var (
+		mockCtrl    *gomock.Controller
+		mockHost    *mock_host.MockInterface
+		origHelpers host.Interface
+	)
+
+	BeforeEach(func() {
+		mockCtrl = gomock.NewController(GinkgoT())
+		mockHost = mock_host.NewMockInterface(mockCtrl)
+		_ = host.GetHelpers()
+		origHelpers = host.Helpers
+		host.Helpers = mockHost
+	})
+
+	AfterEach(func() {
+		host.Helpers = origHelpers
+		mockCtrl.Finish()
+	})
+
+	It("discovers network PCI devices into standalone inventory", func() {
+		pciInfo := &pci.Info{
+			Devices: []*pci.Device{
+				{
+					Address: "0000:af:00.5",
+					Class:   &pcidb.Class{ID: "02"},
+					Vendor:  &pcidb.Vendor{ID: "8086"},
+					Product: &pcidb.Product{ID: "1889"},
+				},
+				{
+					Address: "0000:01:00.0",
+					Class:   &pcidb.Class{ID: "01"},
+					Vendor:  &pcidb.Vendor{ID: "8086"},
+					Product: &pcidb.Product{ID: "1234"},
+				},
+			},
+		}
+
+		mockHost.EXPECT().PCI().Return(pciInfo, nil)
+		mockHost.EXPECT().IsSriovVF("0000:af:00.5").Return(false)
+		mockHost.EXPECT().HasBridgeMaster("0000:af:00.5").Return(false, nil)
+		mockHost.EXPECT().HasDefaultRoute("0000:af:00.5").Return(false, nil)
+		mockHost.EXPECT().GetNumaNode("0000:af:00.5").Return("0", nil)
+		mockHost.EXPECT().GetPCIeRoot("0000:af:00.5").Return("pci0000:af", nil)
+		mockHost.EXPECT().GetLinkType("0000:af:00.5").Return(consts.LinkTypeEthernet, nil)
+		mockHost.EXPECT().VerifyRDMACapability("0000:af:00.5").Return(true)
+
+		devices, err := DiscoverPhysicalPciDevices()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(devices).To(HaveLen(1))
+
+		dev, exists := devices["0000-af-00-5"]
+		Expect(exists).To(BeTrue())
+		Expect(dev.Attributes[consts.AttributePciAddress].StringValue).To(Equal(ptr.To("0000:af:00.5")))
+		Expect(dev.Attributes[consts.AttributeVendorID].StringValue).To(Equal(ptr.To("8086")))
+		Expect(dev.Attributes[consts.AttributeDeviceID].StringValue).To(Equal(ptr.To("1889")))
+		Expect(dev.Attributes[consts.AttributeInterfaceType].StringValue).To(Equal(ptr.To(consts.InterfaceTypeRegular)))
+		Expect(dev.Attributes[consts.AttributeRDMACapable].BoolValue).To(Equal(ptr.To(true)))
+		_, hasPfName := dev.Attributes[consts.AttributePFName]
+		Expect(hasPfName).To(BeFalse())
+		_, hasEswitchMode := dev.Attributes[consts.AttributeEswitchMode]
+		Expect(hasEswitchMode).To(BeFalse())
+	})
+
+	It("skips SR-IOV VFs that are already discovered through PF to VF discovery", func() {
+		pciInfo := &pci.Info{
+			Devices: []*pci.Device{
+				{
+					Address: "0000:af:00.6",
+					Class:   &pcidb.Class{ID: "02"},
+					Vendor:  &pcidb.Vendor{ID: "8086"},
+					Product: &pcidb.Product{ID: "1889"},
+				},
+			},
+		}
+
+		mockHost.EXPECT().PCI().Return(pciInfo, nil)
+		mockHost.EXPECT().IsSriovVF("0000:af:00.6").Return(true)
+
+		devices, err := DiscoverPhysicalPciDevices()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(devices).To(BeEmpty())
+	})
+
+	It("keeps inventory entries even when optional metadata lookups fail", func() {
+		pciInfo := &pci.Info{
+			Devices: []*pci.Device{
+				{
+					Address: "0000:03:00.1",
+					Class:   &pcidb.Class{ID: "02"},
+					Vendor:  &pcidb.Vendor{ID: "15b3"},
+					Product: &pcidb.Product{ID: "1018"},
+				},
+			},
+		}
+
+		mockHost.EXPECT().PCI().Return(pciInfo, nil)
+		mockHost.EXPECT().IsSriovVF("0000:03:00.1").Return(false)
+		mockHost.EXPECT().HasBridgeMaster("0000:03:00.1").Return(false, nil)
+		mockHost.EXPECT().HasDefaultRoute("0000:03:00.1").Return(false, nil)
+		mockHost.EXPECT().GetNumaNode("0000:03:00.1").Return("", fmt.Errorf("numa unavailable"))
+		mockHost.EXPECT().GetPCIeRoot("0000:03:00.1").Return("", fmt.Errorf("root unavailable"))
+		mockHost.EXPECT().GetLinkType("0000:03:00.1").Return("", fmt.Errorf("link unavailable"))
+		mockHost.EXPECT().VerifyRDMACapability("0000:03:00.1").Return(false)
+
+		devices, err := DiscoverPhysicalPciDevices()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(devices).To(HaveLen(1))
+
+		dev := devices["0000-03-00-1"]
+		Expect(dev.Attributes[consts.AttributeLinkType].StringValue).To(Equal(ptr.To(consts.LinkTypeUnknown)))
+		Expect(dev.Attributes[consts.AttributeNUMANode].IntValue).To(Equal(ptr.To(int64(-1))))
+		_, hasPfName := dev.Attributes[consts.AttributePFName]
+		Expect(hasPfName).To(BeFalse())
+	})
+
+	It("ignores nil PCI device entries", func() {
+		pciInfo := &pci.Info{
+			Devices: []*pci.Device{
+				nil,
+				{
+					Address: "0000:05:00.1",
+					Class:   &pcidb.Class{ID: "02"},
+					Vendor:  &pcidb.Vendor{ID: "8086"},
+					Product: &pcidb.Product{ID: "1889"},
+				},
+			},
+		}
+
+		mockHost.EXPECT().PCI().Return(pciInfo, nil)
+		mockHost.EXPECT().IsSriovVF("0000:05:00.1").Return(false)
+		mockHost.EXPECT().HasBridgeMaster("0000:05:00.1").Return(false, nil)
+		mockHost.EXPECT().HasDefaultRoute("0000:05:00.1").Return(false, nil)
+		mockHost.EXPECT().GetNumaNode("0000:05:00.1").Return("0", nil)
+		mockHost.EXPECT().GetPCIeRoot("0000:05:00.1").Return("pci0000:05", nil)
+		mockHost.EXPECT().GetLinkType("0000:05:00.1").Return(consts.LinkTypeEthernet, nil)
+		mockHost.EXPECT().VerifyRDMACapability("0000:05:00.1").Return(false)
+
+		devices, err := DiscoverPhysicalPciDevices()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(devices).To(HaveLen(1))
+		Expect(devices).To(HaveKey("0000-05-00-1"))
 	})
 })

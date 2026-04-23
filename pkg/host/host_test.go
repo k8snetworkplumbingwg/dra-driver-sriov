@@ -170,6 +170,318 @@ var _ = Describe("Host", func() {
 			})
 		})
 
+		Context("HasDefaultRoute", func() {
+			It("should return true when interface has default route", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth0",
+					"proc/net",
+				}
+				fs.Files = map[string][]byte{
+					"proc/net/route": []byte("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\neth0\t00000000\t0100A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n"),
+				}
+				tearDown = fs.Use()
+
+				hasDefaultRoute, err := h.HasDefaultRoute("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasDefaultRoute).To(BeTrue())
+			})
+
+			It("should return false when interface has no default route", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth0",
+					"proc/net",
+				}
+				fs.Files = map[string][]byte{
+					"proc/net/route": []byte("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\neth0\t0001A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n"),
+				}
+				tearDown = fs.Use()
+
+				hasDefaultRoute, err := h.HasDefaultRoute("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasDefaultRoute).To(BeFalse())
+			})
+
+			It("should return true when one of multiple interfaces has default route", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth0",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth1",
+					"proc/net",
+				}
+				fs.Files = map[string][]byte{
+					"proc/net/route": []byte(
+						"Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
+							"eth0\t0001A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n" +
+							"eth1\t00000000\t0100A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+					),
+				}
+				tearDown = fs.Use()
+
+				hasDefaultRoute, err := h.HasDefaultRoute("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasDefaultRoute).To(BeTrue())
+			})
+
+			It("should return false when default route belongs to unrelated interface", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth0",
+					"proc/net",
+				}
+				fs.Files = map[string][]byte{
+					"proc/net/route": []byte(
+						"Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
+							"eth9\t00000000\t0100A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+					),
+				}
+				tearDown = fs.Use()
+
+				hasDefaultRoute, err := h.HasDefaultRoute("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasDefaultRoute).To(BeFalse())
+			})
+
+			It("should return true when interface has IPv6 default route", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth0",
+					"proc/net",
+				}
+				fs.Files = map[string][]byte{
+					"proc/net/route": []byte("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"),
+					"proc/net/ipv6_route": []byte(
+						"00000000000000000000000000000000 00 00000000000000000000000000000000 00 00000000000000000000000000000000 00000000 00000000 00000000 00000001 eth0\n",
+					),
+				}
+				tearDown = fs.Use()
+
+				hasDefaultRoute, err := h.HasDefaultRoute("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasDefaultRoute).To(BeTrue())
+			})
+
+			It("should return true when default route is on master interface", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth0",
+					"sys/class/net/eth0",
+					"sys/class/net/bond0",
+					"proc/net",
+				}
+				fs.Symlinks = map[string]string{
+					"sys/class/net/eth0/master": "../bond0",
+				}
+				fs.Files = map[string][]byte{
+					"proc/net/route": []byte("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\nbond0\t00000000\t0100A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n"),
+				}
+				tearDown = fs.Use()
+
+				hasDefaultRoute, err := h.HasDefaultRoute("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasDefaultRoute).To(BeTrue())
+			})
+
+			It("should return false when IPv6 default route belongs to unrelated interface", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth0",
+					"proc/net",
+				}
+				fs.Files = map[string][]byte{
+					"proc/net/route": []byte("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"),
+					"proc/net/ipv6_route": []byte(
+						"00000000000000000000000000000000 00 00000000000000000000000000000000 00 00000000000000000000000000000000 00000000 00000000 00000000 00000001 eth9\n",
+					),
+				}
+				tearDown = fs.Use()
+
+				hasDefaultRoute, err := h.HasDefaultRoute("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasDefaultRoute).To(BeFalse())
+			})
+
+			It("should treat VLAN subinterface default route as in-use", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth0",
+					"proc/net",
+				}
+				fs.Files = map[string][]byte{
+					"proc/net/route": []byte(
+						"Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
+							"eth0.100\t00000000\t0100A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+					),
+				}
+				tearDown = fs.Use()
+
+				hasDefaultRoute, err := h.HasDefaultRoute("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasDefaultRoute).To(BeTrue())
+			})
+
+			It("should not treat split routes as default route", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth0",
+					"proc/net",
+				}
+				fs.Files = map[string][]byte{
+					"proc/net/route": []byte(
+						"Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
+							"eth0\t00000000\t0100A8C0\t0003\t0\t0\t0\t00000080\t0\t0\t0\n",
+					),
+				}
+				tearDown = fs.Use()
+
+				hasDefaultRoute, err := h.HasDefaultRoute("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasDefaultRoute).To(BeFalse())
+			})
+
+			It("should return false when PCI device has no interfaces", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+				}
+				tearDown = fs.Use()
+
+				hasDefaultRoute, err := h.HasDefaultRoute("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasDefaultRoute).To(BeFalse())
+			})
+
+			It("should return error when route table cannot be read", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth0",
+				}
+				tearDown = fs.Use()
+
+				_, err := h.HasDefaultRoute("0000:01:00.0")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("failed to read route table"))
+			})
+		})
+
+		Context("HasBridgeMaster", func() {
+			It("should return true when interface is attached to linux bridge", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/enp1s0",
+					"sys/class/net/enp1s0",
+					"sys/class/net/br-ex",
+					"sys/class/net/br-ex/bridge",
+				}
+				fs.Symlinks = map[string]string{
+					"sys/class/net/enp1s0/master": "../br-ex",
+				}
+				tearDown = fs.Use()
+
+				hasBridgeMaster, err := h.HasBridgeMaster("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasBridgeMaster).To(BeTrue())
+			})
+
+			It("should return true when interface is attached to ovs-system bridge master", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/enp1s0",
+					"sys/class/net/enp1s0",
+				}
+				fs.Symlinks = map[string]string{
+					"sys/class/net/enp1s0/master": "../ovs-system",
+				}
+				tearDown = fs.Use()
+
+				hasBridgeMaster, err := h.HasBridgeMaster("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasBridgeMaster).To(BeTrue())
+			})
+
+			It("should return true when master interface is marked as openvswitch bridge", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/enp1s0",
+					"sys/class/net/enp1s0",
+					"sys/class/net/br-int",
+					"sys/class/net/br-int/openvswitch",
+				}
+				fs.Symlinks = map[string]string{
+					"sys/class/net/enp1s0/master": "../br-int",
+				}
+				tearDown = fs.Use()
+
+				hasBridgeMaster, err := h.HasBridgeMaster("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasBridgeMaster).To(BeTrue())
+			})
+
+			It("should return false when interface is attached to non-bridge master", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/enp1s0",
+					"sys/class/net/enp1s0",
+				}
+				fs.Symlinks = map[string]string{
+					"sys/class/net/enp1s0/master": "../bond0",
+				}
+				tearDown = fs.Use()
+
+				hasBridgeMaster, err := h.HasBridgeMaster("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasBridgeMaster).To(BeFalse())
+			})
+
+			It("should return true when bridge is found through multi-hop master chain", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/enp1s0",
+					"sys/class/net/enp1s0",
+					"sys/class/net/bond0",
+					"sys/class/net/ovs-system",
+				}
+				fs.Symlinks = map[string]string{
+					"sys/class/net/enp1s0/master": "../bond0",
+					"sys/class/net/bond0/master":  "../ovs-system",
+				}
+				tearDown = fs.Use()
+
+				hasBridgeMaster, err := h.HasBridgeMaster("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasBridgeMaster).To(BeTrue())
+			})
+
+			It("should return false when interface is not attached to any master", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/enp1s0",
+					"sys/class/net/enp1s0",
+				}
+				tearDown = fs.Use()
+
+				hasBridgeMaster, err := h.HasBridgeMaster("0000:01:00.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasBridgeMaster).To(BeFalse())
+			})
+
+			It("should return error when master path exists but is not a symlink", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/enp1s0",
+					"sys/class/net/enp1s0",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/net/enp1s0/master": []byte("not-a-symlink"),
+				}
+				tearDown = fs.Use()
+
+				_, err := h.HasBridgeMaster("0000:01:00.0")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("failed to read master link"))
+			})
+		})
+
 		Context("GetNicSriovMode", func() {
 			It("should return legacy mode", func() {
 				tearDown = fs.Use()

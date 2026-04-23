@@ -32,15 +32,16 @@ var _ = Describe("Consts", func() {
 
 		It("should have correct attributes with driver name prefix", func() {
 			expectedAttributes := map[string]string{
-				"pciAddress":   consts.DriverName + "/pciAddress",
-				"PFName":       consts.DriverName + "/PFName",
-				"EswitchMode":  consts.DriverName + "/EswitchMode",
-				"vendor":       consts.DriverName + "/vendor",
-				"deviceID":     consts.DriverName + "/deviceID",
-				"pfDeviceID":   consts.DriverName + "/pfDeviceID",
-				"vfID":         consts.DriverName + "/vfID",
-				"resourceName": consts.DriverName + "/resourceName",
-				"pfPciAddress": consts.DriverName + "/pfPciAddress",
+				"pciAddress":    consts.DriverName + "/pciAddress",
+				"PFName":        consts.DriverName + "/PFName",
+				"EswitchMode":   consts.DriverName + "/EswitchMode",
+				"vendor":        consts.DriverName + "/vendor",
+				"deviceID":      consts.DriverName + "/deviceID",
+				"pfDeviceID":    consts.DriverName + "/pfDeviceID",
+				"vfID":          consts.DriverName + "/vfID",
+				"interfaceType": consts.DriverName + "/interfaceType",
+				"resourceName":  consts.DriverName + "/resourceName",
+				"pfPciAddress":  consts.DriverName + "/pfPciAddress",
 			}
 
 			Expect(consts.AttributePciAddress).To(Equal(expectedAttributes["pciAddress"]))
@@ -50,6 +51,7 @@ var _ = Describe("Consts", func() {
 			Expect(consts.AttributeDeviceID).To(Equal(expectedAttributes["deviceID"]))
 			Expect(consts.AttributePFDeviceID).To(Equal(expectedAttributes["pfDeviceID"]))
 			Expect(consts.AttributeVFID).To(Equal(expectedAttributes["vfID"]))
+			Expect(consts.AttributeInterfaceType).To(Equal(expectedAttributes["interfaceType"]))
 			Expect(consts.AttributeResourceName).To(Equal(expectedAttributes["resourceName"]))
 			Expect(consts.AttributePfPciAddress).To(Equal(expectedAttributes["pfPciAddress"]))
 		})
@@ -69,6 +71,11 @@ var _ = Describe("Consts", func() {
 		It("should have correct network device constants", func() {
 			Expect(consts.NetClass).To(Equal(0x02))
 			Expect(consts.SysBusPci).To(Equal("/sys/bus/pci/devices"))
+		})
+
+		It("should expose interface type constants", func() {
+			Expect(consts.InterfaceTypeVirtualFunction).To(Equal("VirtualFunction"))
+			Expect(consts.InterfaceTypeRegular).To(Equal("Regular"))
 		})
 	})
 
