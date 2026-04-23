@@ -28,17 +28,21 @@ const (
 	GroupName                  = "sriovnetwork.k8snetworkplumbingwg.io"
 	DriverName                 = "sriovnetwork.k8snetworkplumbingwg.io"
 	DriverPluginCheckpointFile = "checkpoint.json"
+	MultusAttributePrefix      = "k8s.cni.cncf.io"
 
-	AttributePciAddress   = DriverName + "/pciAddress"
-	AttributePFName       = DriverName + "/PFName"
-	AttributeEswitchMode  = DriverName + "/EswitchMode"
-	AttributeVendorID     = DriverName + "/vendor"
-	AttributeDeviceID     = DriverName + "/deviceID"
-	AttributePFDeviceID   = DriverName + "/pfDeviceID"
-	AttributeVFID         = DriverName + "/vfID"
-	AttributeResourceName = DriverName + "/resourceName"
-	AttributeLinkType     = DriverName + "/linkType"
-	AttributeRDMACapable  = DriverName + "/rdmaCapable"
+	AttributePciAddress         = DriverName + "/pciAddress"
+	AttributePFName             = DriverName + "/PFName"
+	AttributeEswitchMode        = DriverName + "/EswitchMode"
+	AttributeVendorID           = DriverName + "/vendor"
+	AttributeDeviceID           = DriverName + "/deviceID"
+	AttributePFDeviceID         = DriverName + "/pfDeviceID"
+	AttributeVFID               = DriverName + "/vfID"
+	AttributeInterfaceType      = DriverName + "/interfaceType"
+	AttributeResourceName       = DriverName + "/resourceName"
+	AttributeLinkType           = DriverName + "/linkType"
+	AttributeRDMACapable        = DriverName + "/rdmaCapable"
+	AttributeMultusDeviceID     = MultusAttributePrefix + "/deviceID"
+	AttributeMultusResourceName = MultusAttributePrefix + "/resourceName"
 	// Use upstream Kubernetes standard attribute prefix for pciAddress
 	AttributeStandardPciAddress = deviceattribute.StandardDeviceAttributePrefix + "pciBusID"
 	// AttributePfPciAddress is for the PCI address of the Physical Function (PF).
@@ -57,6 +61,12 @@ const (
 	LinkTypeInfiniband = "infiniband"
 	LinkTypeUnknown    = "unknown"
 
+	// Interface type constants
+	// VirtualFunction is a virtual function of a physical function present on the host
+	InterfaceTypeVirtualFunction = "VirtualFunction"
+	// Regular is a regular network interface present on the host with valid pci address
+	InterfaceTypeRegular = "Regular"
+
 	// RDMA device constants
 	SysClassInfiniband = "/sys/class/infiniband"
 )
@@ -65,6 +75,17 @@ const (
 var (
 	// AttributePCIeRoot identifies the PCIe root complex of the device
 	AttributePCIeRoot resourceapi.QualifiedName = deviceattribute.StandardDeviceAttributePCIeRoot
+)
+
+type ConfigurationMode string
+
+const (
+	ConfigurationModeStandalone ConfigurationMode = "STANDALONE"
+	ConfigurationModeMultus     ConfigurationMode = "MULTUS"
+)
+
+const (
+	VFIODriverName = "vfio-pci"
 )
 
 var Backoff = wait.Backoff{

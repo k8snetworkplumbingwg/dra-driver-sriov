@@ -38,30 +38,72 @@ func (d *Driver) PrepareResourceClaims(ctx context.Context, claims []*resourceap
 		}
 	}
 
-	preparedDevices, exists := d.podManager.GetDevicesByPodUID(claims[0].Status.ReservedFor[0].UID)
+	var podUID k8stypes.UID
+	for _, claim := range claims {
+		if claim != nil && len(claim.Status.ReservedFor) > 0 {
+			podUID = claim.Status.ReservedFor[0].UID
+			break
+		}
+	}
+	if podUID == "" {
+		return result, fmt.Errorf("no pod info found for prepared claims")
+	}
+
+	preparedDevices, exists := d.podManager.GetDevicesByPodUID(podUID)
 	if !exists && len(claims) > 0 {
-		logger.Error(fmt.Errorf("no prepared devices found for pod %s", claims[0].Status.ReservedFor[0].UID), "Error preparing devices for claim")
-		return result, fmt.Errorf("no prepared devices found for pod %s", claims[0].Status.ReservedFor[0].UID)
+		logger.Error(fmt.Errorf("no prepared devices found for pod %s", podUID), "Error preparing devices for claim")
+		return result, fmt.Errorf("no prepared devices found for pod %s", podUID)
 	}
 	// create a global spec file for the pod level environment variables
 	pciAddresses := []string{}
 	for _, preparedDevice := range preparedDevices {
-		device, exist := d.deviceStateManager.GetAllocatedDeviceByDeviceName(preparedDevice.Device.DeviceName)
+		device, exist := d.deviceStateManager.GetAllocatableDeviceByName(preparedDevice.Device.DeviceName)
 		if !exist {
-			logger.Error(fmt.Errorf("device not found for device name %s", preparedDevice.Device.DeviceName), "Error preparing devices for claim")
-			return result, fmt.Errorf("device not found for device name %s", preparedDevice.Device.DeviceName)
+			baseErr := fmt.Errorf("device not found for device name %s", preparedDevice.Device.DeviceName)
+			logger.Error(baseErr, "Error preparing devices for claim")
+			if cleanupErr := d.rollbackPreparedClaims(ctx, claims); cleanupErr != nil {
+				return result, errors.Join(baseErr, fmt.Errorf("cleanup failed after prepare error: %w", cleanupErr))
+			}
+			return result, baseErr
 		}
 		pciAddresses = append(pciAddresses, *device.Attributes[consts.AttributePciAddress].StringValue)
 	}
 
-	err := d.cdi.CreateGlobalPodSpecFile(string(claims[0].Status.ReservedFor[0].UID), pciAddresses)
+	err := d.cdi.CreateGlobalPodSpecFile(string(podUID), pciAddresses)
 	if err != nil {
-		logger.Error(err, "Error creating global spec file for pod", "pod", claims[0].Status.ReservedFor[0].UID)
-		return result, fmt.Errorf("error creating global spec file for pod: %w", err)
+		logger.Error(err, "Error creating global spec file for pod", "pod", podUID)
+		baseErr := fmt.Errorf("error creating global spec file for pod: %w", err)
+		if cleanupErr := d.rollbackPreparedClaims(ctx, claims); cleanupErr != nil {
+			return result, errors.Join(baseErr, fmt.Errorf("cleanup failed after global spec error: %w", cleanupErr))
+		}
+		return result, baseErr
 	}
 
 	logger.V(3).Info("Prepared claims", "result", result)
 	return result, nil
+}
+
+// rollbackPreparedClaims rolls back successful claim preparations that were stored in pod manager state.
+func (d *Driver) rollbackPreparedClaims(ctx context.Context, claims []*resourceapi.ResourceClaim) error {
+	var errs []error
+	for _, claim := range claims {
+		if claim == nil {
+			continue
+		}
+		if err := d.unprepareResourceClaim(ctx, kubeletplugin.NamespacedObject{
+			NamespacedName: k8stypes.NamespacedName{
+				Name:      claim.Name,
+				Namespace: claim.Namespace,
+			},
+			UID: claim.UID,
+		}); err != nil {
+			errs = append(errs, fmt.Errorf("failed to rollback claim %s: %w", claim.UID, err))
+		}
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
 }
 
 func (d *Driver) prepareResourceClaim(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
@@ -125,6 +167,11 @@ func (d *Driver) prepareResourceClaim(ctx context.Context, ifNameIndex *int, cla
 	err = d.podManager.Set(podUID, claim.UID, preparedDevices)
 	if err != nil {
 		logger.Error(err, "Error setting prepared devices for pod into pod manager", "pod", podUID)
+		if cleanupErr := d.deviceStateManager.Unprepare(string(claim.UID), preparedDevices); cleanupErr != nil {
+			return kubeletplugin.PrepareResult{
+				Err: fmt.Errorf("error setting prepared devices for pod %s into pod manager: %w; cleanup failed: %v", podUID, err, cleanupErr),
+			}
+		}
 		return kubeletplugin.PrepareResult{
 			Err: fmt.Errorf("error setting prepared devices for pod %s into pod manager: %w", podUID, err),
 		}

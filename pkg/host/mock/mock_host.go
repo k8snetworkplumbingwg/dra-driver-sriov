@@ -247,6 +247,36 @@ func (mr *MockInterfaceMockRecorder) GetVFList(pfPciAddress any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetVFList", reflect.TypeOf((*MockInterface)(nil).GetVFList), pfPciAddress)
 }
 
+// HasBridgeMaster mocks base method.
+func (m *MockInterface) HasBridgeMaster(pciAddr string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HasBridgeMaster", pciAddr)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// HasBridgeMaster indicates an expected call of HasBridgeMaster.
+func (mr *MockInterfaceMockRecorder) HasBridgeMaster(pciAddr any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HasBridgeMaster", reflect.TypeOf((*MockInterface)(nil).HasBridgeMaster), pciAddr)
+}
+
+// HasDefaultRoute mocks base method.
+func (m *MockInterface) HasDefaultRoute(pciAddr string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HasDefaultRoute", pciAddr)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// HasDefaultRoute indicates an expected call of HasDefaultRoute.
+func (mr *MockInterfaceMockRecorder) HasDefaultRoute(pciAddr any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HasDefaultRoute", reflect.TypeOf((*MockInterface)(nil).HasDefaultRoute), pciAddr)
+}
+
 // IsDpdkDriver mocks base method.
 func (m *MockInterface) IsDpdkDriver(driver string) bool {
 	m.ctrl.T.Helper()

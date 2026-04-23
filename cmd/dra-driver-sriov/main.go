@@ -91,6 +91,13 @@ func newApp() *cli.App {
 			Destination: &flagsOptions.Namespace,
 			EnvVars:     []string{"NAMESPACE"},
 		},
+		&cli.StringFlag{
+			Name:        "configuration-mode",
+			Usage:       "Configuration mode: STANDALONE or MULTUS.",
+			Value:       string(consts.ConfigurationModeStandalone),
+			Destination: &flagsOptions.ConfigurationMode,
+			EnvVars:     []string{"CONFIGURATION_MODE"},
+		},
 	}
 	cliFlags = append(cliFlags, flagsOptions.KubeClientConfig.Flags()...)
 	cliFlags = append(cliFlags, flagsOptions.LoggingConfig.Flags()...)
@@ -126,6 +133,7 @@ func newApp() *cli.App {
 	return app
 }
 
+// RunPlugin initializes and runs the sriov DRA plugin stack.
 func RunPlugin(ctx context.Context, config *types.Config) error {
 	// set the loggers
 	logger := klog.FromContext(ctx)
@@ -146,7 +154,7 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 	case err != nil:
 		return err
 	case !info.IsDir():
-		return fmt.Errorf("path for cdi file generation is not a directory: '%v'", err)
+		return fmt.Errorf("path for cdi file generation is not a directory: %q", config.Flags.CdiRoot)
 	}
 
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
@@ -154,13 +162,13 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 	ctx, cancel := context.WithCancelCause(ctx)
 	config.CancelMainCtx = cancel
 
-	cdi, err := cdi.NewHandler(config.Flags.CdiRoot)
+	cdiHandler, err := cdi.NewHandler(config.Flags.CdiRoot)
 	if err != nil {
 		return fmt.Errorf("unable to create CDI handler: %v", err)
 	}
 
 	// create device state manager
-	deviceStateManager, err := devicestate.NewManager(config, cdi)
+	deviceStateManager, err := devicestate.NewManager(config, cdiHandler, devicestate.NewDeviceInfoStore())
 	if err != nil {
 		return err
 	}
@@ -172,7 +180,7 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 	}
 
 	// start driver
-	dvr, err := driver.Start(ctx, config, deviceStateManager, podManager, cdi)
+	dvr, err := driver.Start(ctx, config, deviceStateManager, podManager, cdiHandler)
 	if err != nil {
 		return fmt.Errorf("failed to start DRA driver: %w", err)
 	}
@@ -236,14 +244,20 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 	// create cni runtime
 	cniRuntime := cni.New(consts.DriverName, []string{"/opt/cni/bin"})
 
-	// register to NRI
-	nriPlugin, err := nri.NewNRIPlugin(config, podManager, cniRuntime)
-	if err != nil {
-		return fmt.Errorf("failed to create NRI plugin: %w", err)
-	}
-	err = nriPlugin.Start(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to start NRI plugin: %w", err)
+	// register to NRI unless MULTUS mode is set
+	var nriPlugin *nri.Plugin
+	if consts.ConfigurationMode(config.Flags.ConfigurationMode) != consts.ConfigurationModeMultus {
+		nriPlugin, err = nri.NewNRIPlugin(config, podManager, cniRuntime)
+		if err != nil {
+			return fmt.Errorf("failed to create NRI plugin: %w", err)
+		}
+		err = nriPlugin.Start(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to start NRI plugin: %w", err)
+		}
+		logger.Info("NRI plugin started")
+	} else {
+		logger.Info("NRI plugin disabled due to MULTUS configuration mode")
 	}
 
 	<-ctx.Done()
@@ -256,7 +270,9 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 		logger.Error(err, "error from context")
 	}
 	logger.V(1).Info("Shutting down")
-	nriPlugin.Stop()
+	if nriPlugin != nil {
+		nriPlugin.Stop()
+	}
 	err = dvr.Shutdown(logger)
 	if err != nil {
 		logger.Error(err, "Unable to cleanly shutdown driver")

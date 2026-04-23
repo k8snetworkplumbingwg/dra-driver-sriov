@@ -36,7 +36,8 @@ The driver features an advanced resource filtering system that enables administr
 - Kubernetes 1.34.0 or later (with DRA support enabled)
 - SR-IOV capable network hardware  
 - Container runtime with CDI support
-- Container runtime with NRI plugins support
+- For `STANDALONE` mode: container runtime with NRI plugins support
+- For `MULTUS` mode: Multus CNI installed and configured
 
 
 ## Building
@@ -95,9 +96,56 @@ helm upgrade -i dra-driver-sriov \
   --create-namespace -n dra-driver-sriov \
   --set image.tag=v0.1.0 \
   --set logging.level=5 \
-  --set driver.defaultInterfacePrefix=net \
+  --set kubeletPlugin.defaultInterfacePrefix=net \
   ./deployments/helm/dra-driver-sriov/
 ```
+
+### Configuration Modes (`STANDALONE` vs `MULTUS`)
+
+The driver supports two networking modes controlled by `kubeletPlugin.configurationMode`.
+
+#### `STANDALONE` mode (default)
+
+- The driver starts its NRI plugin and handles CNI attach/detach through NRI pod sandbox events.
+- During device preparation, the driver fetches `NetworkAttachmentDefinition` config and injects `deviceID` into the SR-IOV CNI config when a `netAttachDefName` is provided.
+- For `driver: vfio-pci` with no `netAttachDefName`, the driver skips CNI attach/detach and exposes only VFIO device nodes (no-CNI path).
+- If `ifName` is not provided, the driver auto-generates interface names using `kubeletPlugin.defaultInterfacePrefix` (for example `vfnet0`, `vfnet1`).
+
+Deploy in `STANDALONE` mode:
+
+```bash
+helm upgrade -i dra-driver-sriov \
+  --create-namespace -n dra-sriov-driver \
+  --set kubeletPlugin.configurationMode=STANDALONE \
+  ./deployments/helm/dra-driver-sriov/
+```
+
+#### `MULTUS` mode
+
+- The driver **does not start** the NRI plugin (`NRI plugin disabled due to MULTUS configuration mode`).
+- The driver skips standalone-specific network preparation (no NAD config fetch and no automatic `ifName` generation).
+- Multus performs network attachment and uses DRA-provided device attributes:
+  - `k8s.cni.cncf.io/resourceName` must match NAD annotation `k8s.v1.cni.cncf.io/resourceName`
+  - `k8s.cni.cncf.io/deviceID` is passed by Multus to the CNI plugin
+
+Deploy in `MULTUS` mode:
+
+```bash
+helm upgrade -i dra-driver-sriov \
+  --create-namespace -n dra-sriov-driver \
+  --set kubeletPlugin.configurationMode=MULTUS \
+  ./deployments/helm/dra-driver-sriov/
+```
+
+When running in `MULTUS` mode, create `SriovResourcePolicy` and `DeviceAttributes` in the same namespace watched by the driver (see [`demo/multus-integration-single-vf/README.md`](demo/multus-integration-single-vf/README.md)).
+
+### Kernel vs VFIO behavior by mode
+
+| Workload type | STANDALONE | MULTUS |
+| --- | --- | --- |
+| Kernel / host networking (`driver: ""` or `driver: default`) | Requires `netAttachDefName`; driver fetches NAD and attaches/detaches via NRI | Requires NAD + pod network annotation; Multus performs attachment |
+| VFIO with management network (`driver: vfio-pci` + `netAttachDefName`) | Supported; NRI performs CNI operations | Supported; Multus performs CNI operations |
+| VFIO no-CNI (`driver: vfio-pci` + no `netAttachDefName`) | Supported; no CNI attach/detach | Supported; no secondary network attachment required |
 
 ## Usage
 
@@ -172,7 +220,7 @@ metadata:
     pool: eth0-resource
 spec:
   attributes:
-    sriovnetwork.k8snetworkplumbingwg.io/resourceName:
+    k8s.cni.cncf.io/resourceName:
       string: "eth0_resource"
 ---
 apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
@@ -184,7 +232,7 @@ metadata:
     pool: eth1-resource
 spec:
   attributes:
-    sriovnetwork.k8snetworkplumbingwg.io/resourceName:
+    k8s.cni.cncf.io/resourceName:
       string: "eth1_resource"
 ---
 # 2. Policy selects devices and references attributes by label
@@ -214,10 +262,15 @@ spec:
     resourceFilters:
     - vendors: ["8086"]
       pfNames: ["eth1"]
-      drivers: ["vfio-pci"]       # Only VFIO-bound devices
 ```
 
 Each `Config` entry pairs a `deviceAttributesSelector` (label selector matching `DeviceAttributes` objects) with `resourceFilters` (device hardware criteria). Devices matching the filters are advertised, and attributes from all matching `DeviceAttributes` objects are merged onto them.
+
+For Multus integration with `resource.k8s.io/v1` (as described in [multus-cni PR #1492](https://github.com/k8snetworkplumbingwg/multus-cni/pull/1492)), each allocated device should include:
+<!-- TODO: Remove this PR reference after multus-cni PR #1492 is merged. -->
+
+- `k8s.cni.cncf.io/resourceName`: must exactly match the NAD annotation `k8s.v1.cni.cncf.io/resourceName`
+- `k8s.cni.cncf.io/deviceID`: device identifier Multus passes to the CNI plugin
 
 ### Filtering Criteria
 
@@ -225,10 +278,34 @@ The resource filtering system supports multiple filtering criteria that can be c
 
 - **vendors**: Filter by PCI vendor ID (e.g., "8086" for Intel)
 - **devices**: Filter by PCI device ID 
-- **pciAddresses**: Filter by specific PCI addresses
+- **pciAddresses**: Filter by specific PCI addresses (exact string match in BDF form, for example `0000:af:00.5`)
 - **pfNames**: Filter by Physical Function name (e.g., "eth0", "eth1")
 - **pfPciAddresses**: Filter by Physical Function PCI address
-- **drivers**: Filter by bound driver name (e.g., "vfio-pci", "igb_uio")
+- **drivers**: Reserved for future driver-based filtering (field exists but is not currently enforced)
+
+When any config uses `pciAddresses`, the controller also evaluates devices from a one-time physical PCI inventory. This enables explicit selection of PF-less passthrough VFs in virtualized environments without broadening non-`pciAddresses` policies.
+
+To protect node connectivity, device discovery excludes devices whose host interfaces either carry an IPv4/IPv6 default route or are attached to a Linux/OVS bridge (for example `master ovs-system`). These checks are best-effort: when lookup fails, the device is not excluded by this safeguard.
+
+### Virtual passthrough discovery (`pciAddresses`)
+
+For virtual environments where PF sysfs relationships are not available (for example, VFs exposed through passthrough), use explicit `pciAddresses` filters in `SriovResourcePolicy`:
+
+```yaml
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: SriovResourcePolicy
+metadata:
+  name: passthrough-vf-policy
+  namespace: dra-sriov-driver
+spec:
+  configs:
+  - resourceFilters:
+    - pciAddresses: ["0000:af:00.5", "0000:af:00.6"]
+```
+
+`pciAddresses` matching is exact and intentionally does not support wildcards or ranges.
+
+If a `Regular` PF is selected by `pciAddresses`, VFs that belong to that PF are not exposed by other policies/configs. This avoids publishing both a PF and its child VFs in the same `ResourceSlice` set.
 
 ### Node Selection
 
@@ -285,7 +362,7 @@ spec:
           deviceClassName: sriovnetwork.k8snetworkplumbingwg.io
           selectors:
           - cel:
-              expression: device.attributes["sriovnetwork.k8snetworkplumbingwg.io"].resourceName == "eth0_resource"
+              expression: device.attributes["k8s.cni.cncf.io"].resourceName == "eth0_resource"
 ```
 
 ## VfConfig Parameters
@@ -300,11 +377,13 @@ The `VfConfig` resource defines how Virtual Functions are configured and exposed
 
 - **`ifName`**: Network interface name inside the container
   - Default: Auto-generated (typically `net1`, `net2`, etc.)
-  - Only relevant for kernel driver mode
+  - Relevant whenever CNI attach is used (kernel mode and VFIO with `netAttachDefName`)
+  - Ignored for VFIO no-CNI workflows
 
 - **`netAttachDefName`**: Reference to NetworkAttachmentDefinition resource
   - Defines CNI configuration for the interface
-  - Required for network connectivity
+  - Required for kernel networking in `STANDALONE` mode
+  - Optional for VFIO no-CNI workflows (`driver: vfio-pci`)
 
 - **`netAttachDefNamespace`**: Namespace of the NetworkAttachmentDefinition
   - Default: Same namespace as the pod
@@ -336,7 +415,33 @@ parameters:
   kind: VfConfig
   driver: vfio-pci
   addVhostMount: true
+```
+
+**VFIO with management network (optional):**
+```yaml
+parameters:
+  apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+  kind: VfConfig
+  driver: vfio-pci
+  addVhostMount: true
   netAttachDefName: sriov-management
+```
+
+### Host-device kernel flow (NAD required)
+
+For kernel-driver workloads (for example ICE/MLX), use a `host-device` NAD and point `VfConfig.netAttachDefName` to it.
+
+```yaml
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: sriov-host-device
+  namespace: demo
+  annotations:
+    k8s.v1.cni.cncf.io/resourceName: openshift.io/sriov-host-device
+spec:
+  config: |-
+    {"cniVersion":"1.0.0","name":"sriov-host-device","type":"host-device","capabilities":{"deviceID":true}}
 ```
 
 ### Example Workloads
@@ -368,16 +473,41 @@ Shows how to use SriovResourcePolicy for controlling device advertisement:
 - Multiple resource configurations for different network interfaces
 - Node-targeted policies with selector support
 
+#### Host-Device Kernel Flow (`demo/host-device-kernel/`)
+Demonstrates kernel-driver traffic with `host-device` CNI:
+- `host-device` NAD using `capabilities.deviceID=true`
+- `VfConfig.netAttachDefName` driven kernel networking path
+- Works with `STANDALONE` (NRI attach/detach) and `MULTUS` (annotation-driven attach)
+
 #### VFIO Driver Configuration (`demo/vfio-driver/`)
 Illustrates VFIO-PCI driver configuration for userspace applications:
 - Configure Virtual Functions with VFIO-PCI driver for DPDK applications
 - Device passthrough for high-performance userspace networking
 - Vhost-user socket mounting for container networking acceleration
+- Includes no-CNI VFIO examples for `STANDALONE` and `MULTUS`
 - VfConfig parameters for userspace networking:
   - `driver: vfio-pci`: Binds VF to VFIO-PCI driver instead of kernel driver
   - `addVhostMount: true`: Mounts vhost-user sockets into the container
   - `ifName`: Interface name (optional for VFIO mode)
-  - `netAttachDefName`: Network attachment definition for management interface
+  - `netAttachDefName`: Optional network attachment definition for management interface
+
+#### Multus Integration: Single VF (`demo/multus-integration-single-vf/`)
+Shows end-to-end Multus + DRA attachment for one VF:
+- Uses `DeviceAttributes` and `SriovResourcePolicy` to publish `k8s.cni.cncf.io/resourceName`
+- Demonstrates exact match between device `resourceName` and NAD annotation
+- Uses one `ResourceClaimTemplate` and one Multus secondary interface
+
+#### Multus Integration: Multiple VFs (`demo/multus-integration-multiple-vf/`)
+Demonstrates consuming two VFs from one claim:
+- Requests `count: 2` from one `ResourceClaimTemplate`
+- Uses repeated network annotation (`vf-test1,vf-test1`) for two interfaces
+- Relies on Multus-required device attributes (`resourceName`, `deviceID`)
+
+#### Multus Integration: Multiple Resource Claims (`demo/multus-integration-multiple-resourceclaim/`)
+Demonstrates independent claims mapped to different Multus networks:
+- Two NADs with different `resourceName` values
+- Two separate claim references in one pod (`sriov1`, `sriov2`)
+- Useful for isolated control/data-plane style topologies
 
 ## Project Structure
 
@@ -405,8 +535,16 @@ Illustrates VFIO-PCI driver configuration for userspace applications:
 ├── demo/                          # Example workload configurations
 │   ├── single-vf-claim/           # Single VF allocation example
 │   ├── multiple-vf-claim/         # Multiple VF allocation example
+│   ├── claim-for-deployment/      # Deployment with claim template example
 │   ├── resource-policies/         # Resource policy configuration example
-│   └── vfio-driver/               # VFIO-PCI driver configuration example
+│   ├── resourceclaim/             # Direct ResourceClaim examples
+│   ├── resource-alignment/        # Resource alignment and placement examples
+│   ├── extended-resource/         # Extended resource based examples
+│   ├── host-device-kernel/        # Kernel flow with host-device NAD
+│   ├── vfio-driver/               # VFIO-PCI driver configuration example
+│   ├── multus-integration-single-vf/ # Multus single VF integration
+│   ├── multus-integration-multiple-vf/ # Multus multiple VF integration
+│   └── multus-integration-multiple-resourceclaim/ # Multus multiple claims integration
 ├── hack/                          # Build and development scripts
 ├── test/                          # Test suites
 └── vendor/                        # Go module dependencies

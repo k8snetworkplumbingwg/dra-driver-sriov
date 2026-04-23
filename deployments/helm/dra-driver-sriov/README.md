@@ -109,6 +109,7 @@ the following chart parameters are available.
 | `selectorLabelsOverride` | object | `{}` | Override selector labels |
 | `allowDefaultNamespace` | bool | `false` | Allow deployment in the default namespace |
 | `imagePullSecrets` | list | `[]` | Image pull secrets for private registries |
+| `cniBinPath` | string | `/opt/cni/bin` | Host path for CNI binaries mounted into the daemonset |
 
 ### Image Parameters
 
@@ -144,6 +145,7 @@ The kubelet plugin runs as a DaemonSet on all nodes where SR-IOV devices should 
 | `kubeletPlugin.nriPluginName` | string | `dra-driver-sriov` | Name of the NRI plugin |
 | `kubeletPlugin.nriPluginIndex` | int | `42` | Index of the NRI plugin (determines execution order) |
 | `kubeletPlugin.defaultInterfacePrefix` | string | `vfnet` | Default prefix for network interface names |
+| `kubeletPlugin.configurationMode` | string | `STANDALONE` | Driver networking mode. Supported values: `STANDALONE` (default, with NRI-based interface management) and `MULTUS` (delegates network attachment to Multus). |
 | `kubeletPlugin.containers.init.securityContext` | object | `{}` | Security context for init container |
 | `kubeletPlugin.containers.init.resources` | object | `{}` | Resource requests/limits for init container |
 | `kubeletPlugin.containers.plugin.securityContext` | object | `{"privileged":true}` | Security context for plugin container (requires privileged) |
@@ -166,6 +168,16 @@ The kubelet plugin runs as a DaemonSet on all nodes where SR-IOV devices should 
 ```bash
 helm install dra-driver-sriov oci://ghcr.io/k8snetworkplumbingwg/dra-driver-sriov-chart \
   -n dra-driver-sriov --create-namespace
+```
+
+### OpenShift Installation
+
+OpenShift uses a different host CNI binary directory. Set `cniBinPath` to `/var/lib/cni/bin`:
+
+```bash
+helm install dra-driver-sriov oci://ghcr.io/k8snetworkplumbingwg/dra-driver-sriov-chart \
+  -n dra-sriov-driver --create-namespace \
+  --set cniBinPath=/var/lib/cni/bin
 ```
 
 ### Installation with Custom Node Selection

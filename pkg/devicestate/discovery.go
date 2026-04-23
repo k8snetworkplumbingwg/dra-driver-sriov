@@ -48,6 +48,10 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 	logger.Info("Found PCI devices", "count", len(devices))
 
 	for _, device := range devices {
+		if device == nil || device.Class == nil {
+			logger.V(2).Info("Skipping nil or malformed PCI device entry")
+			continue
+		}
 		logger.V(2).Info("Processing PCI device", "address", device.Address, "class", device.Class.ID)
 
 		devClass, err := strconv.ParseInt(device.Class.ID, 16, 64)
@@ -145,8 +149,23 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 		numaNodeIntPtr := ptr.To(numaNodeInt)
 
 		for _, vfInfo := range vfList {
-			deviceName := strings.ReplaceAll(vfInfo.PciAddress, ":", "-")
-			deviceName = strings.ReplaceAll(deviceName, ".", "-")
+			deviceName := pciAddressToDeviceName(vfInfo.PciAddress)
+			hasBridgeMaster, bridgeErr := host.GetHelpers().HasBridgeMaster(vfInfo.PciAddress)
+			if bridgeErr != nil {
+				logger.Error(bridgeErr, "Failed to check bridge master for VF, device will not be excluded by this check", "address", vfInfo.PciAddress)
+			}
+			if hasBridgeMaster {
+				logger.Info("Skipping VF because it is attached to a bridge", "address", vfInfo.PciAddress, "pfAddress", pfInfo.PciAddress)
+				continue
+			}
+			isDefaultRoute, routeErr := host.GetHelpers().HasDefaultRoute(vfInfo.PciAddress)
+			if routeErr != nil {
+				logger.Error(routeErr, "Failed to check default route for VF, device will not be excluded by this check", "address", vfInfo.PciAddress)
+			}
+			if isDefaultRoute {
+				logger.Info("Skipping VF because it has a default route", "address", vfInfo.PciAddress, "pfAddress", pfInfo.PciAddress)
+				continue
+			}
 
 			// Check RDMA capability for this VF
 			rdmaCapable := host.GetHelpers().VerifyRDMACapability(vfInfo.PciAddress)
@@ -174,6 +193,9 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 				consts.AttributePciAddress: {
 					StringValue: ptr.To(vfInfo.PciAddress),
 				},
+				consts.AttributeMultusDeviceID: {
+					StringValue: ptr.To(vfInfo.PciAddress),
+				},
 				consts.AttributePFName: {
 					StringValue: ptr.To(pfInfo.NetName),
 				},
@@ -182,6 +204,9 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 				},
 				consts.AttributeVFID: {
 					IntValue: ptr.To(int64(vfInfo.VFID)),
+				},
+				consts.AttributeInterfaceType: {
+					StringValue: ptr.To(consts.InterfaceTypeVirtualFunction),
 				},
 				// PCIe Root Complex (upstream Kubernetes standard) - for topology-aware scheduling
 				consts.AttributePCIeRoot: {
@@ -216,4 +241,147 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 
 	logger.Info("SR-IOV device discovery completed", "totalDevices", len(resourceList))
 	return resourceList, nil
+}
+
+// DiscoverPhysicalPciDevices performs a one-time inventory of physical PCI network
+// devices. This inventory is used only when a policy explicitly requests
+// pciAddresses.
+func DiscoverPhysicalPciDevices() (types.AllocatableDevices, error) {
+	logger := klog.LoggerWithName(klog.Background(), "DiscoverPhysicalPciDevices")
+	logger.Info("Starting physical PCI inventory discovery")
+	resourceList := types.AllocatableDevices{}
+
+	pci, err := host.GetHelpers().PCI()
+	if err != nil {
+		logger.Error(err, "Failed to get PCI info")
+		return nil, fmt.Errorf("error getting PCI info: %v", err)
+	}
+
+	devices := pci.Devices
+	if len(devices) == 0 {
+		logger.Info("No PCI devices found")
+		return nil, fmt.Errorf("could not retrieve PCI devices")
+	}
+
+	for _, device := range devices {
+		if device == nil || device.Class == nil {
+			continue
+		}
+		devClass, err := strconv.ParseInt(device.Class.ID, 16, 64)
+		if err != nil || devClass != consts.NetClass {
+			continue
+		}
+		if host.GetHelpers().IsSriovVF(device.Address) {
+			logger.V(2).Info("Skipping PCI device because it is already discovered through SR-IOV VF discovery", "address", device.Address)
+			continue
+		}
+		hasBridgeMaster, bridgeErr := host.GetHelpers().HasBridgeMaster(device.Address)
+		if bridgeErr != nil {
+			logger.Error(bridgeErr, "Failed to check bridge master for PCI device, device will not be excluded by this check", "address", device.Address)
+		}
+		if hasBridgeMaster {
+			logger.Info("Skipping PCI device because it is attached to a bridge", "address", device.Address)
+			continue
+		}
+		isDefaultRoute, routeErr := host.GetHelpers().HasDefaultRoute(device.Address)
+		if routeErr != nil {
+			logger.Error(routeErr, "Failed to check default route for PCI device, device will not be excluded by this check", "address", device.Address)
+		}
+		if isDefaultRoute {
+			logger.Info("Skipping PCI device because it has a default route", "address", device.Address)
+			continue
+		}
+
+		vendorID := ""
+		if device.Vendor != nil {
+			vendorID = device.Vendor.ID
+		}
+		deviceID := ""
+		if device.Product != nil {
+			deviceID = device.Product.ID
+		}
+
+		inventoryDevice := buildPhysicalPCIDevice(logger, device.Address, vendorID, deviceID)
+		logger.V(2).Info("Adding PCI inventory device to resource list", "deviceName", inventoryDevice.Name, "device", inventoryDevice)
+		resourceList[inventoryDevice.Name] = inventoryDevice
+	}
+
+	logger.Info("Physical PCI inventory discovery completed", "totalDevices", len(resourceList))
+	return resourceList, nil
+}
+
+// buildPhysicalPCIDevice builds a resource device entry for a physical PCI device.
+func buildPhysicalPCIDevice(logger klog.Logger, pciAddress, vendorID, deviceID string) resourceapi.Device {
+	numaNode := int64(-1)
+	numaNodeStr, err := host.GetHelpers().GetNumaNode(pciAddress)
+	if err != nil {
+		logger.V(2).Info("Failed to get NUMA node for physical PCI inventory", "pciAddress", pciAddress, "error", err.Error())
+	} else {
+		parsedNumaNode, parseErr := strconv.ParseInt(numaNodeStr, 10, 64)
+		if parseErr != nil {
+			logger.V(2).Info("Failed to parse NUMA node for physical PCI inventory", "pciAddress", pciAddress, "numaNode", numaNodeStr, "error", parseErr.Error())
+		} else {
+			numaNode = parsedNumaNode
+		}
+	}
+
+	pcieRoot := ""
+	if resolvedPCIeRoot, rootErr := host.GetHelpers().GetPCIeRoot(pciAddress); rootErr != nil {
+		logger.V(2).Info("Failed to get PCIe root for physical PCI inventory", "pciAddress", pciAddress, "error", rootErr.Error())
+	} else {
+		pcieRoot = resolvedPCIeRoot
+	}
+
+	linkType := consts.LinkTypeUnknown
+	if resolvedLinkType, linkErr := host.GetHelpers().GetLinkType(pciAddress); linkErr != nil {
+		logger.V(2).Info("Failed to get link type for physical PCI inventory", "pciAddress", pciAddress, "error", linkErr.Error())
+	} else {
+		linkType = resolvedLinkType
+	}
+
+	rdmaCapable := host.GetHelpers().VerifyRDMACapability(pciAddress)
+	deviceName := pciAddressToDeviceName(pciAddress)
+	attributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+		consts.AttributeVendorID: {
+			StringValue: ptr.To(vendorID),
+		},
+		consts.AttributeDeviceID: {
+			StringValue: ptr.To(deviceID),
+		},
+		consts.AttributePciAddress: {
+			StringValue: ptr.To(pciAddress),
+		},
+		consts.AttributeMultusDeviceID: {
+			StringValue: ptr.To(pciAddress),
+		},
+		consts.AttributeStandardPciAddress: {
+			StringValue: ptr.To(pciAddress),
+		},
+		consts.AttributePCIeRoot: {
+			StringValue: ptr.To(pcieRoot),
+		},
+		consts.AttributeLinkType: {
+			StringValue: ptr.To(linkType),
+		},
+		consts.AttributeRDMACapable: {
+			BoolValue: ptr.To(rdmaCapable),
+		},
+		consts.AttributeNUMANode: {
+			IntValue: ptr.To(numaNode),
+		},
+		consts.AttributeInterfaceType: {
+			StringValue: ptr.To(consts.InterfaceTypeRegular),
+		},
+	}
+
+	return resourceapi.Device{
+		Name:       deviceName,
+		Attributes: attributes,
+	}
+}
+
+// pciAddressToDeviceName converts a PCI BDF address into a Kubernetes-safe device name.
+func pciAddressToDeviceName(pciAddress string) string {
+	deviceName := strings.ReplaceAll(pciAddress, ":", "-")
+	return strings.ReplaceAll(deviceName, ".", "-")
 }

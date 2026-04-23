@@ -67,6 +67,8 @@ type PreparedDevice struct {
 	Config              *configapi.VfConfig
 	IfName              string
 	PciAddress          string
+	MultusDeviceID      string
+	MultusResourceName  string
 	PodUID              string
 	NetAttachDefConfig  string
 	OriginalDriver      string // Store original driver for restoration during unprepare

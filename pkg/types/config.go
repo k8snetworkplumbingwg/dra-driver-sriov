@@ -18,6 +18,7 @@ type Flags struct {
 	KubeletPluginsDirectoryPath   string
 	HealthcheckPort               int
 	DefaultInterfacePrefix        string
+	ConfigurationMode             string
 }
 
 type Config struct {

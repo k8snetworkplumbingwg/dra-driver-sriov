@@ -3,18 +3,25 @@ package devicestate
 import (
 	"context"
 	"fmt"
+	"os"
 
-	netattdefv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	"github.com/jaypipes/ghw"
+	"github.com/jaypipes/ghw/pkg/pci"
+	"github.com/jaypipes/pcidb"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"go.uber.org/mock/gomock"
+
 	resourceapi "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/utils/ptr"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 	crfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	netattdefv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cdi"
@@ -42,7 +49,7 @@ func newTestManagerWithK8sClient(objects ...crclient.Object) *Manager {
 	}
 }
 
-var _ = Describe("Manager", func() {
+var _ = Describe("Manager", Serial, func() {
 	var (
 		mockCtrl    *gomock.Controller
 		mockHost    *mock_host.MockInterface
@@ -82,7 +89,199 @@ var _ = Describe("Manager", func() {
 		})
 	})
 
-	Context("GetAllocatedDeviceByDeviceName", func() {
+	Context("GetPolicyCandidateDevices", func() {
+		It("returns only allocatable devices when PCI inventory is disabled", func() {
+			m := &Manager{
+				allocatable: drasriovtypes.AllocatableDevices{
+					"devA": {Name: "devA"},
+				},
+				pciAddressInventory: drasriovtypes.AllocatableDevices{
+					"devB": {Name: "devB"},
+				},
+			}
+
+			candidates := m.GetPolicyCandidateDevices(false)
+			Expect(candidates).To(HaveLen(1))
+			Expect(candidates).To(HaveKey("devA"))
+			Expect(candidates).ToNot(HaveKey("devB"))
+		})
+
+		It("includes PCI inventory devices when requested", func() {
+			m := &Manager{
+				allocatable: drasriovtypes.AllocatableDevices{
+					"devA": {Name: "devA"},
+				},
+				pciAddressInventory: drasriovtypes.AllocatableDevices{
+					"devB": {Name: "devB"},
+				},
+			}
+
+			candidates := m.GetPolicyCandidateDevices(true)
+			Expect(candidates).To(HaveLen(2))
+			Expect(candidates).To(HaveKey("devA"))
+			Expect(candidates).To(HaveKey("devB"))
+		})
+	})
+
+	Context("NewManager", func() {
+		It("does not publish interfaces with default route in allocatable or PCI inventory", func() {
+			testCdiRoot := GinkgoT().TempDir()
+			cdiHandler, err := cdi.NewHandler(testCdiRoot)
+			Expect(err).NotTo(HaveOccurred())
+
+			config := &drasriovtypes.Config{
+				Flags: &drasriovtypes.Flags{
+					ConfigurationMode:      string(consts.ConfigurationModeStandalone),
+					DefaultInterfacePrefix: "vfnet",
+				},
+			}
+
+			pciInfo := &ghw.PCIInfo{
+				Devices: []*pci.Device{
+					{
+						Address: "0000:01:00.0",
+						Class:   &pcidb.Class{ID: "02"},
+						Vendor:  &pcidb.Vendor{ID: "8086"},
+						Product: &pcidb.Product{ID: "1572"},
+					},
+				},
+			}
+			vfList := []host.VFInfo{
+				{PciAddress: "0000:01:00.1", VFID: 0, DeviceID: "154c"},
+			}
+
+			gomock.InOrder(
+				mockHost.EXPECT().PCI().Return(pciInfo, nil),
+				mockHost.EXPECT().PCI().Return(pciInfo, nil),
+			)
+			mockHost.EXPECT().IsSriovVF("0000:01:00.0").Return(false).Times(2)
+			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
+			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
+			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
+			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
+			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
+			mockHost.EXPECT().HasBridgeMaster("0000:01:00.1").Return(false, nil)
+			mockHost.EXPECT().HasDefaultRoute("0000:01:00.1").Return(true, nil)
+			mockHost.EXPECT().HasBridgeMaster("0000:01:00.0").Return(false, nil)
+			mockHost.EXPECT().HasDefaultRoute("0000:01:00.0").Return(true, nil)
+
+			manager, err := NewManager(config, cdiHandler, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(manager.GetAllocatableDevices()).To(BeEmpty())
+			Expect(manager.GetPolicyCandidateDevices(true)).To(BeEmpty())
+		})
+
+		It("does not publish bridge-attached interfaces from PCI inventory used by pciAddresses", func() {
+			testCdiRoot := GinkgoT().TempDir()
+			cdiHandler, err := cdi.NewHandler(testCdiRoot)
+			Expect(err).NotTo(HaveOccurred())
+
+			config := &drasriovtypes.Config{
+				Flags: &drasriovtypes.Flags{
+					ConfigurationMode:      string(consts.ConfigurationModeStandalone),
+					DefaultInterfacePrefix: "vfnet",
+				},
+			}
+
+			pciInfo := &ghw.PCIInfo{
+				Devices: []*pci.Device{
+					{
+						Address: "0000:01:00.0",
+						Class:   &pcidb.Class{ID: "02"},
+						Vendor:  &pcidb.Vendor{ID: "8086"},
+						Product: &pcidb.Product{ID: "1572"},
+					},
+				},
+			}
+
+			gomock.InOrder(
+				mockHost.EXPECT().PCI().Return(pciInfo, nil),
+				mockHost.EXPECT().PCI().Return(pciInfo, nil),
+			)
+			mockHost.EXPECT().IsSriovVF("0000:01:00.0").Return(false).Times(2)
+			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
+			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
+			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
+			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
+			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(nil, nil)
+			mockHost.EXPECT().HasBridgeMaster("0000:01:00.0").Return(true, nil)
+
+			manager, err := NewManager(config, cdiHandler, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(manager.GetAllocatableDevices()).To(BeEmpty())
+			Expect(manager.GetPolicyCandidateDevices(true)).To(BeEmpty())
+		})
+
+		It("keeps non-bridged inventory devices while skipping bridged ones", func() {
+			testCdiRoot := GinkgoT().TempDir()
+			cdiHandler, err := cdi.NewHandler(testCdiRoot)
+			Expect(err).NotTo(HaveOccurred())
+
+			config := &drasriovtypes.Config{
+				Flags: &drasriovtypes.Flags{
+					ConfigurationMode:      string(consts.ConfigurationModeStandalone),
+					DefaultInterfacePrefix: "vfnet",
+				},
+			}
+
+			pciInfo := &ghw.PCIInfo{
+				Devices: []*pci.Device{
+					{
+						Address: "0000:01:00.0",
+						Class:   &pcidb.Class{ID: "02"},
+						Vendor:  &pcidb.Vendor{ID: "8086"},
+						Product: &pcidb.Product{ID: "1572"},
+					},
+					{
+						Address: "0000:02:00.0",
+						Class:   &pcidb.Class{ID: "02"},
+						Vendor:  &pcidb.Vendor{ID: "8086"},
+						Product: &pcidb.Product{ID: "1889"},
+					},
+				},
+			}
+
+			gomock.InOrder(
+				mockHost.EXPECT().PCI().Return(pciInfo, nil),
+				mockHost.EXPECT().PCI().Return(pciInfo, nil),
+			)
+
+			mockHost.EXPECT().IsSriovVF("0000:01:00.0").Return(false).Times(2)
+			mockHost.EXPECT().TryGetInterfaceName("0000:01:00.0").Return("eth0")
+			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return("legacy")
+			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
+			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
+			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(nil, nil)
+
+			mockHost.EXPECT().IsSriovVF("0000:02:00.0").Return(false).Times(2)
+			mockHost.EXPECT().TryGetInterfaceName("0000:02:00.0").Return("eth1")
+			mockHost.EXPECT().GetNicSriovMode("0000:02:00.0").Return("legacy")
+			mockHost.EXPECT().GetNumaNode("0000:02:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:02:00.0").Return("pci0000:00", nil)
+			mockHost.EXPECT().GetLinkType("0000:02:00.0").Return(consts.LinkTypeEthernet, nil)
+			mockHost.EXPECT().GetVFList("0000:02:00.0").Return(nil, nil)
+
+			mockHost.EXPECT().HasBridgeMaster("0000:01:00.0").Return(true, nil)
+			mockHost.EXPECT().HasBridgeMaster("0000:02:00.0").Return(false, nil)
+			mockHost.EXPECT().HasDefaultRoute("0000:02:00.0").Return(false, nil)
+			mockHost.EXPECT().GetNumaNode("0000:02:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:02:00.0").Return("pci0000:00", nil)
+			mockHost.EXPECT().GetLinkType("0000:02:00.0").Return(consts.LinkTypeEthernet, nil)
+			mockHost.EXPECT().VerifyRDMACapability("0000:02:00.0").Return(false)
+
+			manager, err := NewManager(config, cdiHandler, nil)
+			Expect(err).NotTo(HaveOccurred())
+			candidates := manager.GetPolicyCandidateDevices(true)
+			Expect(candidates).To(HaveLen(1))
+			Expect(candidates).To(HaveKey("0000-02-00-0"))
+			Expect(candidates).ToNot(HaveKey("0000-01-00-0"))
+		})
+	})
+
+	Context("GetAllocatableDeviceByName", func() {
 		It("should return device when it exists", func() {
 			devices := drasriovtypes.AllocatableDevices{
 				"device1": resourceapi.Device{Name: "device1"},
@@ -92,7 +291,7 @@ var _ = Describe("Manager", func() {
 				allocatable: devices,
 			}
 
-			device, exists := m.GetAllocatedDeviceByDeviceName("device1")
+			device, exists := m.GetAllocatableDeviceByName("device1")
 			Expect(exists).To(BeTrue())
 			Expect(device.Name).To(Equal("device1"))
 		})
@@ -102,8 +301,47 @@ var _ = Describe("Manager", func() {
 				allocatable: drasriovtypes.AllocatableDevices{},
 			}
 
-			_, exists := m.GetAllocatedDeviceByDeviceName("nonexistent")
+			_, exists := m.GetAllocatableDeviceByName("nonexistent")
 			Expect(exists).To(BeFalse())
+		})
+
+		It("should return device from PCI inventory when missing from allocatable", func() {
+			m := &Manager{
+				allocatable: drasriovtypes.AllocatableDevices{},
+				pciAddressInventory: drasriovtypes.AllocatableDevices{
+					"dev-from-inventory": {Name: "dev-from-inventory"},
+				},
+			}
+
+			device, exists := m.GetAllocatableDeviceByName("dev-from-inventory")
+			Expect(exists).To(BeTrue())
+			Expect(device.Name).To(Equal("dev-from-inventory"))
+		})
+	})
+
+	Context("normalizeConfigurationMode", func() {
+		It("defaults empty mode to STANDALONE", func() {
+			mode, err := normalizeConfigurationMode("")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mode).To(Equal(string(consts.ConfigurationModeStandalone)))
+		})
+
+		It("rejects unsupported modes", func() {
+			_, err := normalizeConfigurationMode("UNKNOWN")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("unsupported configuration mode"))
+		})
+
+		It("accepts explicit STANDALONE mode", func() {
+			mode, err := normalizeConfigurationMode(string(consts.ConfigurationModeStandalone))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mode).To(Equal(string(consts.ConfigurationModeStandalone)))
+		})
+
+		It("accepts explicit MULTUS mode", func() {
+			mode, err := normalizeConfigurationMode(string(consts.ConfigurationModeMultus))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mode).To(Equal(string(consts.ConfigurationModeMultus)))
 		})
 	})
 
@@ -174,6 +412,33 @@ var _ = Describe("Manager", func() {
 			Expect(err.Error()).To(ContainSubstring("failed to restore original driver"))
 		})
 
+		It("continues restoring remaining devices when one restore fails", func() {
+			preparedDevices := drasriovtypes.PreparedDevices{
+				&drasriovtypes.PreparedDevice{
+					PciAddress:     "0000:01:00.1",
+					OriginalDriver: "ixgbevf",
+					Config: &configapi.VfConfig{
+						Driver: consts.VFIODriverName,
+					},
+				},
+				&drasriovtypes.PreparedDevice{
+					PciAddress:     "0000:01:00.2",
+					OriginalDriver: "mlx5_core",
+					Config: &configapi.VfConfig{
+						Driver: consts.VFIODriverName,
+					},
+				},
+			}
+
+			mockHost.EXPECT().RestoreDeviceDriver("0000:01:00.1", "ixgbevf").Return(fmt.Errorf("restore failed"))
+			mockHost.EXPECT().RestoreDeviceDriver("0000:01:00.2", "mlx5_core").Return(nil)
+
+			m := &Manager{}
+			err := m.unprepareDevices(preparedDevices)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to restore original driver"))
+		})
+
 		It("should skip driver restoration when no driver was set", func() {
 			preparedDevices := drasriovtypes.PreparedDevices{
 				&drasriovtypes.PreparedDevice{
@@ -184,6 +449,24 @@ var _ = Describe("Manager", func() {
 			}
 
 			// No mock expectation - RestoreDeviceDriver should not be called
+
+			m := &Manager{}
+			err := m.unprepareDevices(preparedDevices)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should skip nil and nil-config prepared device entries", func() {
+			preparedDevices := drasriovtypes.PreparedDevices{
+				nil,
+				&drasriovtypes.PreparedDevice{
+					PciAddress: "0000:01:00.2",
+				},
+				&drasriovtypes.PreparedDevice{
+					PciAddress:     "0000:01:00.3",
+					OriginalDriver: "ixgbevf",
+					Config:         &configapi.VfConfig{},
+				},
+			}
 
 			m := &Manager{}
 			err := m.unprepareDevices(preparedDevices)
@@ -236,6 +519,19 @@ var _ = Describe("Manager", func() {
 
 			Expect(func() {
 				_ = m.Unprepare("claim-uid-123", nil)
+			}).NotTo(Panic())
+		})
+
+		It("should not panic when first prepared device entry is nil", func() {
+			cdiHandler, err := cdi.NewHandler(GinkgoT().TempDir())
+			Expect(err).NotTo(HaveOccurred())
+
+			m := &Manager{
+				cdi: cdiHandler,
+			}
+
+			Expect(func() {
+				_ = m.Unprepare("claim-uid-123", drasriovtypes.PreparedDevices{nil})
 			}).NotTo(Panic())
 		})
 	})
@@ -298,13 +594,24 @@ var _ = Describe("Manager", func() {
 			Expect(err.Error()).To(ContainSubstring("error creating map of opaque device config"))
 		})
 
-		It("should return error when no config found for driver", func() {
+		It("should return standalone net-attach-def lookup errors from PrepareDevicesForClaim", func() {
 			cdiHandler, err := cdi.NewHandler(GinkgoT().TempDir())
 			Expect(err).NotTo(HaveOccurred())
+			k8sClientManager := newTestManagerWithK8sClient()
 
 			m := &Manager{
-				cdi:         cdiHandler,
-				allocatable: drasriovtypes.AllocatableDevices{},
+				k8sClient:              k8sClientManager.k8sClient,
+				cdi:                    cdiHandler,
+				configurationMode:      string(consts.ConfigurationModeStandalone),
+				allocatable:            drasriovtypes.AllocatableDevices{},
+				deviceInfoStore:        NewDeviceInfoStore(),
+				defaultInterfacePrefix: "vfnet",
+			}
+			m.allocatable["device1"] = resourceapi.Device{
+				Name: "device1",
+				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+					consts.AttributePciAddress: {StringValue: ptr.To("0000:01:00.1")},
+				},
 			}
 
 			claim := &resourceapi.ResourceClaim{
@@ -321,6 +628,221 @@ var _ = Describe("Manager", func() {
 									Driver:  consts.DriverName,
 									Device:  "device1",
 									Request: "req1",
+									Pool:    "pool1",
+								},
+							},
+							Config: []resourceapi.DeviceAllocationConfiguration{
+								{
+									Source:   resourceapi.AllocationConfigSourceClass,
+									Requests: []string{"req1"},
+									DeviceConfiguration: resourceapi.DeviceConfiguration{
+										Opaque: &resourceapi.OpaqueDeviceConfiguration{
+											Driver: consts.DriverName,
+											Parameters: runtime.RawExtension{
+												Raw: []byte(`{"apiVersion":"sriovnetwork.k8snetworkplumbingwg.io/v1alpha1","kind":"VfConfig","netAttachDefName":"missing-net"}`),
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					ReservedFor: []resourceapi.ResourceClaimConsumerReference{
+						{UID: "pod-uid"},
+					},
+				},
+			}
+
+			ifNameIndex := 0
+			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("error applying config on device"))
+			Expect(err.Error()).To(ContainSubstring("error getting net attach def raw config"))
+		})
+
+		It("should return error when no devices are prepared for the claim", func() {
+			cdiHandler, err := cdi.NewHandler(GinkgoT().TempDir())
+			Expect(err).NotTo(HaveOccurred())
+			m := &Manager{
+				cdi:         cdiHandler,
+				allocatable: drasriovtypes.AllocatableDevices{},
+			}
+			claim := &resourceapi.ResourceClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-claim",
+					Namespace: "test-ns",
+					UID:       "claim-uid",
+				},
+				Status: resourceapi.ResourceClaimStatus{
+					Allocation: &resourceapi.AllocationResult{
+						Devices: resourceapi.DeviceAllocationResult{
+							Results: []resourceapi.DeviceRequestAllocationResult{
+								{Driver: "other.driver", Device: "device1", Request: "req1", Pool: "pool1"},
+							},
+						},
+					},
+				},
+			}
+
+			ifNameIndex := 0
+			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("no prepared devices found for claim"))
+		})
+
+		It("should include rollback failure when sync fails after binding changes", func() {
+			cdiHandler, err := cdi.NewHandler(GinkgoT().TempDir())
+			Expect(err).NotTo(HaveOccurred())
+			fakeStore := &fakeDeviceInfoUtils{saveErr: fmt.Errorf("save failed")}
+			m := &Manager{
+				cdi:               cdiHandler,
+				deviceInfoStore:   fakeStore,
+				configurationMode: string(consts.ConfigurationModeMultus),
+				allocatable: drasriovtypes.AllocatableDevices{
+					"device1": {
+						Name: "device1",
+						Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+							consts.AttributePciAddress:         {StringValue: ptr.To("0000:01:00.1")},
+							consts.AttributeMultusResourceName: {StringValue: ptr.To("intel.com/sriov")},
+							consts.AttributeMultusDeviceID:     {StringValue: ptr.To("0000:01:00.1")},
+						},
+					},
+				},
+			}
+
+			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", gomock.Any()).Return("ixgbevf", nil)
+			mockHost.EXPECT().GetVFIODeviceFile("0000:01:00.1").Return("/dev/vfio/1", "/dev/vfio/1", nil)
+			mockHost.EXPECT().GetRDMADevicesForPCI("0000:01:00.1").Return([]string{})
+			mockHost.EXPECT().RestoreDeviceDriver("0000:01:00.1", "ixgbevf").Return(fmt.Errorf("restore failed"))
+
+			claim := &resourceapi.ResourceClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-claim",
+					Namespace: "test-ns",
+					UID:       "claim-uid",
+				},
+				Status: resourceapi.ResourceClaimStatus{
+					Allocation: &resourceapi.AllocationResult{
+						Devices: resourceapi.DeviceAllocationResult{
+							Results: []resourceapi.DeviceRequestAllocationResult{
+								{Driver: consts.DriverName, Device: "device1", Request: "req1", Pool: "pool1"},
+							},
+							Config: []resourceapi.DeviceAllocationConfiguration{
+								{
+									Source:   resourceapi.AllocationConfigSourceClass,
+									Requests: []string{"req1"},
+									DeviceConfiguration: resourceapi.DeviceConfiguration{
+										Opaque: &resourceapi.OpaqueDeviceConfiguration{
+											Driver: consts.DriverName,
+											Parameters: runtime.RawExtension{
+												Raw: []byte(`{"apiVersion":"sriovnetwork.k8snetworkplumbingwg.io/v1alpha1","kind":"VfConfig","driver":"vfio-pci"}`),
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					ReservedFor: []resourceapi.ResourceClaimConsumerReference{
+						{UID: "pod-uid"},
+					},
+				},
+			}
+
+			ifNameIndex := 0
+			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("unable to create device-info files for claim"))
+			Expect(err.Error()).To(ContainSubstring("rollback failed"))
+		})
+
+		It("should include cleanup failure details when post-sync cleanup fails", func() {
+			cdiHandler, err := cdi.NewHandler(GinkgoT().TempDir())
+			Expect(err).NotTo(HaveOccurred())
+			fakeStore := &fakeDeviceInfoUtils{
+				saveErr:   fmt.Errorf("save failed"),
+				cleanErrs: []error{nil, fmt.Errorf("clean failed")},
+			}
+			m := &Manager{
+				cdi:               cdiHandler,
+				deviceInfoStore:   fakeStore,
+				configurationMode: string(consts.ConfigurationModeMultus),
+				allocatable: drasriovtypes.AllocatableDevices{
+					"device1": {
+						Name: "device1",
+						Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+							consts.AttributePciAddress:         {StringValue: ptr.To("0000:01:00.1")},
+							consts.AttributeMultusResourceName: {StringValue: ptr.To("intel.com/sriov")},
+							consts.AttributeMultusDeviceID:     {StringValue: ptr.To("0000:01:00.1")},
+						},
+					},
+				},
+			}
+
+			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", gomock.Any()).Return("", nil)
+			mockHost.EXPECT().GetRDMADevicesForPCI("0000:01:00.1").Return([]string{})
+
+			claim := &resourceapi.ResourceClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-claim",
+					Namespace: "test-ns",
+					UID:       "claim-uid",
+				},
+				Status: resourceapi.ResourceClaimStatus{
+					Allocation: &resourceapi.AllocationResult{
+						Devices: resourceapi.DeviceAllocationResult{
+							Results: []resourceapi.DeviceRequestAllocationResult{
+								{Driver: consts.DriverName, Device: "device1", Request: "req1", Pool: "pool1"},
+							},
+						},
+					},
+					ReservedFor: []resourceapi.ResourceClaimConsumerReference{
+						{UID: "pod-uid"},
+					},
+				},
+			}
+
+			ifNameIndex := 0
+			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("unable to create device-info files for claim"))
+			Expect(err.Error()).To(ContainSubstring("cleanup after device-info sync failure failed"))
+		})
+
+		It("should use default config when no config found for driver", func() {
+			cdiHandler, err := cdi.NewHandler(GinkgoT().TempDir())
+			Expect(err).NotTo(HaveOccurred())
+
+			m := &Manager{
+				cdi: cdiHandler,
+				allocatable: drasriovtypes.AllocatableDevices{
+					"device1": {
+						Name: "device1",
+						Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+							consts.AttributePciAddress: {
+								StringValue: ptr.To("0000:01:00.1"),
+							},
+						},
+					},
+				},
+				configurationMode: string(consts.ConfigurationModeMultus),
+			}
+
+			claim := &resourceapi.ResourceClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-claim",
+					Namespace: "test-ns",
+					UID:       "claim-uid",
+				},
+				Status: resourceapi.ResourceClaimStatus{
+					Allocation: &resourceapi.AllocationResult{
+						Devices: resourceapi.DeviceAllocationResult{
+							Results: []resourceapi.DeviceRequestAllocationResult{
+								{
+									Driver:  consts.DriverName,
+									Device:  "device1",
+									Request: "req1",
+									Pool:    "pool1",
 								},
 							},
 							Config: []resourceapi.DeviceAllocationConfiguration{
@@ -346,10 +868,14 @@ var _ = Describe("Manager", func() {
 				},
 			}
 
+			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", gomock.Any()).Return("", nil)
+
 			ifNameIndex := 0
-			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("error creating map of opaque device config"))
+			prepared, err := m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(prepared).To(HaveLen(1))
+			Expect(prepared[0].NetAttachDefConfig).To(BeEmpty())
+			Expect(claim.Status.Devices).To(HaveLen(1))
 		})
 	})
 
@@ -389,12 +915,31 @@ var _ = Describe("Manager", func() {
 			Expect(devices).To(HaveLen(0))
 		})
 
-		It("should return error when config not found for request", func() {
+		It("should use default config when config not found for request", func() {
+			cdiHandler, err := cdi.NewHandler(GinkgoT().TempDir())
+			Expect(err).NotTo(HaveOccurred())
+
 			m := &Manager{
-				allocatable: drasriovtypes.AllocatableDevices{},
+				cdi: cdiHandler,
+				allocatable: drasriovtypes.AllocatableDevices{
+					"device1": {
+						Name: "device1",
+						Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+							consts.AttributePciAddress: {
+								StringValue: ptr.To("0000:01:00.1"),
+							},
+						},
+					},
+				},
+				configurationMode: string(consts.ConfigurationModeMultus),
 			}
 
 			claim := &resourceapi.ResourceClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-claim",
+					Namespace: "test-ns",
+					UID:       "claim-uid",
+				},
 				Status: resourceapi.ResourceClaimStatus{
 					Allocation: &resourceapi.AllocationResult{
 						Devices: resourceapi.DeviceAllocationResult{
@@ -403,9 +948,13 @@ var _ = Describe("Manager", func() {
 									Driver:  consts.DriverName,
 									Device:  "device1",
 									Request: "req1",
+									Pool:    "pool1",
 								},
 							},
 						},
+					},
+					ReservedFor: []resourceapi.ResourceClaimConsumerReference{
+						{UID: "pod-uid"},
 					},
 				},
 			}
@@ -414,10 +963,13 @@ var _ = Describe("Manager", func() {
 				// Missing req1
 			}
 
+			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", gomock.Any()).Return("", nil)
+
 			ifNameIndex := 0
-			_, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resultsConfig)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("config not found for request"))
+			prepared, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resultsConfig)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(prepared).To(HaveLen(1))
+			Expect(prepared[0].IfName).To(Equal(""))
 		})
 
 		It("should return error when device not found in allocatable devices", func() {
@@ -632,6 +1184,49 @@ var _ = Describe("Manager", func() {
 			Expect(preparedDevice.PciAddress).To(Equal("0000:01:00.1"))
 			Expect(preparedDevice.IfName).To(Equal("net0"))
 		})
+
+		It("restores the original driver when VFIO file lookup fails", func() {
+			m := &Manager{
+				allocatable: drasriovtypes.AllocatableDevices{
+					"device1": {
+						Name: "device1",
+						Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+							consts.AttributePciAddress: {StringValue: ptr.To("0000:01:00.1")},
+						},
+					},
+				},
+				configurationMode: string(consts.ConfigurationModeMultus),
+			}
+			config := &configapi.VfConfig{
+				Driver: "vfio-pci",
+			}
+			claim := &resourceapi.ResourceClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-claim",
+					Namespace: "test-ns",
+					UID:       "claim-uid",
+				},
+				Status: resourceapi.ResourceClaimStatus{
+					ReservedFor: []resourceapi.ResourceClaimConsumerReference{
+						{UID: "pod-uid"},
+					},
+				},
+			}
+			result := &resourceapi.DeviceRequestAllocationResult{
+				Device:  "device1",
+				Request: "req1",
+				Pool:    "pool1",
+			}
+
+			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", config).Return("ixgbevf", nil)
+			mockHost.EXPECT().GetVFIODeviceFile("0000:01:00.1").Return("", "", fmt.Errorf("vfio lookup failed"))
+			mockHost.EXPECT().RestoreDeviceDriver("0000:01:00.1", "ixgbevf").Return(nil)
+
+			ifNameIndex := 0
+			_, err := m.applyConfigOnDevice(context.Background(), &ifNameIndex, claim, config, result)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("error getting VFIO device file"))
+		})
 	})
 
 	Context("UpdatePolicyDevices", func() {
@@ -703,6 +1298,53 @@ var _ = Describe("Manager", func() {
 			Expect(advertised).To(HaveKey("devA"))
 		})
 
+		It("applies policy attributes to PCI inventory-only devices", func() {
+			s := &Manager{
+				allocatable: map[string]resourceapi.Device{
+					"devA": {Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{}},
+				},
+				pciAddressInventory: map[string]resourceapi.Device{
+					"devV": {Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+						consts.AttributePciAddress: {StringValue: ptr.To("0000:af:00.5")},
+					}},
+				},
+			}
+			resName := "vendor.com/inventory"
+			err := s.UpdatePolicyDevices(context.Background(), map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+				"devV": {
+					consts.AttributeResourceName: {StringValue: &resName},
+				},
+			})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(s.policyAttrKeys).To(HaveKey("devV"))
+			_, hasResourceName := s.pciAddressInventory["devV"].Attributes[resourceapi.QualifiedName(consts.AttributeResourceName)]
+			Expect(hasResourceName).To(BeTrue())
+			Expect(s.GetAdvertisedDevices()).To(HaveKey("devV"))
+		})
+
+		It("clears policy attributes from PCI inventory-only devices", func() {
+			resName := "vendor.com/inventory"
+			s := &Manager{
+				pciAddressInventory: map[string]resourceapi.Device{
+					"devV": {Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+						consts.AttributeResourceName: {StringValue: &resName},
+						consts.AttributePciAddress:   {StringValue: ptr.To("0000:af:00.5")},
+					}},
+				},
+				policyAttrKeys: map[string]map[resourceapi.QualifiedName]bool{
+					"devV": {consts.AttributeResourceName: true},
+				},
+			}
+
+			err := s.UpdatePolicyDevices(context.Background(), map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(s.policyAttrKeys).To(BeEmpty())
+			_, exists := s.pciAddressInventory["devV"].Attributes[consts.AttributeResourceName]
+			Expect(exists).To(BeFalse())
+			_, keepsDiscovery := s.pciAddressInventory["devV"].Attributes[consts.AttributePciAddress]
+			Expect(keepsDiscovery).To(BeTrue())
+		})
+
 		It("should trigger republish callback when changes are made", func() {
 			callbackCalled := false
 			callback := func(ctx context.Context) error {
@@ -725,6 +1367,29 @@ var _ = Describe("Manager", func() {
 			})
 			Expect(err).ToNot(HaveOccurred())
 			Expect(callbackCalled).To(BeTrue())
+		})
+
+		It("should trigger republish callback when clearing advertised device with no policy attributes", func() {
+			callbackCalled := false
+			callback := func(ctx context.Context) error {
+				callbackCalled = true
+				return nil
+			}
+
+			s := &Manager{
+				allocatable: map[string]resourceapi.Device{
+					"devA": {},
+				},
+				policyAttrKeys: map[string]map[resourceapi.QualifiedName]bool{
+					"devA": {},
+				},
+				republishCallback: callback,
+			}
+
+			err := s.UpdatePolicyDevices(context.Background(), map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(callbackCalled).To(BeTrue())
+			Expect(s.GetAdvertisedDevices()).To(BeEmpty())
 		})
 
 		It("should not trigger callback when no changes are made", func() {
@@ -785,25 +1450,17 @@ var _ = Describe("Manager", func() {
 
 	Context("RDMA Device Preparation", func() {
 		It("should skip RDMA preparation when device is not RDMA capable", func() {
-			nonRdmaDevice := &resourceapi.Device{
-				Name: "0000-08-00-1",
+			manager := &Manager{}
+			nonRdmaDevice := resourceapi.Device{
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-					consts.AttributePciAddress: {
-						StringValue: ptr.To("0000:08:00.1"),
-					},
-					consts.AttributeRDMACapable: {
-						BoolValue: ptr.To(false),
-					},
+					consts.AttributeRDMACapable: {BoolValue: ptr.To(false)},
 				},
 			}
 
-			rdmaCapable, exists := nonRdmaDevice.Attributes[consts.AttributeRDMACapable]
-			Expect(exists).To(BeTrue())
-			Expect(rdmaCapable.BoolValue).ToNot(BeNil())
-			Expect(*rdmaCapable.BoolValue).To(BeFalse())
-
-			shouldPrepareRDMA := exists && rdmaCapable.BoolValue != nil && *rdmaCapable.BoolValue
-			Expect(shouldPrepareRDMA).To(BeFalse(), "RDMA preparation should be skipped for non-RDMA capable devices")
+			deviceNodes, envs, err := manager.handleRDMADevice(context.Background(), nonRdmaDevice, "0000:08:00.1", "device-1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(deviceNodes).To(BeEmpty())
+			Expect(envs).To(BeEmpty())
 		})
 	})
 
@@ -969,4 +1626,171 @@ var _ = Describe("Manager", func() {
 			Expect(envs).To(BeNil())
 		})
 	})
+
+	Context("MULTUS/STANDALONE behavior", func() {
+		It("skips ifName generation and NetAttachDef fetch in MULTUS", func() {
+			tmp, err := os.MkdirTemp("", "cdi-root")
+			Expect(err).ToNot(HaveOccurred())
+			defer os.RemoveAll(tmp)
+			cdiHandler, err := cdi.NewHandler(tmp)
+			Expect(err).ToNot(HaveOccurred())
+
+			s := &Manager{
+				k8sClient:              flags.ClientSets{},
+				defaultInterfacePrefix: "vfnet",
+				cdi:                    cdiHandler,
+				allocatable: drasriovtypes.AllocatableDevices{
+					"devA": {
+						Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+							consts.AttributePciAddress: {StringValue: strPtr("0000:00:00.1")},
+						},
+					},
+				},
+				configurationMode: string(consts.ConfigurationModeMultus),
+			}
+
+			claim := &resourceapi.ResourceClaim{
+				ObjectMeta: metav1.ObjectMeta{Name: "claim1", Namespace: "ns1"},
+				Status: resourceapi.ResourceClaimStatus{
+					ReservedFor: []resourceapi.ResourceClaimConsumerReference{{UID: k8stypes.UID("poduid-1")}},
+				},
+			}
+			cfg := &configapi.VfConfig{NetAttachDefName: "nad1"} // should be ignored in MULTUS
+			ifIndex := 0
+			res := &resourceapi.DeviceRequestAllocationResult{Device: "devA", Pool: "pool1", Request: "req1"}
+			mockHost.EXPECT().BindDeviceDriver("0000:00:00.1", cfg).Return("", nil)
+
+			pd, err := s.applyConfigOnDevice(context.Background(), &ifIndex, claim, cfg, res)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(pd).ToNot(BeNil())
+			// ifName should remain empty and index unchanged
+			Expect(pd.IfName).To(Equal(""))
+			Expect(ifIndex).To(Equal(0))
+			// NetAttachDefConfig should be empty
+			Expect(pd.NetAttachDefConfig).To(BeEmpty())
+		})
+
+		It("allows VFIO in STANDALONE mode without netAttachDefName", func() {
+			tmp, err := os.MkdirTemp("", "cdi-root")
+			Expect(err).ToNot(HaveOccurred())
+			defer os.RemoveAll(tmp)
+			cdiHandler, err := cdi.NewHandler(tmp)
+			Expect(err).ToNot(HaveOccurred())
+
+			s := &Manager{
+				k8sClient:              flags.ClientSets{},
+				defaultInterfacePrefix: "vfnet",
+				cdi:                    cdiHandler,
+				allocatable: drasriovtypes.AllocatableDevices{
+					"devA": {
+						Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+							consts.AttributePciAddress: {StringValue: strPtr("0000:00:00.1")},
+						},
+					},
+				},
+				configurationMode: string(consts.ConfigurationModeStandalone),
+			}
+
+			claim := &resourceapi.ResourceClaim{
+				ObjectMeta: metav1.ObjectMeta{Name: "claim1", Namespace: "ns1"},
+				Status: resourceapi.ResourceClaimStatus{
+					ReservedFor: []resourceapi.ResourceClaimConsumerReference{{UID: k8stypes.UID("poduid-1")}},
+				},
+			}
+			cfg := &configapi.VfConfig{Driver: "vfio-pci"}
+			ifIndex := 0
+			res := &resourceapi.DeviceRequestAllocationResult{Device: "devA", Pool: "pool1", Request: "req1"}
+			mockHost.EXPECT().BindDeviceDriver("0000:00:00.1", cfg).Return("", nil)
+			mockHost.EXPECT().GetVFIODeviceFile("0000:00:00.1").Return("/dev/vfio/10", "/dev/vfio/10", nil)
+
+			pd, err := s.applyConfigOnDevice(context.Background(), &ifIndex, claim, cfg, res)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(pd).ToNot(BeNil())
+			Expect(pd.NetAttachDefConfig).To(BeEmpty())
+			Expect(pd.IfName).To(BeEmpty())
+			Expect(ifIndex).To(Equal(0))
+			Expect(pd.ContainerEdits.ContainerEdits.Env).ToNot(ContainElement(ContainSubstring("SRIOVNETWORK_NET_ATTACH_DEF_NAME=")))
+		})
+
+		It("requires netAttachDefName for non-VFIO standalone workloads", func() {
+			s := &Manager{
+				allocatable: drasriovtypes.AllocatableDevices{
+					"devA": {
+						Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+							consts.AttributePciAddress: {StringValue: strPtr("0000:00:00.1")},
+						},
+					},
+				},
+				configurationMode: string(consts.ConfigurationModeStandalone),
+			}
+			claim := &resourceapi.ResourceClaim{
+				ObjectMeta: metav1.ObjectMeta{Name: "claim1", Namespace: "ns1"},
+				Status: resourceapi.ResourceClaimStatus{
+					ReservedFor: []resourceapi.ResourceClaimConsumerReference{{UID: k8stypes.UID("poduid-1")}},
+				},
+			}
+			cfg := &configapi.VfConfig{Driver: "default"}
+			ifIndex := 0
+			res := &resourceapi.DeviceRequestAllocationResult{Device: "devA", Pool: "pool1", Request: "req1"}
+
+			_, err := s.applyConfigOnDevice(context.Background(), &ifIndex, claim, cfg, res)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("net attach def name must be set in STANDALONE mode unless driver is vfio-pci"))
+		})
+
+		It("does not consume standalone ifName index for VFIO no-CNI allocations", func() {
+			netAttachDef := &netattdefv1.NetworkAttachmentDefinition{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-net",
+					Namespace: "ns1",
+				},
+				Spec: netattdefv1.NetworkAttachmentDefinitionSpec{
+					Config: `{"cniVersion":"1.0.0","type":"host-device","capabilities":{"deviceID":true}}`,
+				},
+			}
+			s := newTestManagerWithK8sClient(netAttachDef)
+			s.defaultInterfacePrefix = "vfnet"
+			s.allocatable = drasriovtypes.AllocatableDevices{
+				"devA": {
+					Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+						consts.AttributePciAddress: {StringValue: strPtr("0000:00:00.1")},
+					},
+				},
+				"devB": {
+					Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+						consts.AttributePciAddress: {StringValue: strPtr("0000:00:00.2")},
+					},
+				},
+			}
+			s.configurationMode = string(consts.ConfigurationModeStandalone)
+
+			claim := &resourceapi.ResourceClaim{
+				ObjectMeta: metav1.ObjectMeta{Name: "claim1", Namespace: "ns1", UID: "claim-uid"},
+				Status: resourceapi.ResourceClaimStatus{
+					ReservedFor: []resourceapi.ResourceClaimConsumerReference{{UID: k8stypes.UID("poduid-1")}},
+				},
+			}
+			ifIndex := 0
+			vfioCfg := &configapi.VfConfig{Driver: consts.VFIODriverName}
+			kernelCfg := &configapi.VfConfig{Driver: "default", NetAttachDefName: "test-net"}
+			vfioRes := &resourceapi.DeviceRequestAllocationResult{Device: "devA", Pool: "pool1", Request: "req1"}
+			kernelRes := &resourceapi.DeviceRequestAllocationResult{Device: "devB", Pool: "pool1", Request: "req2"}
+
+			mockHost.EXPECT().BindDeviceDriver("0000:00:00.1", vfioCfg).Return("", nil)
+			mockHost.EXPECT().GetVFIODeviceFile("0000:00:00.1").Return("/dev/vfio/10", "/dev/vfio/10", nil)
+			mockHost.EXPECT().BindDeviceDriver("0000:00:00.2", kernelCfg).Return("", nil)
+
+			vfioDevice, err := s.applyConfigOnDevice(context.Background(), &ifIndex, claim, vfioCfg, vfioRes)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(vfioDevice.IfName).To(BeEmpty())
+			Expect(ifIndex).To(Equal(0))
+
+			kernelDevice, err := s.applyConfigOnDevice(context.Background(), &ifIndex, claim, kernelCfg, kernelRes)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(kernelDevice.IfName).To(Equal("vfnet0"))
+			Expect(ifIndex).To(Equal(1))
+		})
+	})
 })
+
+func strPtr(s string) *string { return &s }

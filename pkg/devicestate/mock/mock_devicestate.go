@@ -42,20 +42,6 @@ func (m *MockDeviceState) EXPECT() *MockDeviceStateMockRecorder {
 	return m.recorder
 }
 
-// GetAdvertisedDevices mocks base method.
-func (m *MockDeviceState) GetAdvertisedDevices() types.AllocatableDevices {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetAdvertisedDevices")
-	ret0, _ := ret[0].(types.AllocatableDevices)
-	return ret0
-}
-
-// GetAdvertisedDevices indicates an expected call of GetAdvertisedDevices.
-func (mr *MockDeviceStateMockRecorder) GetAdvertisedDevices() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAdvertisedDevices", reflect.TypeOf((*MockDeviceState)(nil).GetAdvertisedDevices))
-}
-
 // GetAllocatableDevices mocks base method.
 func (m *MockDeviceState) GetAllocatableDevices() types.AllocatableDevices {
 	m.ctrl.T.Helper()
@@ -68,6 +54,20 @@ func (m *MockDeviceState) GetAllocatableDevices() types.AllocatableDevices {
 func (mr *MockDeviceStateMockRecorder) GetAllocatableDevices() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllocatableDevices", reflect.TypeOf((*MockDeviceState)(nil).GetAllocatableDevices))
+}
+
+// GetPolicyCandidateDevices mocks base method.
+func (m *MockDeviceState) GetPolicyCandidateDevices(includePciAddressInventory bool) types.AllocatableDevices {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetPolicyCandidateDevices", includePciAddressInventory)
+	ret0, _ := ret[0].(types.AllocatableDevices)
+	return ret0
+}
+
+// GetPolicyCandidateDevices indicates an expected call of GetPolicyCandidateDevices.
+func (mr *MockDeviceStateMockRecorder) GetPolicyCandidateDevices(includePciAddressInventory any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPolicyCandidateDevices", reflect.TypeOf((*MockDeviceState)(nil).GetPolicyCandidateDevices), includePciAddressInventory)
 }
 
 // UpdatePolicyDevices mocks base method.
