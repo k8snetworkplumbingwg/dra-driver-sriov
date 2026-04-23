@@ -1369,6 +1369,29 @@ var _ = Describe("Manager", Serial, func() {
 			Expect(callbackCalled).To(BeTrue())
 		})
 
+		It("should trigger republish callback when clearing advertised device with no policy attributes", func() {
+			callbackCalled := false
+			callback := func(ctx context.Context) error {
+				callbackCalled = true
+				return nil
+			}
+
+			s := &Manager{
+				allocatable: map[string]resourceapi.Device{
+					"devA": {},
+				},
+				policyAttrKeys: map[string]map[resourceapi.QualifiedName]bool{
+					"devA": {},
+				},
+				republishCallback: callback,
+			}
+
+			err := s.UpdatePolicyDevices(context.Background(), map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(callbackCalled).To(BeTrue())
+			Expect(s.GetAdvertisedDevices()).To(BeEmpty())
+		})
+
 		It("should not trigger callback when no changes are made", func() {
 			callbackCalled := false
 			callback := func(ctx context.Context) error {

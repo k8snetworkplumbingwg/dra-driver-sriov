@@ -15,75 +15,90 @@ spec:
     - pciAddresses:
       - "0000:29:00.0"
 ---
-apiVersion: resource.k8s.io/v1
-kind: DeviceClass
+# This policy will not work as expected because the eth0 interface is not a virtual function of the eth0 physical function
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: SriovResourcePolicy
 metadata:
-  name: host-device-kernel
+  name: vf-test
+  namespace: dra-driver-sriov
 spec:
-  selectors:
-  - cel:
-      expression: "device.driver == 'sriovnetwork.k8snetworkplumbingwg.io' && device.attributes['sriovnetwork.k8snetworkplumbingwg.io'].interfaceType == 'Regular'"
-  config:
-  - opaque:
-      driver: sriovnetwork.k8snetworkplumbingwg.io
-      parameters:
-        apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
-        kind: VfConfig
-        ifName: net1
-        netAttachDefName: host-device-net
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: host-device-demo
----
-apiVersion: k8s.cni.cncf.io/v1
-kind: NetworkAttachmentDefinition
-metadata:
-  name: host-device-net
-  namespace: host-device-demo
-spec:
-  config: |-
-    {"cniVersion":"1.0.0","name":"host-device-net","type":"host-device","ipam": {"type": "host-local", "ranges": [[{"subnet": "10.0.1.0/24"}]]}, "capabilities":{"deviceID":true}}
----
-apiVersion: resource.k8s.io/v1
-kind: ResourceClaimTemplate
-metadata:
-  namespace: host-device-demo
-  name: single-vf
-spec:
-  spec:
-    devices:
-      requests:
-      - name: vf
-        exactly:
-          deviceClassName: host-device-kernel
----
-apiVersion: v1
-kind: Pod
-metadata:
-  namespace: host-device-demo
-  name: pod0
-  labels:
-    app: pod
-spec:
-  terminationGracePeriodSeconds: 2
-  containers:
-  - name: ctr0
-    image: quay.io/schseba/toolbox:latest
-    command:
-    - /bin/bash
-    - -c
-    - sleep INF
-    securityContext:
-      runAsUser: 0
-      capabilities:
-        add:
-        - NET_ADMIN
-        - NET_RAW
-    resources:
-      claims:
-      - name: vf
-  resourceClaims:
-  - name: vf
-    resourceClaimTemplateName: single-vf
+  configs:
+  - deviceAttributesSelector:
+      matchLabels:
+        pool: host-device-net
+    resourceFilters:
+    - pfNames:
+      - "eth0"
+# ---
+# apiVersion: resource.k8s.io/v1
+# kind: DeviceClass
+# metadata:
+#   name: host-device-kernel
+# spec:
+#   selectors:
+#   - cel:
+#       expression: "device.driver == 'sriovnetwork.k8snetworkplumbingwg.io' && device.attributes['sriovnetwork.k8snetworkplumbingwg.io'].interfaceType == 'Regular'"
+#   config:
+#   - opaque:
+#       driver: sriovnetwork.k8snetworkplumbingwg.io
+#       parameters:
+#         apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+#         kind: VfConfig
+#         ifName: net1
+#         netAttachDefName: host-device-net
+# ---
+# apiVersion: v1
+# kind: Namespace
+# metadata:
+#   name: host-device-demo
+# ---
+# apiVersion: k8s.cni.cncf.io/v1
+# kind: NetworkAttachmentDefinition
+# metadata:
+#   name: host-device-net
+#   namespace: host-device-demo
+# spec:
+#   config: |-
+#     {"cniVersion":"1.0.0","name":"host-device-net","type":"host-device","ipam": {"type": "host-local", "ranges": [[{"subnet": "10.0.1.0/24"}]]}, "capabilities":{"deviceID":true}}
+# ---
+# apiVersion: resource.k8s.io/v1
+# kind: ResourceClaimTemplate
+# metadata:
+#   namespace: host-device-demo
+#   name: single-vf
+# spec:
+#   spec:
+#     devices:
+#       requests:
+#       - name: vf
+#         exactly:
+#           deviceClassName: host-device-kernel
+# ---
+# apiVersion: v1
+# kind: Pod
+# metadata:
+#   namespace: host-device-demo
+#   name: pod0
+#   labels:
+#     app: pod
+# spec:
+#   terminationGracePeriodSeconds: 2
+#   containers:
+#   - name: ctr0
+#     image: quay.io/schseba/toolbox:latest
+#     command:
+#     - /bin/bash
+#     - -c
+#     - sleep INF
+#     securityContext:
+#       runAsUser: 0
+#       capabilities:
+#         add:
+#         - NET_ADMIN
+#         - NET_RAW
+#     resources:
+#       claims:
+#       - name: vf
+#   resourceClaims:
+#   - name: vf
+#     resourceClaimTemplateName: single-vf

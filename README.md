@@ -262,7 +262,6 @@ spec:
     resourceFilters:
     - vendors: ["8086"]
       pfNames: ["eth1"]
-      drivers: ["vfio-pci"]       # Reserved for future driver filtering (not yet enforced)
 ```
 
 Each `Config` entry pairs a `deviceAttributesSelector` (label selector matching `DeviceAttributes` objects) with `resourceFilters` (device hardware criteria). Devices matching the filters are advertised, and attributes from all matching `DeviceAttributes` objects are merged onto them.

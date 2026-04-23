@@ -162,9 +162,11 @@ spec:
       - name: cni-results
         hostPath:
           path: /var/lib/cni/
+          type: DirectoryOrCreate
       - name: netns
         hostPath:
           path: /var/run/netns
+          type: DirectoryOrCreate
       {{- if ne .Values.kubeletPlugin.configurationMode "MULTUS" }}
       - name: cri-socket
         hostPath:
@@ -174,12 +176,15 @@ spec:
       - name: plugins-registry
         hostPath:
           path: {{ .Values.kubeletPlugin.kubeletRegistrarDirectoryPath | quote }}
+          type: DirectoryOrCreate
       - name: plugins
         hostPath:
           path: {{ .Values.kubeletPlugin.kubeletPluginsDirectoryPath | quote }}
+          type: DirectoryOrCreate
       - name: cdi
         hostPath:
           path: /var/run/cdi
+          type: DirectoryOrCreate
       {{- if eq .Values.kubeletPlugin.configurationMode "MULTUS" }}
       - name: cni-devinfo
         hostPath:
@@ -188,6 +193,7 @@ spec:
       {{- end }}
       - hostPath:
           path: {{ .Values.cniBinPath | quote }}
+          type: DirectoryOrCreate
         name: cni-bin
       - hostPath:
           path: /etc/os-release
