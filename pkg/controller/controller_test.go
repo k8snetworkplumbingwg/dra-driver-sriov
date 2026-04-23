@@ -86,7 +86,20 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 
 	ctrlMock := gomock.NewController(GinkgoT())
 	devState := mock.NewMockDeviceState(ctrlMock)
-	devState.EXPECT().GetAllocatableDevices().AnyTimes().Return(defaultAllocatableDevices())
+	devState.EXPECT().GetPolicyCandidateDevices(gomock.Any()).AnyTimes().DoAndReturn(
+		func(includePciAddressInventory bool) drasriovtypes.AllocatableDevices {
+			alloc := defaultAllocatableDevices()
+			if !includePciAddressInventory {
+				return alloc
+			}
+			for name, device := range defaultPciInventoryDevices() {
+				if _, exists := alloc[name]; !exists {
+					alloc[name] = device
+				}
+			}
+			return alloc
+		},
+	)
 	devState.EXPECT().UpdatePolicyDevices(gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
 		func(_ context.Context, m map[string]map[resourcev1.QualifiedName]resourcev1.DeviceAttribute) error {
 			applied = m
@@ -143,6 +156,25 @@ func defaultAllocatableDevices() drasriovtypes.AllocatableDevices {
 			Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{
 				sriovconsts.AttributeVendorID: {StringValue: &vendor},
 				sriovconsts.AttributeDeviceID: {StringValue: &dev},
+			},
+		},
+	}
+}
+
+func defaultPciInventoryDevices() drasriovtypes.AllocatableDevices {
+	vendor := "8086"
+	dev := "1889"
+	pci := "0000:af:00.5"
+	pcieRoot := "pci0000:af"
+	return drasriovtypes.AllocatableDevices{
+		"0000-af-00-5": resourcev1.Device{
+			Name: "0000-af-00-5",
+			Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{
+				sriovconsts.AttributeVendorID:           {StringValue: &vendor},
+				sriovconsts.AttributeDeviceID:           {StringValue: &dev},
+				sriovconsts.AttributePciAddress:         {StringValue: &pci},
+				sriovconsts.AttributeStandardPciAddress: {StringValue: &pci},
+				sriovconsts.AttributePCIeRoot:           {StringValue: &pcieRoot},
 			},
 		},
 	}
@@ -246,6 +278,25 @@ var _ = Describe("SriovResourcePolicyReconciler (envtest)", func() {
 				}
 			}
 			return false
+		}, 5*time.Second, 200*time.Millisecond).Should(BeTrue())
+	})
+
+	It("should match PCI inventory device only when pciAddresses filter is used", func(ctx SpecContext) {
+		policy := &sriovdrav1alpha1.SriovResourcePolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "rp-pci-inventory", Namespace: "dra-sriov-driver"},
+			Spec: sriovdrav1alpha1.SriovResourcePolicySpec{
+				Configs: []sriovdrav1alpha1.Config{{
+					ResourceFilters: []sriovdrav1alpha1.ResourceFilter{
+						{PciAddresses: []string{"0000:af:00.5"}},
+					},
+				}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
+
+		Eventually(func() bool {
+			_, ok := applied["0000-af-00-5"]
+			return ok
 		}, 5*time.Second, 200*time.Millisecond).Should(BeTrue())
 	})
 

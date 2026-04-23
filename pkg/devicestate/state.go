@@ -36,6 +36,7 @@ type Manager struct {
 	deviceInfoStore        DeviceInfoStore
 	defaultInterfacePrefix string
 	allocatable            drasriovtypes.AllocatableDevices
+	pciAddressInventory    drasriovtypes.AllocatableDevices
 	republishCallback      func(context.Context) error
 	// policyAttrKeys tracks attribute keys set by policy per device, so they
 	// can be cleared without touching discovery attributes. Presence of a
@@ -65,6 +66,10 @@ func NewManager(config *drasriovtypes.Config, cdi *cdi.Handler, deviceInfoStore 
 	if err != nil {
 		return nil, fmt.Errorf("error enumerating all possible devices: %v", err)
 	}
+	pciAddressInventory, err := DiscoverPhysicalPciDevices()
+	if err != nil {
+		return nil, fmt.Errorf("error enumerating all possible physical PCI devices: %v", err)
+	}
 
 	if deviceInfoStore == nil {
 		deviceInfoStore = NewDeviceInfoStore()
@@ -76,6 +81,7 @@ func NewManager(config *drasriovtypes.Config, cdi *cdi.Handler, deviceInfoStore 
 		cdi:                    cdi,
 		deviceInfoStore:        deviceInfoStore,
 		allocatable:            allocatable,
+		pciAddressInventory:    pciAddressInventory,
 		configurationMode:      configurationMode,
 	}
 
@@ -85,6 +91,27 @@ func NewManager(config *drasriovtypes.Config, cdi *cdi.Handler, deviceInfoStore 
 // GetAllocatableDevices returns the allocatable devices
 func (s *Manager) GetAllocatableDevices() drasriovtypes.AllocatableDevices {
 	return s.allocatable
+}
+
+// GetPolicyCandidateDevices returns the candidate devices for policy matching.
+// PCI inventory devices are included only when includePciAddressInventory is true.
+func (s *Manager) GetPolicyCandidateDevices(includePciAddressInventory bool) drasriovtypes.AllocatableDevices {
+	logger := klog.LoggerWithName(klog.Background(), "GetPolicyCandidateDevices")
+
+	result := make(drasriovtypes.AllocatableDevices, len(s.allocatable))
+	for name, device := range s.allocatable {
+		result[name] = device
+	}
+	if !includePciAddressInventory {
+		return result
+	}
+	for name, device := range s.pciAddressInventory {
+		if _, exists := result[name]; !exists {
+			result[name] = device
+		}
+	}
+	logger.V(2).Info("Returning candidate devices", "candidateDevices", result)
+	return result
 }
 
 // normalizeConfigurationMode validates the configured mode and applies defaulting.
@@ -101,9 +128,14 @@ func normalizeConfigurationMode(mode string) (string, error) {
 	}
 }
 
-// GetAllocatableDeviceByName returns a discovered allocatable device and whether it exists.
+// GetAllocatableDeviceByName returns a discovered device and whether it exists.
+// It first checks PF->VF allocatable devices, then falls back to the PCI inventory.
 func (s *Manager) GetAllocatableDeviceByName(deviceName string) (resourceapi.Device, bool) {
 	device, exists := s.allocatable[deviceName]
+	if exists {
+		return device, true
+	}
+	device, exists = s.pciAddressInventory[deviceName]
 	return device, exists
 }
 
@@ -116,6 +148,10 @@ func (s *Manager) isStandaloneMode() bool {
 // isMultusMode reports whether the manager is running in MULTUS mode.
 func (s *Manager) isMultusMode() bool {
 	return consts.ConfigurationMode(s.configurationMode) == consts.ConfigurationModeMultus
+}
+
+func shouldSkipStandaloneNetworkAttachment(config *configapi.VfConfig) bool {
+	return config.Driver == consts.VFIODriverName && config.NetAttachDefName == ""
 }
 
 // PrepareDevicesForClaim prepares the devices for a given claim
@@ -213,7 +249,7 @@ func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim, config *configapi.VfConfig, result *resourceapi.DeviceRequestAllocationResult) (*drasriovtypes.PreparedDevice, error) {
 	logger := klog.FromContext(ctx).WithName("applyConfigOnDevice")
 	logger.V(3).Info("Applying config on device", "config", config, "result", result)
-	deviceInfo, exist := s.allocatable[result.Device]
+	deviceInfo, exist := s.GetAllocatableDeviceByName(result.Device)
 	if !exist {
 		return nil, fmt.Errorf("device %s not found in allocatable devices", result.Device)
 	}
@@ -234,18 +270,25 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 	pciAddress := *deviceInfo.Attributes[consts.AttributePciAddress].StringValue
 	// if in standalone mode, we get the net attach def raw config and add the deviceID (PCI address) to it
 	if s.isStandaloneMode() {
-		netAttachDefNamespace := claim.GetNamespace()
-		if config.NetAttachDefNamespace != "" {
-			netAttachDefNamespace = config.NetAttachDefNamespace
-		}
-		netAttachDefRawConfig, err = s.getNetAttachDefRawConfig(ctx, netAttachDefNamespace, config.NetAttachDefName)
-		if err != nil {
-			return nil, fmt.Errorf("error getting net attach def raw config: %w", err)
-		}
-		// add to sriov-cni compatible netconf the deviceID (PCI address)
-		netAttachDefRawConfig, err = drasriovtypes.AddDeviceIDToNetConf(netAttachDefRawConfig, pciAddress)
-		if err != nil {
-			return nil, fmt.Errorf("error converting net attach def config to sriov-cni format: %w", err)
+		if shouldSkipStandaloneNetworkAttachment(config) {
+			logger.V(2).Info("Skipping standalone network attachment for VFIO device without netAttachDefName", "deviceName", result.Device)
+		} else {
+			if config.NetAttachDefName == "" {
+				return nil, fmt.Errorf("net attach def name must be set in STANDALONE mode unless driver is %s", consts.VFIODriverName)
+			}
+			netAttachDefNamespace := claim.GetNamespace()
+			if config.NetAttachDefNamespace != "" {
+				netAttachDefNamespace = config.NetAttachDefNamespace
+			}
+			netAttachDefRawConfig, err = s.getNetAttachDefRawConfig(ctx, netAttachDefNamespace, config.NetAttachDefName)
+			if err != nil {
+				return nil, fmt.Errorf("error getting net attach def raw config: %w", err)
+			}
+			// add to sriov-cni compatible netconf the deviceID (PCI address)
+			netAttachDefRawConfig, err = drasriovtypes.AddDeviceIDToNetConf(netAttachDefRawConfig, pciAddress)
+			if err != nil {
+				return nil, fmt.Errorf("error converting net attach def config to sriov-cni format: %w", err)
+			}
 		}
 	}
 	// Bind device to driver if specified in config
@@ -273,14 +316,16 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 	// create environment variables
 	envs := []string{
 		fmt.Sprintf("SRIOVNETWORK_VF_DEVICE_%s=%s", strings.ReplaceAll(result.Device, "-", "_"), *deviceInfo.Attributes[consts.AttributePciAddress].StringValue),
-		fmt.Sprintf("SRIOVNETWORK_NET_ATTACH_DEF_NAME=%s", config.NetAttachDefName),
+	}
+	if config.NetAttachDefName != "" {
+		envs = append(envs, fmt.Sprintf("SRIOVNETWORK_NET_ATTACH_DEF_NAME=%s", config.NetAttachDefName))
 	}
 
 	// Prepare device nodes slice for potential VFIO devices
 	var deviceNodes []*cdispec.DeviceNode
 
 	// If device is bound to vfio-pci, add VFIO device nodes
-	if config.Driver == "vfio-pci" {
+	if config.Driver == consts.VFIODriverName {
 		devFileHost, devFileContainer, err := host.GetHelpers().GetVFIODeviceFile(pciAddress)
 		if err != nil {
 			return nil, restoreDriverOnError(fmt.Errorf("error getting VFIO device file for device %s: %w", pciAddress, err))
@@ -335,7 +380,7 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 	ifName := config.IfName
 	// if the device name is not set, we use the default interface prefix
 	// and the interface index, we also bump the index.
-	if s.isStandaloneMode() && ifName == "" {
+	if s.isStandaloneMode() && netAttachDefRawConfig != "" && ifName == "" {
 		ifName = fmt.Sprintf("%s%d", s.defaultInterfacePrefix, *ifNameIndex)
 		*ifNameIndex++
 	}
@@ -490,6 +535,7 @@ func (s *Manager) Unprepare(claimUID string, preparedDevices drasriovtypes.Prepa
 // unprepareDevices reverts the driver configuration for the prepared devices
 func (s *Manager) unprepareDevices(preparedDevices drasriovtypes.PreparedDevices) error {
 	logger := klog.FromContext(context.Background()).WithName("unprepareDevices")
+	var errs []error
 	for _, preparedDevice := range preparedDevices {
 		if preparedDevice == nil {
 			logger.V(2).Info("Skipping nil prepared device entry during unprepare")
@@ -503,10 +549,14 @@ func (s *Manager) unprepareDevices(preparedDevices drasriovtypes.PreparedDevices
 		if preparedDevice.Config.Driver != "" {
 			if err := host.GetHelpers().RestoreDeviceDriver(preparedDevice.PciAddress, preparedDevice.OriginalDriver); err != nil {
 				logger.Error(err, "Failed to restore original driver for device", "device", preparedDevice.PciAddress, "originalDriver", preparedDevice.OriginalDriver)
-				return fmt.Errorf("failed to restore original driver for device %s: %w", preparedDevice.PciAddress, err)
+				errs = append(errs, fmt.Errorf("failed to restore original driver for device %s: %w", preparedDevice.PciAddress, err))
+				continue
 			}
 			logger.V(2).Info("Successfully restored original driver for device", "device", preparedDevice.PciAddress, "originalDriver", preparedDevice.OriginalDriver)
 		}
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
 	return nil
 }
@@ -516,6 +566,10 @@ func (s *Manager) GetAdvertisedDevices() drasriovtypes.AllocatableDevices {
 	result := make(drasriovtypes.AllocatableDevices, len(s.policyAttrKeys))
 	for name := range s.policyAttrKeys {
 		if device, exists := s.allocatable[name]; exists {
+			result[name] = device
+			continue
+		}
+		if device, exists := s.pciAddressInventory[name]; exists {
 			result[name] = device
 		}
 	}
@@ -558,8 +612,9 @@ func (s *Manager) UpdatePolicyDevices(ctx context.Context, policyDevices map[str
 
 	// Apply policy attributes to matched devices
 	for deviceName, attrs := range policyDevices {
-		device, exists := s.allocatable[deviceName]
+		device, inAllocatable, exists := s.getPolicyDevice(deviceName)
 		if !exists {
+			logger.V(2).Info("Skipping policy attributes for unknown device", "deviceName", deviceName)
 			continue
 		}
 
@@ -589,7 +644,7 @@ func (s *Manager) UpdatePolicyDevices(ctx context.Context, policyDevices map[str
 			}
 		}
 
-		s.allocatable[deviceName] = device
+		s.setPolicyDevice(deviceName, device, inAllocatable)
 		if s.policyAttrKeys == nil {
 			s.policyAttrKeys = make(map[string]map[resourceapi.QualifiedName]bool)
 		}
@@ -601,7 +656,7 @@ func (s *Manager) UpdatePolicyDevices(ctx context.Context, policyDevices map[str
 		return nil
 	}
 
-	logger.Info("Policy devices updated", "totalDevices", len(s.allocatable), "advertisedDevices", len(s.policyAttrKeys))
+	logger.Info("Policy devices updated", "totalDevices", len(s.allocatable)+len(s.pciAddressInventory), "advertisedDevices", len(s.policyAttrKeys))
 	if s.republishCallback != nil {
 		if err := s.republishCallback(ctx); err != nil {
 			logger.Error(err, "Failed to republish resources after policy update")
@@ -612,6 +667,22 @@ func (s *Manager) UpdatePolicyDevices(ctx context.Context, policyDevices map[str
 	return nil
 }
 
+func (s *Manager) getPolicyDevice(deviceName string) (resourceapi.Device, bool, bool) {
+	if device, exists := s.allocatable[deviceName]; exists {
+		return device, true, true
+	}
+	device, exists := s.pciAddressInventory[deviceName]
+	return device, false, exists
+}
+
+func (s *Manager) setPolicyDevice(deviceName string, device resourceapi.Device, inAllocatable bool) {
+	if inAllocatable {
+		s.allocatable[deviceName] = device
+		return
+	}
+	s.pciAddressInventory[deviceName] = device
+}
+
 // clearPolicyAttributes removes all policy-set attributes from a device.
 func (s *Manager) clearPolicyAttributes(deviceName string) bool {
 	oldKeys, ok := s.policyAttrKeys[deviceName]
@@ -620,7 +691,7 @@ func (s *Manager) clearPolicyAttributes(deviceName string) bool {
 		return false
 	}
 
-	device, exists := s.allocatable[deviceName]
+	device, inAllocatable, exists := s.getPolicyDevice(deviceName)
 	if !exists {
 		delete(s.policyAttrKeys, deviceName)
 		return false
@@ -629,7 +700,7 @@ func (s *Manager) clearPolicyAttributes(deviceName string) bool {
 	for key := range oldKeys {
 		delete(device.Attributes, key)
 	}
-	s.allocatable[deviceName] = device
+	s.setPolicyDevice(deviceName, device, inAllocatable)
 	delete(s.policyAttrKeys, deviceName)
 	return true
 }

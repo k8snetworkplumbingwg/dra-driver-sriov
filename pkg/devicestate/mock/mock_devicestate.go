@@ -56,6 +56,20 @@ func (mr *MockDeviceStateMockRecorder) GetAllocatableDevices() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllocatableDevices", reflect.TypeOf((*MockDeviceState)(nil).GetAllocatableDevices))
 }
 
+// GetPolicyCandidateDevices mocks base method.
+func (m *MockDeviceState) GetPolicyCandidateDevices(includePciAddressInventory bool) types.AllocatableDevices {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetPolicyCandidateDevices", includePciAddressInventory)
+	ret0, _ := ret[0].(types.AllocatableDevices)
+	return ret0
+}
+
+// GetPolicyCandidateDevices indicates an expected call of GetPolicyCandidateDevices.
+func (mr *MockDeviceStateMockRecorder) GetPolicyCandidateDevices(includePciAddressInventory any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPolicyCandidateDevices", reflect.TypeOf((*MockDeviceState)(nil).GetPolicyCandidateDevices), includePciAddressInventory)
+}
+
 // UpdatePolicyDevices mocks base method.
 func (m *MockDeviceState) UpdatePolicyDevices(ctx context.Context, policyDevices map[string]map[v1.QualifiedName]v1.DeviceAttribute) error {
 	m.ctrl.T.Helper()
