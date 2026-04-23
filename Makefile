@@ -61,6 +61,8 @@ $(CMD_TARGETS): cmd-%:
 build:
 	GOOS=$(GOOS) GOARCH=$(GOARCH) go build ./...
 
+build-all: build
+
 all: check test build
 check: $(CHECK_TARGETS)
 
@@ -95,10 +97,21 @@ $(GOLANGCI_LINT):
 
 YQ_VERSION ?= v4.50.1
 YQ = $(BIN_DIR)/yq
+YQ_OS := $(shell uname -s | tr '[:upper:]' '[:lower:]')
+YQ_ARCH := $(shell uname -m)
+ifeq ($(YQ_ARCH),x86_64)
+YQ_ARCH := amd64
+endif
+ifeq ($(YQ_ARCH),aarch64)
+YQ_ARCH := arm64
+endif
+ifeq ($(YQ_ARCH),arm64)
+YQ_ARCH := arm64
+endif
 $(YQ):
 	@echo "Downloading yq $(YQ_VERSION)"
 	@mkdir -p $(BIN_DIR)
-	@curl -sSfL https://github.com/mikefarah/yq/releases/download/$(YQ_VERSION)/yq_linux_amd64 -o $(YQ)
+	@curl -sSfL https://github.com/mikefarah/yq/releases/download/$(YQ_VERSION)/yq_$(YQ_OS)_$(YQ_ARCH) -o $(YQ)
 	@chmod +x $(YQ)
 
 vet:
@@ -236,9 +249,11 @@ chart-push: ## Push chart (pass VERSION=v1.0.0 or VERSION=sha)
 deploy-virtual-k8s-cluster:
 	SKIP_DELETE=TRUE ./hack/deploy-virtual-k8s-cluster.sh
 
-.PHONY: undeploy-virtual-k8s-cluster
+.PHONY: undeploy-virtual-k8s-cluster delete-virtual-k8s-cluster
 delete-virtual-k8s-cluster:
 	./hack/delete-virtual-k8s-cluster.sh
+
+undeploy-virtual-k8s-cluster: delete-virtual-k8s-cluster
 
 redeploy-dra-driver-virtual-cluster:
 	./hack/virtual-cluster-redeploy.sh
