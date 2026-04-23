@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -125,15 +126,17 @@ type Interface interface {
 
 // Host provides unified host system functionality for SR-IOV, PCI operations, and driver management
 type Host struct {
-	log          klog.Logger
-	rdmaProvider RdmaProvider
+	log             klog.Logger
+	rdmaProvider    RdmaProvider
+	netlinkProvider NetlinkProvider
 }
 
 // NewHost creates a new Host instance
 func NewHost() Interface {
 	return &Host{
-		log:          klog.FromContext(context.Background()).WithName("Host"),
-		rdmaProvider: newRdmaProvider(),
+		log:             klog.FromContext(context.Background()).WithName("Host"),
+		rdmaProvider:    newRdmaProvider(),
+		netlinkProvider: &defaultNetlinkProvider{},
 	}
 }
 
@@ -243,7 +246,30 @@ func (h *Host) PCI() (*ghw.PCIInfo, error) {
 	return ghw.PCI()
 }
 
-// TryGetInterfaceName tries to find the network interface name based on PCI address
+// physicalPortNameRegex matches the phys_port_name of a real physical (uplink)
+// port: "p0", "p1", etc.  Any other non-empty value indicates a representor:
+//
+//	VF representor:       "pf0vf0",  "c1pf0vf0"
+//	SF representor:       "pf0sf0",  "c1pf0sf0"
+//	PF representor (DPU): "pf0",     "c1pf0"
+var physicalPortNameRegex = regexp.MustCompile(`^p\d+$`)
+
+// TryGetInterfaceName returns the PF network interface name for the given PCI
+// address using a two-step strategy:
+//
+//  1. Sysfs scan: iterate /sys/bus/pci/devices/<pciAddr>/net/ and use
+//     phys_port_name to distinguish the PF from VF/SF/PF representors:
+//     - absent → PF (return immediately, no devlink check needed)
+//     - empty or matches "^p\d+$" (e.g. "p0") → PF candidate; go to step 2
+//     - any other non-empty value → representor; skip
+//
+//  2. Devlink validation: confirm the candidate via
+//     IsDevlinkPhysicalPort(netdev) — searches the devlink port list by netdev
+//     name (NetdeviceName) and checks PortFlavour == DEVLINK_PORT_FLAVOR_PHYSICAL.
+//     On mlx5, the physical-flavor ports live under the auxiliary bus, so they
+//     are found by netdev name rather than by PCI address.
+//     - confirmed → return the netdev name
+//     - devlink unavailable or port not found → trust sysfs alone and return
 func (h *Host) TryGetInterfaceName(pciAddr string) string {
 	netDir := buildSysBusPciPath(pciAddr, "net")
 	if _, err := os.Lstat(netDir); err != nil {
@@ -252,23 +278,59 @@ func (h *Host) TryGetInterfaceName(pciAddr string) string {
 
 	fInfos, err := os.ReadDir(netDir)
 	if err != nil {
+		h.log.Error(err, "failed to read net directory", "pciAddr", pciAddr, "path", netDir)
 		return ""
 	}
-
 	if len(fInfos) == 0 {
 		return ""
 	}
 
-	// Return the first network interface name found
-	return fInfos[0].Name()
+	fallback := fInfos[0].Name()
+	for _, fi := range fInfos {
+		name := fi.Name()
+		portNamePath := buildSysPath(fmt.Sprintf("/sys/class/net/%s/phys_port_name", name))
+		data, err := os.ReadFile(portNamePath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				// No phys_port_name → cannot be a representor; return without
+				// devlink validation (device may not support devlink at all).
+				return name
+			}
+			// Transient or permission error – skip this entry and keep looking.
+			continue
+		}
+		portName := strings.TrimSpace(string(data))
+		if portName == "" || physicalPortNameRegex.MatchString(portName) {
+			// Validate with devlink: search the port list by netdev name and
+			// confirm DEVLINK_PORT_FLAVOR_PHYSICAL.
+			if ok, err := h.netlinkProvider.IsDevlinkPhysicalPort(name); err == nil {
+				if ok {
+					return name
+				}
+				// Devlink is available but says this is not a physical-flavor
+				// port — skip this candidate and keep looking.
+				continue
+			}
+			// Devlink unavailable or port not listed — trust sysfs alone.
+			return name
+		}
+		// Non-matching non-empty phys_port_name → representor; skip.
+	}
+
+	return fallback
 }
 
-// GetNicSriovMode returns the interface mode (simplified implementation)
-// This is a simplified version that returns "legacy" mode as fallback
-func (h *Host) GetNicSriovMode(_ string) string {
-	// For simplicity, always return legacy mode
-	// A full implementation would use netlink to query the eswitch mode
-	return "legacy"
+// GetNicSriovMode returns the eswitch mode ("legacy" or "switchdev") for the
+// given PF PCI address by querying the kernel via devlink.  If the device does
+// not support devlink or the query fails, "legacy" is returned as a safe
+// fallback – mirroring GetPfEswitchMode in sriov-network-device-plugin.
+func (h *Host) GetNicSriovMode(pciAddr string) string {
+	mode, err := h.netlinkProvider.GetDevLinkDeviceEswitchMode(pciAddr)
+	if err != nil {
+		h.log.V(4).Info("devlink eswitch query not supported, assuming legacy", "pciAddr", pciAddr, "err", err)
+		return consts.EswitchModeLegacy
+	}
+	return mode
 }
 
 // GetLinkType returns the link type for a given network interface
