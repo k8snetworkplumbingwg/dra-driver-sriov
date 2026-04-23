@@ -133,6 +133,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+
+      # Temporary: use kcli commit with CRI-O engine_version fix
+      # until the self-hosted runner image is updated.
+      - name: Pin kcli to commit 24415f95
+        run: |
+          python3 -m pip install --user --upgrade "git+https://github.com/karmab/kcli.git@24415f95"
+          kcli version
       
       - name: Create cluster
         run: |
