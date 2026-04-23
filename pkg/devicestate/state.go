@@ -686,15 +686,22 @@ func (s *Manager) setPolicyDevice(deviceName string, device resourceapi.Device, 
 // clearPolicyAttributes removes all policy-set attributes from a device.
 func (s *Manager) clearPolicyAttributes(deviceName string) bool {
 	oldKeys, ok := s.policyAttrKeys[deviceName]
-	if !ok || len(oldKeys) == 0 {
-		delete(s.policyAttrKeys, deviceName)
+	if !ok {
 		return false
+	}
+	if len(oldKeys) == 0 {
+		// The device was advertised without policy attributes. Removing it from
+		// policyAttrKeys still changes the advertised set.
+		delete(s.policyAttrKeys, deviceName)
+		return true
 	}
 
 	device, inAllocatable, exists := s.getPolicyDevice(deviceName)
 	if !exists {
+		// Even if the underlying device no longer exists, removing the policy
+		// tracking entry changes the advertised set.
 		delete(s.policyAttrKeys, deviceName)
-		return false
+		return true
 	}
 
 	for key := range oldKeys {

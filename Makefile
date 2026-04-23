@@ -61,8 +61,6 @@ $(CMD_TARGETS): cmd-%:
 build:
 	GOOS=$(GOOS) GOARCH=$(GOARCH) go build ./...
 
-build-all: build
-
 all: check test build
 check: $(CHECK_TARGETS)
 
@@ -249,11 +247,9 @@ chart-push: ## Push chart (pass VERSION=v1.0.0 or VERSION=sha)
 deploy-virtual-k8s-cluster:
 	SKIP_DELETE=TRUE ./hack/deploy-virtual-k8s-cluster.sh
 
-.PHONY: undeploy-virtual-k8s-cluster delete-virtual-k8s-cluster
+.PHONY: delete-virtual-k8s-cluster
 delete-virtual-k8s-cluster:
 	./hack/delete-virtual-k8s-cluster.sh
-
-undeploy-virtual-k8s-cluster: delete-virtual-k8s-cluster
 
 redeploy-dra-driver-virtual-cluster:
 	./hack/virtual-cluster-redeploy.sh

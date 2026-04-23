@@ -283,7 +283,7 @@ var _ = Describe("SriovResourcePolicyReconciler (envtest)", func() {
 
 	It("should match PCI inventory device only when pciAddresses filter is used", func(ctx SpecContext) {
 		policy := &sriovdrav1alpha1.SriovResourcePolicy{
-			ObjectMeta: metav1.ObjectMeta{Name: "rp-pci-inventory", Namespace: "dra-sriov-driver"},
+			ObjectMeta: metav1.ObjectMeta{Name: "rp-pci-inventory", Namespace: "dra-driver-sriov"},
 			Spec: sriovdrav1alpha1.SriovResourcePolicySpec{
 				Configs: []sriovdrav1alpha1.Config{{
 					ResourceFilters: []sriovdrav1alpha1.ResourceFilter{
