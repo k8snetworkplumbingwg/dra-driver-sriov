@@ -1,0 +1,77 @@
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: SriovResourcePolicy
+metadata:
+  name: all-devices-host-device
+  namespace: dra-driver-sriov
+spec:
+  configs:
+  - deviceAttributesSelector:
+      matchLabels:
+        pool: host-device-net
+    resourceFilters:
+    - pciAddresses:
+      - "0000:15:00.0"
+---
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: vfio-no-cni
+spec:
+  selectors:
+  - cel:
+      expression: "device.driver == 'sriovnetwork.k8snetworkplumbingwg.io'&& device.attributes['k8s.cni.cncf.io'].interfaceType == 'host-device'"
+  config:
+  - opaque:
+      driver: sriovnetwork.k8snetworkplumbingwg.io
+      parameters:
+        apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+        kind: VfConfig
+        driver: vfio-pci
+        addVhostMount: true
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vf-test2-no-cni
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  namespace: vf-test2-no-cni
+  name: single-vf
+spec:
+  spec:
+    devices:
+      requests:
+      - name: vf
+        exactly:
+          deviceClassName: vfio-no-cni
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: vf-test2-no-cni
+  name: pod0
+  labels:
+    app: pod
+spec:
+  terminationGracePeriodSeconds: 2
+  containers:
+  - name: ctr0
+    image: quay.io/schseba/toolbox:latest
+    command:
+    - /bin/bash
+    - -c
+    - sleep INF
+    securityContext:
+      runAsUser: 0
+      capabilities:
+        add:
+        - NET_ADMIN
+        - NET_RAW
+    resources:
+      claims:
+      - name: vf
+  resourceClaims:
+  - name: vf
+    resourceClaimTemplateName: single-vf
