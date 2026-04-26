@@ -5,8 +5,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/types"
+	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1beta1"
 
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 	draTypes "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
@@ -250,6 +253,72 @@ var _ = Describe("Types", func() {
 			var networkDataList draTypes.NetworkDataChanStructList
 			networkDataList = append(networkDataList, networkData)
 			Expect(len(networkDataList)).To(Equal(1))
+		})
+	})
+
+	Context("PreparedDevice metadata conversion", func() {
+		It("includes discovered attributes and interface metadata", func() {
+			pciAddress := "0000:08:00.1"
+			prepared := &draTypes.PreparedDevice{
+				Device: drapbv1.Device{
+					RequestNames: []string{"request-a"},
+					PoolName:     "pool-a",
+					DeviceName:   "dev-a",
+					CdiDeviceIds: []string{"cdi-a"},
+				},
+				IfName: "vfnet0",
+				DeviceAttributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+					resourceapi.QualifiedName(consts.AttributePciAddress): {
+						StringValue: &pciAddress,
+					},
+				},
+			}
+
+			device := prepared.ToKubeletPluginDevice(nil)
+			Expect(device.Metadata).NotTo(BeNil())
+			Expect(device.Metadata.NetworkData).To(BeNil())
+			Expect(device.Metadata.Attributes).To(HaveKey(consts.AttributePciAddress))
+			Expect(device.Metadata.Attributes).To(HaveKey(consts.AttributeInterfaceName))
+			Expect(*device.Metadata.Attributes[consts.AttributeInterfaceName].StringValue).To(Equal("vfnet0"))
+		})
+
+		It("preserves network data when provided", func() {
+			prepared := &draTypes.PreparedDevice{
+				Device: drapbv1.Device{
+					RequestNames: []string{"request-a"},
+					PoolName:     "pool-a",
+					DeviceName:   "dev-a",
+					CdiDeviceIds: []string{"cdi-a"},
+				},
+			}
+			networkData := &resourceapi.NetworkDeviceData{
+				InterfaceName: "net1",
+				IPs:           []string{"10.10.0.10/24"},
+			}
+
+			device := prepared.ToKubeletPluginDevice(networkData)
+			Expect(device.Metadata).NotTo(BeNil())
+			Expect(device.Metadata.NetworkData).To(Equal(networkData))
+		})
+
+		It("reuses persisted network data when re-preparing", func() {
+			stored := &resourceapi.NetworkDeviceData{
+				InterfaceName: "net1",
+				IPs:           []string{"10.10.0.10/24"},
+			}
+			prepared := &draTypes.PreparedDevice{
+				Device: drapbv1.Device{
+					RequestNames: []string{"request-a"},
+					PoolName:     "pool-a",
+					DeviceName:   "dev-a",
+					CdiDeviceIds: []string{"cdi-a"},
+				},
+				NetworkDeviceData: stored,
+			}
+
+			device := prepared.ToKubeletPluginDevice(nil)
+			Expect(device.Metadata).NotTo(BeNil())
+			Expect(device.Metadata.NetworkData).To(Equal(stored))
 		})
 	})
 })
