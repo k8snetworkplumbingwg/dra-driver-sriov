@@ -52,6 +52,10 @@ const (
 	NetClass  = 0x02 // Network controller class
 	SysBusPci = "/sys/bus/pci/devices"
 
+	// Eswitch mode constants (as reported by devlink)
+	EswitchModeLegacy    = "legacy"
+	EswitchModeSwitchdev = "switchdev"
+
 	// Link type constants
 	LinkTypeEthernet   = "ethernet"
 	LinkTypeInfiniband = "infiniband"
