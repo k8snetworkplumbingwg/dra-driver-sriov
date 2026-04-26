@@ -360,12 +360,24 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 		PciAddress:         pciAddress,
 		MultusDeviceID:     multusDeviceID,
 		MultusResourceName: multusResourceName,
+		DeviceAttributes:   cloneDeviceAttributes(deviceInfo.Attributes),
 		PodUID:             string(claim.Status.ReservedFor[0].UID),
 		Config:             config,
 		OriginalDriver:     originalDriver,
 	}
 
 	return preparedDevice, nil
+}
+
+func cloneDeviceAttributes(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute) map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
+	if len(attrs) == 0 {
+		return nil
+	}
+	cloned := make(map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, len(attrs))
+	for key, value := range attrs {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 // handleRDMADevice handles RDMA device configuration and returns device nodes, environment variables, or an error
