@@ -19,6 +19,7 @@ type Flags struct {
 	HealthcheckPort               int
 	DefaultInterfacePrefix        string
 	ConfigurationMode             string
+	EnableDeviceMetadata          bool
 }
 
 type Config struct {
