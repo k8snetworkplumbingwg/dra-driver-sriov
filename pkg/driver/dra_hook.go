@@ -135,12 +135,7 @@ func (d *Driver) prepareResourceClaim(ctx context.Context, ifNameIndex *int, cla
 	if isAlreadyPrepared {
 		var prepared []kubeletplugin.Device
 		for _, preparedDevice := range preparedDevices {
-			prepared = append(prepared, kubeletplugin.Device{
-				Requests:     preparedDevice.Device.GetRequestNames(),
-				PoolName:     preparedDevice.Device.GetPoolName(),
-				DeviceName:   preparedDevice.Device.GetDeviceName(),
-				CDIDeviceIDs: preparedDevice.Device.GetCDIDeviceIDs(),
-			})
+			prepared = append(prepared, preparedDevice.ToKubeletPluginDevice(nil))
 		}
 		return kubeletplugin.PrepareResult{Devices: prepared}
 	}
@@ -156,12 +151,7 @@ func (d *Driver) prepareResourceClaim(ctx context.Context, ifNameIndex *int, cla
 
 	var prepared []kubeletplugin.Device
 	for _, preparedDevice := range preparedDevices {
-		prepared = append(prepared, kubeletplugin.Device{
-			Requests:     preparedDevice.Device.GetRequestNames(),
-			PoolName:     preparedDevice.Device.GetPoolName(),
-			DeviceName:   preparedDevice.Device.GetDeviceName(),
-			CDIDeviceIDs: preparedDevice.Device.GetCDIDeviceIDs(),
-		})
+		prepared = append(prepared, preparedDevice.ToKubeletPluginDevice(nil))
 	}
 
 	err = d.podManager.Set(podUID, claim.UID, preparedDevices)
