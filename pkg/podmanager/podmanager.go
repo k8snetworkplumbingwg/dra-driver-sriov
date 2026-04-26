@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
@@ -123,6 +124,29 @@ func (s *PodManager) GetByClaim(claim kubeletplugin.NamespacedObject) (drasriovt
 		}
 	}
 	return preparedDevices, false
+}
+
+// UpdateDeviceNetworkData persists runtime network data for one prepared device.
+func (s *PodManager) UpdateDeviceNetworkData(claim kubeletplugin.NamespacedObject, poolName, deviceName string, networkData *resourceapi.NetworkDeviceData) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, preparedDevicesByClaimID := range s.preparedClaimsByPodUID {
+		devices, found := preparedDevicesByClaimID[claim.UID]
+		if !found {
+			continue
+		}
+		for _, device := range devices {
+			if device.Device.GetPoolName() != poolName || device.Device.GetDeviceName() != deviceName {
+				continue
+			}
+			device.SetNetworkDeviceData(networkData)
+			return s.syncToCheckpoint()
+		}
+		return fmt.Errorf("prepared device %s/%s not found for claim %s", poolName, deviceName, claim.UID)
+	}
+
+	return fmt.Errorf("claim %s not found in pod manager", claim.UID)
 }
 
 // DeleteClaim removes all configurations associated with a given claim.
