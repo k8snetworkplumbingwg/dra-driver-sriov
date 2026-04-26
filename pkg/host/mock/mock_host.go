@@ -71,6 +71,21 @@ func (mr *MockInterfaceMockRecorder) BindDeviceDriver(pciAddress, config any) *g
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BindDeviceDriver", reflect.TypeOf((*MockInterface)(nil).BindDeviceDriver), pciAddress, config)
 }
 
+// BindDeviceDriverWithMAC mocks base method.
+func (m *MockInterface) BindDeviceDriverWithMAC(pciAddress string, config *v1alpha1.VfConfig, macAddress string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BindDeviceDriverWithMAC", pciAddress, config, macAddress)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// BindDeviceDriverWithMAC indicates an expected call of BindDeviceDriverWithMAC.
+func (mr *MockInterfaceMockRecorder) BindDeviceDriverWithMAC(pciAddress, config, macAddress any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BindDeviceDriverWithMAC", reflect.TypeOf((*MockInterface)(nil).BindDeviceDriverWithMAC), pciAddress, config, macAddress)
+}
+
 // BindDriverByBusAndDevice mocks base method.
 func (m *MockInterface) BindDriverByBusAndDevice(device, driver string) error {
 	m.ctrl.T.Helper()
@@ -344,6 +359,20 @@ func (m *MockInterface) RestoreDeviceDriver(pciAddress, originalDriver string) e
 func (mr *MockInterfaceMockRecorder) RestoreDeviceDriver(pciAddress, originalDriver any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RestoreDeviceDriver", reflect.TypeOf((*MockInterface)(nil).RestoreDeviceDriver), pciAddress, originalDriver)
+}
+
+// SetVFMacAddress mocks base method.
+func (m *MockInterface) SetVFMacAddress(vfPciAddress, macAddress string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetVFMacAddress", vfPciAddress, macAddress)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetVFMacAddress indicates an expected call of SetVFMacAddress.
+func (mr *MockInterfaceMockRecorder) SetVFMacAddress(vfPciAddress, macAddress any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetVFMacAddress", reflect.TypeOf((*MockInterface)(nil).SetVFMacAddress), vfPciAddress, macAddress)
 }
 
 // TryGetInterfaceName mocks base method.
