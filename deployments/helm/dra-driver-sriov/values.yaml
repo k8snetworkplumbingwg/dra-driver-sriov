@@ -59,6 +59,7 @@ kubeletPlugin:
   nriPluginIndex: 42
   defaultInterfacePrefix: vfnet
   configurationMode: STANDALONE
+  enableDeviceMetadata: false
   containers:
     init:
       securityContext: {}
