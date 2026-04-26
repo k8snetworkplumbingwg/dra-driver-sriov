@@ -13,6 +13,7 @@ import (
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 
 	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 )
 
 // AllocatableDevices is a map of device pci address to dra device objects
@@ -69,9 +70,49 @@ type PreparedDevice struct {
 	PciAddress          string
 	MultusDeviceID      string
 	MultusResourceName  string
+	DeviceAttributes    map[resourceapi.QualifiedName]resourceapi.DeviceAttribute
+	NetworkDeviceData   *resourceapi.NetworkDeviceData
 	PodUID              string
 	NetAttachDefConfig  string
 	OriginalDriver      string // Store original driver for restoration during unprepare
+}
+
+func (p *PreparedDevice) ToKubeletPluginDevice(networkData *resourceapi.NetworkDeviceData) kubeletplugin.Device {
+	if networkData == nil {
+		networkData = p.NetworkDeviceData
+	}
+	return kubeletplugin.Device{
+		Requests:     p.Device.GetRequestNames(),
+		PoolName:     p.Device.GetPoolName(),
+		DeviceName:   p.Device.GetDeviceName(),
+		CDIDeviceIDs: p.Device.GetCdiDeviceIds(),
+		Metadata: &kubeletplugin.DeviceMetadata{
+			Attributes:  p.MetadataAttributes(),
+			NetworkData: networkData,
+		},
+	}
+}
+
+func (p *PreparedDevice) SetNetworkDeviceData(networkData *resourceapi.NetworkDeviceData) {
+	if networkData == nil {
+		p.NetworkDeviceData = nil
+		return
+	}
+	p.NetworkDeviceData = networkData.DeepCopy()
+}
+
+func (p *PreparedDevice) MetadataAttributes() map[string]resourceapi.DeviceAttribute {
+	attrs := make(map[string]resourceapi.DeviceAttribute, len(p.DeviceAttributes)+1)
+	for key, value := range p.DeviceAttributes {
+		attrs[string(key)] = value
+	}
+	if p.IfName != "" {
+		ifName := p.IfName
+		attrs[consts.AttributeInterfaceName] = resourceapi.DeviceAttribute{
+			StringValue: &ifName,
+		}
+	}
+	return attrs
 }
 
 type Checkpoint struct {
