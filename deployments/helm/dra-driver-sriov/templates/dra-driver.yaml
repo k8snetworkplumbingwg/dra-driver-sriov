@@ -42,6 +42,7 @@ spec:
       initContainers:
       - args:
         - --no-sleep
+        - --cni-bin-dir=$(CNI_BIN_DIR)
         image: ghcr.io/k8snetworkplumbingwg/sriov-cni:v2.10.0
         imagePullPolicy: IfNotPresent
         name: sriov-cni
@@ -51,10 +52,13 @@ spec:
             memory: 10Mi
         securityContext:
           privileged: true
+        env:
+        - name: CNI_BIN_DIR
+          value: {{ printf "/host%s" .Values.cniBinPath | quote }}
         terminationMessagePath: /dev/termination-log
         terminationMessagePolicy: File
         volumeMounts:
-        - mountPath: /host/opt/cni/bin
+        - mountPath: {{ printf "/host%s" .Values.cniBinPath | quote }}
           name: cni-bin
         - mountPath: /host/etc/os-release
           name: os-release
@@ -158,9 +162,11 @@ spec:
       - name: cni-results
         hostPath:
           path: /var/lib/cni/
+          type: DirectoryOrCreate
       - name: netns
         hostPath:
           path: /var/run/netns
+          type: DirectoryOrCreate
       {{- if ne .Values.kubeletPlugin.configurationMode "MULTUS" }}
       - name: cri-socket
         hostPath:
@@ -170,12 +176,15 @@ spec:
       - name: plugins-registry
         hostPath:
           path: {{ .Values.kubeletPlugin.kubeletRegistrarDirectoryPath | quote }}
+          type: DirectoryOrCreate
       - name: plugins
         hostPath:
           path: {{ .Values.kubeletPlugin.kubeletPluginsDirectoryPath | quote }}
+          type: DirectoryOrCreate
       - name: cdi
         hostPath:
           path: /var/run/cdi
+          type: DirectoryOrCreate
       {{- if eq .Values.kubeletPlugin.configurationMode "MULTUS" }}
       - name: cni-devinfo
         hostPath:
@@ -183,7 +192,8 @@ spec:
           type: DirectoryOrCreate
       {{- end }}
       - hostPath:
-          path: /opt/cni/bin
+          path: {{ .Values.cniBinPath | quote }}
+          type: DirectoryOrCreate
         name: cni-bin
       - hostPath:
           path: /etc/os-release

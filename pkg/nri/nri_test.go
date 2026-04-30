@@ -2,6 +2,7 @@ package nri
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -35,7 +36,7 @@ var _ = Describe("NRI Plugin", func() {
 
 		flags := &types.Flags{
 			DefaultInterfacePrefix:      "vfnet",
-			KubeletPluginsDirectoryPath: "/tmp",
+			KubeletPluginsDirectoryPath: GinkgoT().TempDir(),
 		}
 		cfg = &types.Config{Flags: flags}
 
@@ -87,6 +88,31 @@ var _ = Describe("NRI Plugin", func() {
 		Expect(plugin.RunPodSandbox(ctx, pod)).To(Succeed())
 	})
 
+	It("injects runtimeConfig.deviceID before CNI attach", func() {
+		prepared := types.PreparedDevices{
+			&types.PreparedDevice{
+				IfName:             "vfnet0",
+				NetAttachDefConfig: `{"type":"host-device","name":"net1","capabilities":{"deviceID":true}}`,
+				PciAddress:         "0000:00:00.9",
+				PodUID:             pod.Uid,
+			},
+		}
+		Expect(podManager.Set(k8stypes.UID(pod.Uid), k8stypes.UID("claim-1"), prepared)).To(Succeed())
+
+		mockCNI.EXPECT().
+			AttachNetwork(gomock.Any(), pod, "/proc/123/ns/net", prepared[0]).
+			Do(func(_ context.Context, _ *api.PodSandbox, _ string, device *types.PreparedDevice) {
+				parsedConfig := map[string]interface{}{}
+				Expect(json.Unmarshal([]byte(device.NetAttachDefConfig), &parsedConfig)).To(Succeed())
+				runtimeConfig, ok := parsedConfig["runtimeConfig"].(map[string]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(runtimeConfig["deviceID"]).To(Equal("0000:00:00.9"))
+			}).
+			Return(nil, map[string]interface{}{"dummy": true}, nil)
+
+		Expect(plugin.RunPodSandbox(ctx, pod)).To(Succeed())
+	})
+
 	It("returns error when CNI attach fails", func() {
 		prepared := types.PreparedDevices{
 			&types.PreparedDevice{
@@ -106,6 +132,26 @@ var _ = Describe("NRI Plugin", func() {
 		Expect(err).To(HaveOccurred())
 	})
 
+	It("skips CNI attach when prepared device has no NetAttachDefConfig", func() {
+		prepared := types.PreparedDevices{
+			&types.PreparedDevice{
+				IfName:             "vfnet0",
+				NetAttachDefConfig: "",
+				PciAddress:         "0000:00:00.2",
+				PodUID:             pod.Uid,
+			},
+		}
+		Expect(podManager.Set(k8stypes.UID(pod.Uid), k8stypes.UID("claim-2"), prepared)).To(Succeed())
+
+		Expect(plugin.RunPodSandbox(ctx, pod)).To(Succeed())
+		var update types.NetworkDataChanStructList
+		Eventually(plugin.networkDeviceDataUpdateChan, time.Second).Should(Receive(&update))
+		Expect(update).To(HaveLen(1))
+		Expect(update[0].PreparedDevice).To(Equal(prepared[0]))
+		Expect(update[0].CNIConfig).To(BeEmpty())
+		Expect(update[0].CNIResult).To(BeEmpty())
+	})
+
 	It("detaches networks on StopPodSandbox", func() {
 		prepared := types.PreparedDevices{
 			&types.PreparedDevice{
@@ -119,6 +165,31 @@ var _ = Describe("NRI Plugin", func() {
 
 		mockCNI.EXPECT().
 			DetachNetwork(gomock.Any(), pod, "/proc/123/ns/net", prepared[0]).
+			Return(nil)
+
+		Expect(plugin.StopPodSandbox(ctx, pod)).To(Succeed())
+	})
+
+	It("injects runtimeConfig.deviceID before CNI detach", func() {
+		prepared := types.PreparedDevices{
+			&types.PreparedDevice{
+				IfName:             "vfnet0",
+				NetAttachDefConfig: `{"type":"host-device","name":"net1","capabilities":{"deviceID":true}}`,
+				PciAddress:         "0000:00:00.8",
+				PodUID:             pod.Uid,
+			},
+		}
+		Expect(podManager.Set(k8stypes.UID(pod.Uid), k8stypes.UID("claim-1"), prepared)).To(Succeed())
+
+		mockCNI.EXPECT().
+			DetachNetwork(gomock.Any(), pod, "/proc/123/ns/net", prepared[0]).
+			Do(func(_ context.Context, _ *api.PodSandbox, _ string, device *types.PreparedDevice) {
+				parsedConfig := map[string]interface{}{}
+				Expect(json.Unmarshal([]byte(device.NetAttachDefConfig), &parsedConfig)).To(Succeed())
+				runtimeConfig, ok := parsedConfig["runtimeConfig"].(map[string]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(runtimeConfig["deviceID"]).To(Equal("0000:00:00.8"))
+			}).
 			Return(nil)
 
 		Expect(plugin.StopPodSandbox(ctx, pod)).To(Succeed())
@@ -181,13 +252,47 @@ var _ = Describe("NRI Plugin", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("detach"))
 	})
+
+	It("skips CNI detach when prepared device has no NetAttachDefConfig", func() {
+		prepared := types.PreparedDevices{
+			&types.PreparedDevice{
+				IfName:             "vfnet0",
+				NetAttachDefConfig: "",
+				PciAddress:         "0000:00:00.3",
+				PodUID:             pod.Uid,
+			},
+		}
+		Expect(podManager.Set(k8stypes.UID(pod.Uid), k8stypes.UID("claim-3"), prepared)).To(Succeed())
+
+		Expect(plugin.StopPodSandbox(ctx, pod)).To(Succeed())
+	})
+
+	It("does not require network namespace when all devices are no-CNI", func() {
+		prepared := types.PreparedDevices{
+			&types.PreparedDevice{
+				IfName:             "",
+				NetAttachDefConfig: "",
+				PciAddress:         "0000:00:00.4",
+				PodUID:             pod.Uid,
+			},
+		}
+		Expect(podManager.Set(k8stypes.UID(pod.Uid), k8stypes.UID("claim-4"), prepared)).To(Succeed())
+
+		podNoNetNS := &api.PodSandbox{
+			Id:        "sandbox-id",
+			Name:      "pod-name",
+			Namespace: "default",
+			Uid:       "uid-1",
+		}
+		Expect(plugin.StopPodSandbox(ctx, podNoNetNS)).To(Succeed())
+	})
 })
 
 var _ = Describe("NRI Plugin Creation", func() {
 	It("creates a new NRI plugin successfully", func() {
 		flags := &types.Flags{
 			DefaultInterfacePrefix:      "net",
-			KubeletPluginsDirectoryPath: "/tmp",
+			KubeletPluginsDirectoryPath: GinkgoT().TempDir(),
 		}
 		cfg := &types.Config{
 			Flags: flags,

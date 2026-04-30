@@ -104,6 +104,21 @@ func (p *Plugin) RunPodSandbox(ctx context.Context, pod *api.PodSandbox) error {
 
 	networkDevicesData := types.NetworkDataChanStructList{}
 	for _, device := range devices {
+		if device.NetAttachDefConfig == "" {
+			logger.V(2).Info("Skipping CNI attachment for device without NetAttachDefConfig", "deviceName", device.Device.DeviceName, "pod.UID", pod.Uid)
+			networkDevicesData = append(networkDevicesData, &types.NetworkDataChanStruct{
+				PreparedDevice: device,
+				CNIConfig:      map[string]interface{}{},
+				CNIResult:      map[string]interface{}{},
+			})
+			continue
+		}
+		updatedNetAttachDefConfig, err := injectDeviceIDRuntimeConfig(device.NetAttachDefConfig, device.PciAddress)
+		if err != nil {
+			return fmt.Errorf("failed to inject runtimeConfig.deviceID for pod '%s' (uid: %s) in namespace '%s': %w", pod.Name, pod.Uid, pod.Namespace, err)
+		}
+		device.NetAttachDefConfig = updatedNetAttachDefConfig
+
 		networkDeviceData, cniResultMap, err := p.cniRuntime.AttachNetwork(ctx, pod, networkNamespace, device)
 		if err != nil {
 			logger.Error(err, "Failed to attach network", "deviceName", device.Device.DeviceName, "pod.UID", pod.Uid, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace)
@@ -142,12 +157,29 @@ func (p *Plugin) StopPodSandbox(ctx context.Context, pod *api.PodSandbox) error 
 		return nil
 	}
 
+	detachDevices := types.PreparedDevices{}
+	for _, device := range devices {
+		if device.NetAttachDefConfig == "" {
+			logger.V(2).Info("Skipping CNI detach for device without NetAttachDefConfig", "deviceName", device.Device.DeviceName, "pod.UID", pod.Uid)
+			continue
+		}
+		updatedNetAttachDefConfig, err := injectDeviceIDRuntimeConfig(device.NetAttachDefConfig, device.PciAddress)
+		if err != nil {
+			return fmt.Errorf("failed to inject runtimeConfig.deviceID for pod '%s' (uid: %s) in namespace '%s': %w", pod.Name, pod.Uid, pod.Namespace, err)
+		}
+		device.NetAttachDefConfig = updatedNetAttachDefConfig
+		detachDevices = append(detachDevices, device)
+	}
+	if len(detachDevices) == 0 {
+		return nil
+	}
+
 	networkNamespace := getNetworkNamespace(pod)
 	if networkNamespace == "" {
 		return fmt.Errorf("error getting network namespace for pod '%s' in namespace '%s'", pod.Name, pod.Namespace)
 	}
 
-	for _, device := range devices {
+	for _, device := range detachDevices {
 		logger.Info("Detaching network", "device", device)
 		err := p.cniRuntime.DetachNetwork(ctx, pod, networkNamespace, device)
 		if err != nil {
