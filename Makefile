@@ -19,7 +19,7 @@ DIST_DIR ?= $(CURDIR)/dist
 HELM     ?= "go run helm.sh/helm/v3/cmd/helm@latest"
 
 # envtest configuration (resolved lazily in targets that need it)
-ENVTEST_K8S_VERSION ?= 1.34.x
+ENVTEST_K8S_VERSION ?= 1.36.x
 # Use release-0.20 branch which supports Go 1.24
 # Reference: https://pkg.go.dev/sigs.k8s.io/controller-runtime/tools/setup-envtest
 SETUP_ENVTEST ?= go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.20
