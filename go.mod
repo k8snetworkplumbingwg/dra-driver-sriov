@@ -13,6 +13,7 @@ require (
 	github.com/onsi/gomega v1.39.1
 	github.com/spf13/pflag v1.0.10
 	github.com/urfave/cli/v2 v2.27.7
+	github.com/vishvananda/netlink v1.3.2-0.20251101063711-6e61cd407d1d
 	go.uber.org/mock v0.6.0
 	google.golang.org/grpc v1.80.0
 	k8s.io/api v0.35.0
@@ -77,7 +78,6 @@ require (
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/cobra v1.10.0 // indirect
 	github.com/tetratelabs/wazero v1.10.1 // indirect
-	github.com/vishvananda/netlink v1.3.1 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect

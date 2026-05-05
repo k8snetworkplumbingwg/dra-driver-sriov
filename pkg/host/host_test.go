@@ -138,6 +138,18 @@ var _ = Describe("Host", func() {
 
 	Describe("Network Interface Functions", func() {
 		Context("TryGetInterfaceName", func() {
+			BeforeEach(func() {
+				// Override h with isolated fake providers for all TryGetInterfaceName
+				// tests.  Setting IsPhysicalPortError simulates devlink being
+				// unavailable → the sysfs phys_port_name result is trusted without
+				// devlink validation, keeping the tests deterministic.
+				fakeNetlink := &host.FakeNetlinkProvider{
+					EswitchError:        fmt.Errorf("devlink not supported"),
+					IsPhysicalPortError: fmt.Errorf("devlink not supported"),
+				}
+				h = host.NewHostForTest(fakeNetlink)
+			})
+
 			It("should return interface name when net directory exists", func() {
 				fs.Dirs = []string{
 					"sys/bus/pci/devices/0000:01:00.0/net",
@@ -168,14 +180,183 @@ var _ = Describe("Host", func() {
 				interfaceName := h.TryGetInterfaceName("0000:01:00.0")
 				Expect(interfaceName).To(BeEmpty())
 			})
+
+			// Mellanox mlx5 in legacy SR-IOV mode exposes both the PF interface and
+			// its VF representors under the same PCI device's /net/ sysfs directory.
+			// The VF representor sorts first alphabetically (e.g. "eth0" < "eth_rail1"),
+			// so the function must use phys_port_name to pick the actual PF interface.
+
+			// --- devlink validation of sysfs phys_port_name candidate ---
+
+			It("should confirm sysfs candidate when devlink reports physical flavour", func() {
+				// Simulates the mlx5 switchdev layout: both a VF representor and
+				// the PF uplink ("rail1", phys_port_name="p0") are present.
+				// DevLinkIsPhysicalPort returns true → confirms "rail1".
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:0c:00.0/net",
+					"sys/bus/pci/devices/0000:0c:00.0/net/eth0",
+					"sys/bus/pci/devices/0000:0c:00.0/net/rail1",
+					"sys/class/net/eth0",
+					"sys/class/net/rail1",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/net/eth0/phys_port_name":  []byte("pf0vf0\n"),
+					"sys/class/net/rail1/phys_port_name": []byte("p0\n"),
+				}
+				fakeNetlink := &host.FakeNetlinkProvider{
+					EswitchError:   fmt.Errorf("devlink not supported"),
+					IsPhysicalPort: true,
+				}
+				hDevlink := host.NewHostForTest(fakeNetlink)
+				tearDown = fs.Use()
+
+				interfaceName := hDevlink.TryGetInterfaceName("0000:0c:00.0")
+				Expect(interfaceName).To(Equal("rail1"))
+			})
+
+			It("should fall back to next sysfs candidate when devlink reports not physical", func() {
+				// Simulates a scenario where the first phys_port_name match is
+				// NOT confirmed as physical by devlink, but a second candidate is
+				// absent from phys_port_name (→ trusted without devlink check).
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:0c:00.0/net",
+					"sys/bus/pci/devices/0000:0c:00.0/net/eth_uplink",
+					"sys/bus/pci/devices/0000:0c:00.0/net/eth_pf",
+					"sys/class/net/eth_uplink",
+					"sys/class/net/eth_pf",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/net/eth_uplink/phys_port_name": []byte("p0\n"),
+					// eth_pf has no phys_port_name file → treated as PF directly
+				}
+				fakeNetlink := &host.FakeNetlinkProvider{
+					EswitchError:   fmt.Errorf("devlink not supported"),
+					IsPhysicalPort: false, // devlink says eth_uplink is NOT physical
+				}
+				hDevlink := host.NewHostForTest(fakeNetlink)
+				tearDown = fs.Use()
+
+				interfaceName := hDevlink.TryGetInterfaceName("0000:0c:00.0")
+				// eth_uplink was rejected by devlink; eth_pf has no phys_port_name
+				// so it's returned immediately without devlink validation.
+				Expect(interfaceName).To(Equal("eth_pf"))
+			})
+
+			// --- Pass 2: legacy mode fallback (phys_switch_id absent/empty) ---
+
+			It("should skip VF representor and return PF interface in legacy mode (phys_switch_id absent)", func() {
+				// Mirrors the real DGX layout: 0000:0c:00.0/net/ contains
+				//   eth0       (VF representor, phys_port_name="pf0vf0", no phys_switch_id)
+				//   eth_rail1  (PF interface,   phys_port_name="p0",     no phys_switch_id)
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:0c:00.0/net",
+					"sys/bus/pci/devices/0000:0c:00.0/net/eth0",
+					"sys/bus/pci/devices/0000:0c:00.0/net/eth_rail1",
+					"sys/class/net/eth0",
+					"sys/class/net/eth_rail1",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/net/eth0/phys_port_name":      []byte("pf0vf0\n"),
+					"sys/class/net/eth_rail1/phys_port_name": []byte("p0\n"),
+				}
+				tearDown = fs.Use()
+
+				interfaceName := h.TryGetInterfaceName("0000:0c:00.0")
+				Expect(interfaceName).To(Equal("eth_rail1"))
+			})
+
+			It("should skip SF representor and return PF interface in legacy mode", func() {
+				// SF representors have phys_port_name like "pf0sf0" (no "vf" substring);
+				// a naive "contains vf" check would incorrectly select the SF representor.
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:0c:00.0/net",
+					"sys/bus/pci/devices/0000:0c:00.0/net/eth0",
+					"sys/bus/pci/devices/0000:0c:00.0/net/eth_rail1",
+					"sys/class/net/eth0",
+					"sys/class/net/eth_rail1",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/net/eth0/phys_port_name":      []byte("pf0sf0\n"),
+					"sys/class/net/eth_rail1/phys_port_name": []byte("p0\n"),
+				}
+				tearDown = fs.Use()
+
+				interfaceName := h.TryGetInterfaceName("0000:0c:00.0")
+				Expect(interfaceName).To(Equal("eth_rail1"))
+			})
+
+			It("should return PF interface when phys_port_name is absent (no representors)", func() {
+				// Single PF interface with no phys_port_name file → returned in pass 2.
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth0",
+				}
+				tearDown = fs.Use()
+
+				interfaceName := h.TryGetInterfaceName("0000:01:00.0")
+				Expect(interfaceName).To(Equal("eth0"))
+			})
+
+			It("should return PF interface when phys_port_name is empty", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth0",
+					"sys/class/net/eth0",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/net/eth0/phys_port_name": []byte(""),
+				}
+				tearDown = fs.Use()
+
+				interfaceName := h.TryGetInterfaceName("0000:01:00.0")
+				Expect(interfaceName).To(Equal("eth0"))
+			})
+
+			It("should fall back to first interface when all entries are representors", func() {
+				// Edge case: only representors in the net dir – return the first one.
+				// Uses a DPU PF-representor name ("pf0") which contains neither "vf" nor
+				// "sf", proving the fix must use the physical-port regex, not substrings.
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth0",
+					"sys/class/net/eth0",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/net/eth0/phys_port_name": []byte("pf0\n"),
+				}
+				tearDown = fs.Use()
+
+				interfaceName := h.TryGetInterfaceName("0000:01:00.0")
+				Expect(interfaceName).To(Equal("eth0"))
+			})
 		})
 
 		Context("GetNicSriovMode", func() {
-			It("should return legacy mode", func() {
+			It("should return switchdev when devlink reports switchdev", func() {
+				fakeNetlink := &host.FakeNetlinkProvider{EswitchMode: consts.EswitchModeSwitchdev}
+				hMode := host.NewHostForTest(fakeNetlink)
 				tearDown = fs.Use()
 
-				mode := h.GetNicSriovMode("0000:01:00.0")
-				Expect(mode).To(Equal("legacy"))
+				mode := hMode.GetNicSriovMode("0000:01:00.0")
+				Expect(mode).To(Equal(consts.EswitchModeSwitchdev))
+			})
+
+			It("should return legacy when devlink reports legacy", func() {
+				fakeNetlink := &host.FakeNetlinkProvider{EswitchMode: consts.EswitchModeLegacy}
+				hMode := host.NewHostForTest(fakeNetlink)
+				tearDown = fs.Use()
+
+				mode := hMode.GetNicSriovMode("0000:01:00.0")
+				Expect(mode).To(Equal(consts.EswitchModeLegacy))
+			})
+
+			It("should fall back to legacy when devlink query fails", func() {
+				fakeNetlink := &host.FakeNetlinkProvider{EswitchError: fmt.Errorf("devlink not supported")}
+				hMode := host.NewHostForTest(fakeNetlink)
+				tearDown = fs.Use()
+
+				mode := hMode.GetNicSriovMode("0000:01:00.0")
+				Expect(mode).To(Equal(consts.EswitchModeLegacy))
 			})
 		})
 
