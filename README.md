@@ -274,6 +274,7 @@ The resource filtering system supports multiple filtering criteria that can be c
 - **pfNames**: Filter by Physical Function name (e.g., "eth0", "eth1")
 - **pfPciAddresses**: Filter by Physical Function PCI address
 - **drivers**: Filter by bound driver name (e.g., "vfio-pci", "igb_uio")
+- **linkType**: Filter by NIC link type. Accepted values: "eth", "ib", "ethernet", "infiniband" (case-insensitive)
 
 ### Node Selection
 

@@ -56,7 +56,9 @@ const (
 	SysBusPci = "/sys/bus/pci/devices"
 
 	// Link type constants
+	LinkTypeEth        = "eth"
 	LinkTypeEthernet   = "ethernet"
+	LinkTypeIB         = "ib"
 	LinkTypeInfiniband = "infiniband"
 	LinkTypeUnknown    = "unknown"
 

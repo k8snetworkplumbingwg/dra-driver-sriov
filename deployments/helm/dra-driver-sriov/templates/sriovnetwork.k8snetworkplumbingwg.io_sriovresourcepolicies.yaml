@@ -109,6 +109,15 @@ spec:
                             items:
                               type: string
                             type: array
+                          linkType:
+                            description: 'NIC Link Type. Accepted values: "eth", "ib",
+                              "ethernet", "infiniband".'
+                            enum:
+                            - eth
+                            - ib
+                            - ethernet
+                            - infiniband
+                            type: string
                           pciAddresses:
                             items:
                               type: string
