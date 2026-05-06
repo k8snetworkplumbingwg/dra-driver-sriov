@@ -13,6 +13,14 @@ import (
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 
 	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
+)
+
+const (
+	// DRANetworkMACsAnnotation contains a JSON map of network name to MAC address
+	// for DRA networks. This is set by KubeVirt on the virt-launcher pod to allow
+	// the DRA driver to configure MAC addresses on SR-IOV VFs.
+	DRANetworkMACsAnnotation = "kubevirt.io/dra-network-macs"
 )
 
 // AllocatableDevices is a map of device pci address to dra device objects
@@ -55,6 +63,26 @@ func AddDeviceIDToNetConf(originalConfig, deviceID string) (string, error) {
 	return string(modifiedConfig), nil
 }
 
+// AddMACToNetConf adds the MAC address to the netconf
+func AddMACToNetConf(originalConfig, macAddress string) (string, error) {
+	// Unmarshal the existing configuration into a raw map
+	var rawConfig map[string]interface{}
+	if err := json.Unmarshal([]byte(originalConfig), &rawConfig); err != nil {
+		return "", fmt.Errorf("failed to unmarshal existing config: %w", err)
+	}
+
+	// Set the MAC address
+	rawConfig["mac"] = macAddress
+
+	// Marshal the modified configuration back to a JSON string
+	modifiedConfig, err := json.Marshal(rawConfig)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal modified config: %w", err)
+	}
+
+	return string(modifiedConfig), nil
+}
+
 type OpaqueDeviceConfig struct {
 	Requests []string
 	Config   runtime.Object
@@ -69,9 +97,49 @@ type PreparedDevice struct {
 	PciAddress          string
 	MultusDeviceID      string
 	MultusResourceName  string
+	DeviceAttributes    map[resourceapi.QualifiedName]resourceapi.DeviceAttribute
+	NetworkDeviceData   *resourceapi.NetworkDeviceData
 	PodUID              string
 	NetAttachDefConfig  string
 	OriginalDriver      string // Store original driver for restoration during unprepare
+}
+
+func (p *PreparedDevice) ToKubeletPluginDevice(networkData *resourceapi.NetworkDeviceData) kubeletplugin.Device {
+	if networkData == nil {
+		networkData = p.NetworkDeviceData
+	}
+	return kubeletplugin.Device{
+		Requests:     p.Device.GetRequestNames(),
+		PoolName:     p.Device.GetPoolName(),
+		DeviceName:   p.Device.GetDeviceName(),
+		CDIDeviceIDs: p.Device.GetCdiDeviceIds(),
+		Metadata: &kubeletplugin.DeviceMetadata{
+			Attributes:  p.MetadataAttributes(),
+			NetworkData: networkData,
+		},
+	}
+}
+
+func (p *PreparedDevice) SetNetworkDeviceData(networkData *resourceapi.NetworkDeviceData) {
+	if networkData == nil {
+		p.NetworkDeviceData = nil
+		return
+	}
+	p.NetworkDeviceData = networkData.DeepCopy()
+}
+
+func (p *PreparedDevice) MetadataAttributes() map[string]resourceapi.DeviceAttribute {
+	attrs := make(map[string]resourceapi.DeviceAttribute, len(p.DeviceAttributes)+1)
+	for key, value := range p.DeviceAttributes {
+		attrs[string(key)] = value
+	}
+	if p.IfName != "" {
+		ifName := p.IfName
+		attrs[consts.AttributeInterfaceName] = resourceapi.DeviceAttribute{
+			StringValue: &ifName,
+		}
+	}
+	return attrs
 }
 
 type Checkpoint struct {

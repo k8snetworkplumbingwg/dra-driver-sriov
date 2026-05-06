@@ -22,6 +22,9 @@ check_requirements() {
 
 echo "## checking requirements"
 check_requirements
+# Temporary: keep CRI-O on the latest stable path that kcli can bootstrap.
+kcli_engine_version="1.35"
+echo "## Using CRI-O stable v${kcli_engine_version}"
 echo "## delete existing cluster name $cluster_name"
 kcli delete cluster $cluster_name -y
 kcli delete network $cluster_name -y
@@ -55,6 +58,7 @@ workers: $NUM_OF_WORKERS
 ingress: false
 machine: q35
 engine: crio
+engine_version: "v${kcli_engine_version}"
 sdn: flannel
 autolabeller: false
 vmrules:
@@ -90,6 +94,10 @@ EOF
 kcli create cluster generic --paramfile ./${cluster_name}-plan.yaml $cluster_name
 
 export KUBECONFIG=$HOME/.kcli/clusters/$cluster_name/auth/kubeconfig
+if [ ! -f "${KUBECONFIG}" ]; then
+  echo "Cluster bootstrap failed: missing kubeconfig at ${KUBECONFIG}"
+  exit 1
+fi
 export PATH=$PWD:$PATH
 
 ATTEMPTS=0
@@ -234,7 +242,17 @@ do
 done
 
 # after the reboot, wait for the nodes to be ready
-kubectl wait --for=condition=ready node --all --timeout=10m
+echo "## wait for nodes after reboot"
+if ! kubectl wait --for=condition=ready node --all --timeout=10m; then
+  echo "## node readiness wait failed; collecting diagnostics"
+  kubectl get nodes -o wide || true
+  kubectl get events -A --sort-by=.lastTimestamp || true
+  kubectl describe node "${cluster_name}-ctlplane-0.${domain_name}" || true
+  for ((num=0; num<NUM_OF_WORKERS; num++)); do
+    kubectl describe node "${cluster_name}-worker-${num}.${domain_name}" || true
+  done
+  exit 1
+fi
 
 # remove the patch after multus bug is fixed
 # https://github.com/k8snetworkplumbingwg/multus-cni/issues/1221
