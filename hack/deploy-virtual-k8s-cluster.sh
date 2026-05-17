@@ -234,7 +234,7 @@ update_host $cluster_name-ctlplane-0
 for ((num=0; num<NUM_OF_WORKERS; num++))
 do
   update_host $cluster_name-worker-$num
-  kcli ssh $cluster_name-worker-$num sudo reboot
+  kcli restart vm "$cluster_name-worker-$num"
 done
 
 # after the reboot, wait for the nodes to be ready
