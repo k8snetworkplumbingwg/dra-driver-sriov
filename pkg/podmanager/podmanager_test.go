@@ -6,6 +6,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1beta1"
@@ -423,6 +424,29 @@ var _ = Describe("PodManager", func() {
 			// For now, we'll test that normal operations work
 			err := pm.Set(podUID, claimUID, devices)
 			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should persist runtime network data updates", func() {
+			err := pm.Set(podUID, claimUID, devices)
+			Expect(err).NotTo(HaveOccurred())
+
+			networkData := &resourceapi.NetworkDeviceData{
+				InterfaceName: "net1",
+				IPs:           []string{"10.10.0.10/24"},
+			}
+			claim := kubeletplugin.NamespacedObject{UID: claimUID}
+
+			err = pm.UpdateDeviceNetworkData(claim, "", "test-device", networkData)
+			Expect(err).NotTo(HaveOccurred())
+
+			pm2, err := podmanager.NewPodManager(config)
+			Expect(err).NotTo(HaveOccurred())
+
+			retrievedDevices, found := pm2.Get(podUID, claimUID)
+			Expect(found).To(BeTrue())
+			Expect(retrievedDevices[0].NetworkDeviceData).NotTo(BeNil())
+			Expect(retrievedDevices[0].NetworkDeviceData.InterfaceName).To(Equal("net1"))
+			Expect(retrievedDevices[0].NetworkDeviceData.IPs).To(Equal([]string{"10.10.0.10/24"}))
 		})
 	})
 

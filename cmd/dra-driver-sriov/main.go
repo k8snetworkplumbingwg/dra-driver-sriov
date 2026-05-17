@@ -84,6 +84,13 @@ func newApp() *cli.App {
 			Destination: &flagsOptions.DefaultInterfacePrefix,
 			EnvVars:     []string{"DEFAULT_INTERFACE_PREFIX"},
 		},
+		&cli.BoolFlag{
+			Name:        "enable-device-metadata",
+			Usage:       "Enable DRA in-container device metadata files for prepared devices.",
+			Value:       false,
+			Destination: &flagsOptions.EnableDeviceMetadata,
+			EnvVars:     []string{"ENABLE_DEVICE_METADATA"},
+		},
 		&cli.StringFlag{
 			Name:        "namespace",
 			Usage:       "Namespace where the driver should watch for SriovResourcePolicy resources.",
@@ -251,6 +258,7 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 		if err != nil {
 			return fmt.Errorf("failed to create NRI plugin: %w", err)
 		}
+		nriPlugin.SetMetadataUpdater(dvr)
 		err = nriPlugin.Start(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to start NRI plugin: %w", err)
