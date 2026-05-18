@@ -40,6 +40,7 @@ const (
 	AttributeResourceName       = DriverName + "/resourceName"
 	AttributeLinkType           = DriverName + "/linkType"
 	AttributeRDMACapable        = DriverName + "/rdmaCapable"
+	AttributeInterfaceName      = DriverName + "/interfaceName"
 	AttributeMultusDeviceID     = MultusAttributePrefix + "/deviceID"
 	AttributeMultusResourceName = MultusAttributePrefix + "/resourceName"
 	// Use upstream Kubernetes standard attribute prefix for pciAddress

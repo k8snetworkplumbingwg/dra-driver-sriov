@@ -340,6 +340,8 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 		*ifNameIndex++
 	}
 
+	metadataAttributes := buildMetadataAttributes(deviceInfo.Attributes, ifName)
+
 	preparedDevice := &drasriovtypes.PreparedDevice{
 		ClaimNamespacedName: kubeletplugin.NamespacedObject{
 			NamespacedName: k8stypes.NamespacedName{
@@ -360,6 +362,7 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 		PciAddress:         pciAddress,
 		MultusDeviceID:     multusDeviceID,
 		MultusResourceName: multusResourceName,
+		DeviceAttributes:   metadataAttributes,
 		PodUID:             string(claim.Status.ReservedFor[0].UID),
 		Config:             config,
 		OriginalDriver:     originalDriver,
@@ -636,6 +639,33 @@ func (s *Manager) clearPolicyAttributes(deviceName string) bool {
 
 func deviceAttributeEqual(a, b resourceapi.DeviceAttribute) bool {
 	return reflect.DeepEqual(a, b)
+}
+
+func cloneDeviceAttributes(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute) map[string]resourceapi.DeviceAttribute {
+	if len(attrs) == 0 {
+		return nil
+	}
+	cloned := make(map[string]resourceapi.DeviceAttribute, len(attrs))
+	for key, value := range attrs {
+		cloned[string(key)] = value
+	}
+	return cloned
+}
+
+func buildMetadataAttributes(attrs map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, ifName string) map[string]resourceapi.DeviceAttribute {
+	metadataAttributes := cloneDeviceAttributes(attrs)
+	if ifName == "" {
+		return metadataAttributes
+	}
+
+	if metadataAttributes == nil {
+		metadataAttributes = make(map[string]resourceapi.DeviceAttribute, 1)
+	}
+	ifNameValue := ifName
+	metadataAttributes[consts.AttributeInterfaceName] = resourceapi.DeviceAttribute{
+		StringValue: &ifNameValue,
+	}
+	return metadataAttributes
 }
 
 // SetRepublishCallback sets the callback function to trigger resource republishing

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	resourceapi "k8s.io/api/resource/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	coreclientset "k8s.io/client-go/kubernetes"
 	metadatav1alpha1 "k8s.io/dynamic-resource-allocation/api/metadata/v1alpha1"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
@@ -185,4 +186,18 @@ func (d *Driver) PublishResources(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// UpdateRequestMetadata refreshes per-request metadata files for a prepared claim.
+func (d *Driver) UpdateRequestMetadata(
+	ctx context.Context,
+	claimNamespace, claimName string,
+	claimUID k8stypes.UID,
+	requestName string,
+	devices []kubeletplugin.Device,
+) error {
+	if d.helper == nil {
+		return fmt.Errorf("kubelet plugin helper is not initialized")
+	}
+	return d.helper.UpdateRequestMetadata(ctx, claimNamespace, claimName, claimUID, requestName, devices)
 }
