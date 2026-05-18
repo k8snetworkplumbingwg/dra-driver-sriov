@@ -501,7 +501,7 @@ Demonstrates independent claims mapped to different Multus networks:
 
 ### Prerequisites
 
-- Go 1.25.0
+- Go 1.26.0
 - Make
 - Container tool (Docker/Podman)
 - Kubernetes cluster with DRA enabled

@@ -26,12 +26,6 @@ import (
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 )
 
-//nolint:gochecknoinits // Required for Kubernetes scheme registration
-func init() {
-	SchemeBuilder.Register(&SriovResourcePolicy{}, &SriovResourcePolicyList{})
-	SchemeBuilder.Register(&DeviceAttributes{}, &DeviceAttributesList{})
-}
-
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 

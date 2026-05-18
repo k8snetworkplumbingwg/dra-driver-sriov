@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-cluster_version=${CLUSTER_VERSION:-1.34.2}
+cluster_version=${CLUSTER_VERSION:-1.36.1}
 cluster_name=${CLUSTER_NAME:-dra}
 domain_name=$cluster_name.lab
 network_name=${NETWORK_NAME:-dra}
