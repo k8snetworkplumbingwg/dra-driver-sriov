@@ -69,9 +69,39 @@ type PreparedDevice struct {
 	PciAddress          string
 	MultusDeviceID      string
 	MultusResourceName  string
+	DeviceAttributes    map[string]resourceapi.DeviceAttribute
+	NetworkDeviceData   *resourceapi.NetworkDeviceData
 	PodUID              string
 	NetAttachDefConfig  string
 	OriginalDriver      string // Store original driver for restoration during unprepare
+}
+
+func (p *PreparedDevice) ToKubeletPluginDevice(networkData *resourceapi.NetworkDeviceData) kubeletplugin.Device {
+	if networkData == nil {
+		networkData = p.NetworkDeviceData
+	}
+	return kubeletplugin.Device{
+		Requests:     p.Device.GetRequestNames(),
+		PoolName:     p.Device.GetPoolName(),
+		DeviceName:   p.Device.GetDeviceName(),
+		CDIDeviceIDs: p.Device.GetCdiDeviceIds(),
+		Metadata: &kubeletplugin.DeviceMetadata{
+			Attributes:  p.MetadataAttributes(),
+			NetworkData: networkData,
+		},
+	}
+}
+
+func (p *PreparedDevice) SetNetworkDeviceData(networkData *resourceapi.NetworkDeviceData) {
+	if networkData == nil {
+		p.NetworkDeviceData = nil
+		return
+	}
+	p.NetworkDeviceData = networkData.DeepCopy()
+}
+
+func (p *PreparedDevice) MetadataAttributes() map[string]resourceapi.DeviceAttribute {
+	return p.DeviceAttributes
 }
 
 type Checkpoint struct {

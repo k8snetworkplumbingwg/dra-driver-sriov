@@ -25,7 +25,9 @@ import (
 	"time"
 
 	resourceapi "k8s.io/api/resource/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	coreclientset "k8s.io/client-go/kubernetes"
+	metadatav1alpha1 "k8s.io/dynamic-resource-allocation/api/metadata/v1alpha1"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/klog/v2"
@@ -35,6 +37,14 @@ import (
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/devicestate"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/podmanager"
 	sriovdratype "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
+)
+
+// These option constructors are package variables so unit tests can override
+// them with fakes and verify plugin option wiring deterministically.
+var (
+	enableDeviceMetadataOption = kubeletplugin.EnableDeviceMetadata
+	cdiDirectoryOption         = kubeletplugin.CDIDirectory
+	metadataVersionsOption     = kubeletplugin.MetadataVersions
 )
 
 type Driver struct {
@@ -48,8 +58,27 @@ type Driver struct {
 	cdi                *cdi.Handler
 }
 
+func buildPluginOptions(config *sriovdratype.Config) []kubeletplugin.Option {
+	pluginOpts := []kubeletplugin.Option{
+		kubeletplugin.KubeClient(config.K8sClient.Interface),
+		kubeletplugin.NodeName(config.Flags.NodeName),
+		kubeletplugin.DriverName(consts.DriverName),
+		kubeletplugin.RegistrarDirectoryPath(config.Flags.KubeletRegistrarDirectoryPath),
+		kubeletplugin.PluginDataDirectoryPath(config.DriverPluginPath()),
+	}
+	if config.Flags.EnableDeviceMetadata {
+		pluginOpts = append(
+			pluginOpts,
+			enableDeviceMetadataOption(true),
+			cdiDirectoryOption(config.Flags.CdiRoot),
+			metadataVersionsOption(metadatav1alpha1.SchemeGroupVersion),
+		)
+	}
+	return pluginOpts
+}
+
 // Start creates a new DRA driver and starts the kubelet plugin. It waits for the plugin to be registered
-// with the kubelet before starting the healthcheck service and publishing the available resources
+// with the kubelet before starting the healthcheck service and publishing the available resources.
 func Start(ctx context.Context, config *sriovdratype.Config, deviceStateManager *devicestate.Manager, podManager *podmanager.PodManager, cdi *cdi.Handler) (*Driver, error) {
 	driver := &Driver{
 		client:             config.K8sClient.Interface,
@@ -60,15 +89,8 @@ func Start(ctx context.Context, config *sriovdratype.Config, deviceStateManager 
 		cdi:                cdi,
 	}
 
-	helper, err := kubeletplugin.Start(
-		ctx,
-		driver,
-		kubeletplugin.KubeClient(config.K8sClient.Interface),
-		kubeletplugin.NodeName(config.Flags.NodeName),
-		kubeletplugin.DriverName(consts.DriverName),
-		kubeletplugin.RegistrarDirectoryPath(config.Flags.KubeletRegistrarDirectoryPath),
-		kubeletplugin.PluginDataDirectoryPath(config.DriverPluginPath()),
-	)
+	pluginOpts := buildPluginOptions(config)
+	helper, err := kubeletplugin.Start(ctx, driver, pluginOpts...)
 	if err != nil {
 		klog.FromContext(ctx).Error(err, "Failed to start DRA kubelet plugin")
 		return nil, err
@@ -164,4 +186,18 @@ func (d *Driver) PublishResources(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// UpdateRequestMetadata refreshes per-request metadata files for a prepared claim.
+func (d *Driver) UpdateRequestMetadata(
+	ctx context.Context,
+	claimNamespace, claimName string,
+	claimUID k8stypes.UID,
+	requestName string,
+	devices []kubeletplugin.Device,
+) error {
+	if d.helper == nil {
+		return fmt.Errorf("kubelet plugin helper is not initialized")
+	}
+	return d.helper.UpdateRequestMetadata(ctx, claimNamespace, claimName, claimUID, requestName, devices)
 }

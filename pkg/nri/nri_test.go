@@ -3,6 +3,7 @@ package nri
 import (
 	"context"
 	"errors"
+	"os"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -10,12 +11,40 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/containerd/nri/pkg/api"
+	resourceapi "k8s.io/api/resource/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/dynamic-resource-allocation/kubeletplugin"
+	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1beta1"
+	ctrlclientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	cnimock "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cni/mock"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/podmanager"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
+
+type fakeMetadataUpdater struct {
+	callCount   int
+	requestName string
+	devices     []kubeletplugin.Device
+	err         error
+}
+
+func (f *fakeMetadataUpdater) UpdateRequestMetadata(
+	_ context.Context,
+	_, _ string,
+	_ k8stypes.UID,
+	requestName string,
+	devices []kubeletplugin.Device,
+) error {
+	f.callCount++
+	f.requestName = requestName
+	f.devices = devices
+	return f.err
+}
 
 var _ = Describe("NRI Plugin", func() {
 	var (
@@ -104,6 +133,111 @@ var _ = Describe("NRI Plugin", func() {
 
 		err := plugin.RunPodSandbox(ctx, pod)
 		Expect(err).To(HaveOccurred())
+	})
+
+	It("updates request metadata synchronously before returning", func() {
+		pciAddress := "0000:00:00.1"
+		claimUID := k8stypes.UID("claim-1")
+		claim := &resourceapi.ResourceClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "claim-1",
+				UID:       claimUID,
+			},
+		}
+		cfg.K8sClient = flags.ClientSets{
+			Client: ctrlclientfake.NewClientBuilder().WithScheme(flags.Scheme).WithRuntimeObjects(claim).Build(),
+		}
+		plugin.k8sClient = cfg.K8sClient
+		plugin.enableDeviceMetadata = true
+		updater := &fakeMetadataUpdater{}
+		plugin.metadataUpdater = updater
+		ifName := "vfnet0"
+
+		prepared := types.PreparedDevices{
+			&types.PreparedDevice{
+				ClaimNamespacedName: kubeletplugin.NamespacedObject{
+					NamespacedName: k8stypes.NamespacedName{
+						Namespace: "default",
+						Name:      "claim-1",
+					},
+					UID: claimUID,
+				},
+				Device: drapbv1.Device{
+					RequestNames: []string{"request-a"},
+					PoolName:     "pool-a",
+					DeviceName:   "dev-a",
+				},
+				IfName: ifName,
+				DeviceAttributes: map[string]resourceapi.DeviceAttribute{
+					consts.AttributePciAddress: {
+						StringValue: &pciAddress,
+					},
+					consts.AttributeInterfaceName: {
+						StringValue: &ifName,
+					},
+				},
+			},
+		}
+		Expect(podManager.Set(k8stypes.UID(pod.Uid), claimUID, prepared)).To(Succeed())
+
+		expectedNetworkData := &resourceapi.NetworkDeviceData{
+			InterfaceName: "net1",
+			IPs:           []string{"10.10.0.10/24"},
+		}
+		mockCNI.EXPECT().
+			AttachNetwork(gomock.Any(), pod, "/proc/123/ns/net", prepared[0]).
+			Return(expectedNetworkData, map[string]interface{}{"dummy": true}, nil)
+
+		Expect(plugin.RunPodSandbox(ctx, pod)).To(Succeed())
+		Expect(updater.callCount).To(Equal(1))
+		Expect(updater.requestName).To(Equal("request-a"))
+		Expect(updater.devices).To(HaveLen(1))
+		Expect(updater.devices[0].Metadata).NotTo(BeNil())
+		Expect(updater.devices[0].Metadata.NetworkData).To(Equal(expectedNetworkData))
+	})
+
+	It("fails RunPodSandbox when synchronous metadata update fails", func() {
+		claimUID := k8stypes.UID("claim-1")
+		claim := &resourceapi.ResourceClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "claim-1",
+				UID:       claimUID,
+			},
+		}
+		cfg.K8sClient = flags.ClientSets{
+			Client: ctrlclientfake.NewClientBuilder().WithScheme(flags.Scheme).WithRuntimeObjects(claim).Build(),
+		}
+		plugin.k8sClient = cfg.K8sClient
+		plugin.enableDeviceMetadata = true
+		plugin.metadataUpdater = &fakeMetadataUpdater{err: errors.New("metadata boom")}
+
+		prepared := types.PreparedDevices{
+			&types.PreparedDevice{
+				ClaimNamespacedName: kubeletplugin.NamespacedObject{
+					NamespacedName: k8stypes.NamespacedName{
+						Namespace: "default",
+						Name:      "claim-1",
+					},
+					UID: claimUID,
+				},
+				Device: drapbv1.Device{
+					RequestNames: []string{"request-a"},
+					PoolName:     "pool-a",
+					DeviceName:   "dev-a",
+				},
+			},
+		}
+		Expect(podManager.Set(k8stypes.UID(pod.Uid), claimUID, prepared)).To(Succeed())
+
+		mockCNI.EXPECT().
+			AttachNetwork(gomock.Any(), pod, "/proc/123/ns/net", prepared[0]).
+			Return(&resourceapi.NetworkDeviceData{InterfaceName: "net1"}, map[string]interface{}{"dummy": true}, nil)
+
+		err := plugin.RunPodSandbox(ctx, pod)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("failed to update request metadata before pod start"))
 	})
 
 	It("detaches networks on StopPodSandbox", func() {
@@ -203,7 +337,7 @@ var _ = Describe("NRI Plugin Creation", func() {
 		defer ctrl.Finish()
 		mockCNI := cnimock.NewMockInterface(ctrl)
 
-		plugin, err := NewNRIPlugin(cfg, podManager, mockCNI)
+		plugin, err := NewNRIPlugin(cfg, podManager, mockCNI, nil)
 		// NRI stub creation will fail in test environment (no NRI socket/runtime)
 		// but we can verify the function at least initializes fields and attempts creation
 		if err == nil {
@@ -239,5 +373,277 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 
 		// Should exit
 		Eventually(done, time.Second).Should(Receive())
+	})
+})
+
+var _ = Describe("NRI metadata updates", func() {
+	It("updates request metadata when enabled", func() {
+		pciAddress := "0000:08:00.1"
+		ifName := "vfnet0"
+		updater := &fakeMetadataUpdater{}
+		plugin := &Plugin{
+			enableDeviceMetadata: true,
+			metadataUpdater:      updater,
+		}
+
+		prepared := &types.PreparedDevice{
+			Device: drapbv1.Device{
+				RequestNames: []string{"request-a"},
+				PoolName:     "pool-a",
+				DeviceName:   "dev-a",
+				CdiDeviceIds: []string{"cdi-a"},
+			},
+			IfName: ifName,
+			DeviceAttributes: map[string]resourceapi.DeviceAttribute{
+				consts.AttributePciAddress: {
+					StringValue: &pciAddress,
+				},
+				consts.AttributeInterfaceName: {
+					StringValue: &ifName,
+				},
+			},
+		}
+		networkData := &types.NetworkDataChanStruct{
+			PreparedDevice: prepared,
+			NetworkDeviceData: &resourceapi.NetworkDeviceData{
+				InterfaceName: "net1",
+				IPs:           []string{"10.10.0.10/24"},
+			},
+		}
+
+		networkDataList := types.NetworkDataChanStructList{networkData}
+		err := plugin.updateRequestMetadataBeforeSandboxStart(context.Background(), networkDataList)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(updater.callCount).To(Equal(1))
+		Expect(updater.requestName).To(Equal("request-a"))
+		Expect(updater.devices).To(HaveLen(1))
+		Expect(updater.devices[0].Metadata).NotTo(BeNil())
+		Expect(updater.devices[0].Metadata.NetworkData).To(Equal(networkData.NetworkDeviceData))
+		Expect(updater.devices[0].Metadata.Attributes).To(HaveKey(consts.AttributePciAddress))
+		Expect(updater.devices[0].Metadata.Attributes).To(HaveKey(consts.AttributeInterfaceName))
+	})
+
+	It("updates each request once with all devices", func() {
+		pciAddressA := "0000:08:00.1"
+		pciAddressB := "0000:08:00.2"
+		ifNameA := "vfnet0"
+		ifNameB := "vfnet1"
+		updater := &fakeMetadataUpdater{}
+		plugin := &Plugin{
+			enableDeviceMetadata: true,
+			metadataUpdater:      updater,
+		}
+		deviceA := &types.NetworkDataChanStruct{
+			PreparedDevice: &types.PreparedDevice{
+				ClaimNamespacedName: kubeletplugin.NamespacedObject{
+					NamespacedName: k8stypes.NamespacedName{
+						Namespace: "default",
+						Name:      "claim-a",
+					},
+					UID: k8stypes.UID("claim-a-uid"),
+				},
+				Device: drapbv1.Device{
+					RequestNames: []string{"request-a"},
+					PoolName:     "pool-a",
+					DeviceName:   "dev-a",
+					CdiDeviceIds: []string{"cdi-a"},
+				},
+				IfName: ifNameA,
+				DeviceAttributes: map[string]resourceapi.DeviceAttribute{
+					consts.AttributePciAddress:    {StringValue: &pciAddressA},
+					consts.AttributeInterfaceName: {StringValue: &ifNameA},
+				},
+			},
+			NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1"},
+		}
+		deviceB := &types.NetworkDataChanStruct{
+			PreparedDevice: &types.PreparedDevice{
+				ClaimNamespacedName: kubeletplugin.NamespacedObject{
+					NamespacedName: k8stypes.NamespacedName{
+						Namespace: "default",
+						Name:      "claim-a",
+					},
+					UID: k8stypes.UID("claim-a-uid"),
+				},
+				Device: drapbv1.Device{
+					RequestNames: []string{"request-a"},
+					PoolName:     "pool-a",
+					DeviceName:   "dev-b",
+					CdiDeviceIds: []string{"cdi-b"},
+				},
+				IfName: ifNameB,
+				DeviceAttributes: map[string]resourceapi.DeviceAttribute{
+					consts.AttributePciAddress:    {StringValue: &pciAddressB},
+					consts.AttributeInterfaceName: {StringValue: &ifNameB},
+				},
+			},
+			NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net2"},
+		}
+		dataList := types.NetworkDataChanStructList{deviceA, deviceB}
+
+		err := plugin.updateRequestMetadataBeforeSandboxStart(context.Background(), dataList)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(updater.callCount).To(Equal(1))
+		Expect(updater.devices).To(HaveLen(2))
+	})
+})
+
+var _ = Describe("NRI updateNetworkDeviceData ordering", func() {
+	It("does not update claim status when checkpoint persistence fails", func() {
+		cfg := &types.Config{
+			Flags: &types.Flags{
+				KubeletPluginsDirectoryPath: GinkgoT().TempDir(),
+			},
+		}
+		pm, err := podmanager.NewPodManager(cfg)
+		Expect(err).NotTo(HaveOccurred())
+
+		claimUID := k8stypes.UID("claim-a-uid")
+		podUID := k8stypes.UID("pod-a-uid")
+		prepared := types.PreparedDevices{
+			{
+				ClaimNamespacedName: kubeletplugin.NamespacedObject{
+					NamespacedName: k8stypes.NamespacedName{
+						Namespace: "default",
+						Name:      "claim-a",
+					},
+					UID: claimUID,
+				},
+				Device: drapbv1.Device{
+					PoolName:   "pool-a",
+					DeviceName: "dev-a",
+				},
+			},
+		}
+		Expect(pm.Set(podUID, claimUID, prepared)).To(Succeed())
+
+		claim := &resourceapi.ResourceClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "claim-a",
+				Namespace: "default",
+				UID:       claimUID,
+			},
+			Status: resourceapi.ResourceClaimStatus{
+				Devices: []resourceapi.AllocatedDeviceStatus{
+					{
+						Driver: consts.DriverName,
+						Pool:   "pool-a",
+						Device: "dev-a",
+					},
+				},
+			},
+		}
+
+		plugin := &Plugin{
+			podManager: pm,
+			k8sClient: flags.ClientSets{
+				Interface: k8sfake.NewSimpleClientset(claim.DeepCopy()),
+				Client:    ctrlclientfake.NewClientBuilder().WithScheme(flags.Scheme).WithRuntimeObjects(claim.DeepCopy()).Build(),
+			},
+		}
+		// Simulate real persistence failure by removing write permissions before update.
+		Expect(os.Chmod(cfg.DriverPluginPath(), 0o500)).To(Succeed())
+		DeferCleanup(func() {
+			_ = os.Chmod(cfg.DriverPluginPath(), 0o700)
+		})
+
+		networkDataList := types.NetworkDataChanStructList{
+			{
+				PreparedDevice:    prepared[0],
+				NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1"},
+			},
+		}
+
+		plugin.updateNetworkDeviceData(context.Background(), networkDataList)
+
+		updatedClaim, err := plugin.k8sClient.ResourceV1().ResourceClaims("default").Get(context.Background(), "claim-a", metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(updatedClaim.Status.Devices).To(HaveLen(1))
+		Expect(updatedClaim.Status.Devices[0].NetworkData).To(BeNil())
+		Expect(updatedClaim.Status.Devices[0].Data).To(BeNil())
+	})
+
+	It("updates claim status after checkpoint persistence succeeds", func() {
+		cfg := &types.Config{
+			Flags: &types.Flags{
+				KubeletPluginsDirectoryPath: GinkgoT().TempDir(),
+			},
+		}
+		pm, err := podmanager.NewPodManager(cfg)
+		Expect(err).NotTo(HaveOccurred())
+
+		claimUID := k8stypes.UID("claim-a-uid")
+		podUID := k8stypes.UID("pod-a-uid")
+		prepared := types.PreparedDevices{
+			{
+				ClaimNamespacedName: kubeletplugin.NamespacedObject{
+					NamespacedName: k8stypes.NamespacedName{
+						Namespace: "default",
+						Name:      "claim-a",
+					},
+					UID: claimUID,
+				},
+				Device: drapbv1.Device{
+					PoolName:   "pool-a",
+					DeviceName: "dev-a",
+				},
+			},
+		}
+		Expect(pm.Set(podUID, claimUID, prepared)).To(Succeed())
+
+		claim := &resourceapi.ResourceClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "claim-a",
+				Namespace: "default",
+				UID:       claimUID,
+			},
+			Status: resourceapi.ResourceClaimStatus{
+				Devices: []resourceapi.AllocatedDeviceStatus{
+					{
+						Driver: consts.DriverName,
+						Pool:   "pool-a",
+						Device: "dev-a",
+					},
+				},
+			},
+		}
+
+		plugin := &Plugin{
+			podManager: pm,
+			k8sClient: flags.ClientSets{
+				Interface: k8sfake.NewSimpleClientset(claim.DeepCopy()),
+				Client:    ctrlclientfake.NewClientBuilder().WithScheme(flags.Scheme).WithRuntimeObjects(claim.DeepCopy()).Build(),
+			},
+		}
+
+		networkData := &resourceapi.NetworkDeviceData{InterfaceName: "net1"}
+		networkDataList := types.NetworkDataChanStructList{
+			{
+				PreparedDevice:    prepared[0],
+				NetworkDeviceData: networkData,
+				CNIConfig: map[string]interface{}{
+					"type": "sriov",
+				},
+				CNIResult: map[string]interface{}{
+					"result": "ok",
+				},
+			},
+		}
+
+		plugin.updateNetworkDeviceData(context.Background(), networkDataList)
+
+		updatedClaim, err := plugin.k8sClient.ResourceV1().ResourceClaims("default").Get(context.Background(), "claim-a", metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(updatedClaim.Status.Devices).To(HaveLen(1))
+		Expect(updatedClaim.Status.Devices[0].NetworkData).NotTo(BeNil())
+		Expect(updatedClaim.Status.Devices[0].NetworkData.InterfaceName).To(Equal("net1"))
+		Expect(updatedClaim.Status.Devices[0].Data).NotTo(BeNil())
+
+		updatedPreparedDevices, found := pm.Get(podUID, claimUID)
+		Expect(found).To(BeTrue())
+		Expect(updatedPreparedDevices).To(HaveLen(1))
+		Expect(updatedPreparedDevices[0].NetworkDeviceData).NotTo(BeNil())
+		Expect(updatedPreparedDevices[0].NetworkDeviceData.InterfaceName).To(Equal("net1"))
 	})
 })

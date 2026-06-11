@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
@@ -123,6 +124,19 @@ func (s *PodManager) GetByClaim(claim kubeletplugin.NamespacedObject) (drasriovt
 		}
 	}
 	return preparedDevices, false
+}
+
+// UpdatePreparedDeviceNetworkData persists runtime network data on an already
+// tracked prepared device and syncs the checkpoint.
+func (s *PodManager) UpdatePreparedDeviceNetworkData(preparedDevice *drasriovtypes.PreparedDevice, networkData *resourceapi.NetworkDeviceData) error {
+	if preparedDevice == nil {
+		return fmt.Errorf("prepared device is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	preparedDevice.SetNetworkDeviceData(networkData)
+	return s.syncToCheckpoint()
 }
 
 // DeleteClaim removes all configurations associated with a given claim.

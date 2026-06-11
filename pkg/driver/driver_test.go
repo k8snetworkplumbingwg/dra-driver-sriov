@@ -9,7 +9,9 @@ import (
 
 	resourceapi "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	metadatav1alpha1 "k8s.io/dynamic-resource-allocation/api/metadata/v1alpha1"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/podmanager"
@@ -103,6 +105,96 @@ var _ = Describe("Driver", func() {
 			d := &Driver{cancelCtx: func(err error) { called = true }}
 			d.HandleError(context.Background(), kubeletplugin.ErrRecoverable, "oops")
 			Expect(called).To(BeFalse())
+		})
+	})
+
+	Context("buildPluginOptions", func() {
+		var (
+			oldEnableDeviceMetadataOption func(bool) kubeletplugin.Option
+			oldCDIDirectoryOption         func(string) kubeletplugin.Option
+			oldMetadataVersionsOption     func(...schema.GroupVersion) kubeletplugin.Option
+		)
+
+		BeforeEach(func() {
+			oldEnableDeviceMetadataOption = enableDeviceMetadataOption
+			oldCDIDirectoryOption = cdiDirectoryOption
+			oldMetadataVersionsOption = metadataVersionsOption
+		})
+
+		AfterEach(func() {
+			enableDeviceMetadataOption = oldEnableDeviceMetadataOption
+			cdiDirectoryOption = oldCDIDirectoryOption
+			metadataVersionsOption = oldMetadataVersionsOption
+		})
+
+		It("uses configured CDI root when metadata is enabled", func() {
+			flags := &types.Flags{
+				NodeName:                      "node-a",
+				CdiRoot:                       "/tmp/custom-cdi",
+				KubeletRegistrarDirectoryPath: "/tmp/registry",
+				KubeletPluginsDirectoryPath:   "/tmp/plugins",
+				EnableDeviceMetadata:          true,
+			}
+			cfg := &types.Config{Flags: flags}
+
+			metadataEnabledCalled := false
+			cdiDir := ""
+			metadataVersionCalled := false
+
+			enableDeviceMetadataOption = func(enabled bool) kubeletplugin.Option {
+				metadataEnabledCalled = enabled
+				return oldEnableDeviceMetadataOption(enabled)
+			}
+			cdiDirectoryOption = func(path string) kubeletplugin.Option {
+				cdiDir = path
+				return oldCDIDirectoryOption(path)
+			}
+			metadataVersionsOption = func(versions ...schema.GroupVersion) kubeletplugin.Option {
+				if len(versions) == 1 && versions[0] == metadatav1alpha1.SchemeGroupVersion {
+					metadataVersionCalled = true
+				}
+				return oldMetadataVersionsOption(versions...)
+			}
+
+			opts := buildPluginOptions(cfg)
+			Expect(opts).To(HaveLen(8))
+			Expect(metadataEnabledCalled).To(BeTrue())
+			Expect(cdiDir).To(Equal("/tmp/custom-cdi"))
+			Expect(metadataVersionCalled).To(BeTrue())
+		})
+
+		It("does not append metadata options when metadata is disabled", func() {
+			flags := &types.Flags{
+				NodeName:                      "node-a",
+				CdiRoot:                       "/tmp/custom-cdi",
+				KubeletRegistrarDirectoryPath: "/tmp/registry",
+				KubeletPluginsDirectoryPath:   "/tmp/plugins",
+				EnableDeviceMetadata:          false,
+			}
+			cfg := &types.Config{Flags: flags}
+
+			metadataEnabledCalled := false
+			cdiCalled := false
+			metadataVersionCalled := false
+
+			enableDeviceMetadataOption = func(enabled bool) kubeletplugin.Option {
+				metadataEnabledCalled = true
+				return oldEnableDeviceMetadataOption(enabled)
+			}
+			cdiDirectoryOption = func(path string) kubeletplugin.Option {
+				cdiCalled = true
+				return oldCDIDirectoryOption(path)
+			}
+			metadataVersionsOption = func(versions ...schema.GroupVersion) kubeletplugin.Option {
+				metadataVersionCalled = true
+				return oldMetadataVersionsOption(versions...)
+			}
+
+			opts := buildPluginOptions(cfg)
+			Expect(opts).To(HaveLen(5))
+			Expect(metadataEnabledCalled).To(BeFalse())
+			Expect(cdiCalled).To(BeFalse())
+			Expect(metadataVersionCalled).To(BeFalse())
 		})
 	})
 })
