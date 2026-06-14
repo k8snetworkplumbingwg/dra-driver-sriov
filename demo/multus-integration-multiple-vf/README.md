@@ -6,6 +6,8 @@ This demo allocates two SR-IOV Virtual Functions from a single `ResourceClaimTem
 
 These Multus demos require the DRA driver to run with `kubeletPlugin.configurationMode=MULTUS`.
 
+Limitation: In `MULTUS` mode, the runtime DRA device metadata update path is not active, so KEP-5304 DRA device metadata via CDI-mounted files is not supported in this mode.
+
 From the repository root:
 
 ```bash

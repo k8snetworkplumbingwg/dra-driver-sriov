@@ -109,6 +109,11 @@ The driver supports two networking modes controlled by `kubeletPlugin.configurat
 - The driver starts its NRI plugin and handles CNI attach/detach through NRI pod sandbox events.
 - During device preparation, the driver fetches `NetworkAttachmentDefinition` config and injects `deviceID` into the SR-IOV CNI config.
 - If `ifName` is not provided, the driver auto-generates interface names using `kubeletPlugin.defaultInterfacePrefix` (for example `vfnet0`, `vfnet1`).
+- KEP-5304 DRA device metadata via CDI-mounted files is supported in this mode, including static attributes such as PCI bus ID (attribute key `resource.kubernetes.io/pciBusID`) exposed to workloads.
+
+References:
+- Kubernetes KEP-5304 (DRA device metadata): https://github.com/kubernetes/enhancements/blob/master/keps/sig-node/5304-dra-attributes-downward-api/README.md
+- Kubernetes docs - Access DRA Device Metadata: https://kubernetes.io/docs/tasks/configure-pod-container/assign-resources/access-dra-device-metadata/
 
 Deploy in `STANDALONE` mode:
 
@@ -126,6 +131,8 @@ helm upgrade -i dra-driver-sriov \
 - Multus performs network attachment and uses DRA-provided device attributes:
   - `k8s.cni.cncf.io/resourceName` must match NAD annotation `k8s.v1.cni.cncf.io/resourceName`
   - `k8s.cni.cncf.io/deviceID` is passed by Multus to the CNI plugin
+
+- Limitation: In `MULTUS` mode, the runtime DRA device metadata update path is not active, so KEP-5304 DRA device metadata via CDI-mounted files is not supported in this mode.
 
 Deploy in `MULTUS` mode:
 
