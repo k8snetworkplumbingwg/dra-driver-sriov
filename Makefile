@@ -236,6 +236,14 @@ chart-push: ## Push chart (pass VERSION=v1.0.0 or VERSION=sha)
 deploy-virtual-k8s-cluster:
 	SKIP_DELETE=TRUE ./hack/deploy-virtual-k8s-cluster.sh
 
+.PHONY: deploy-single-node-virtual-cluster
+deploy-single-node-virtual-cluster:
+	SKIP_DELETE=TRUE ./hack/ci-deploy-single-node-virtual-cluster.sh
+
+.PHONY: ci-single-node-e2e
+ci-single-node-e2e:
+	./hack/ci-deploy-single-node-virtual-cluster.sh
+
 .PHONY: undeploy-virtual-k8s-cluster
 delete-virtual-k8s-cluster:
 	./hack/delete-virtual-k8s-cluster.sh

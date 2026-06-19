@@ -1,0 +1,145 @@
+name: Virtual E2E (Single Node)
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: virtual-e2e-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.26.x"
+
+jobs:
+  virtual-e2e:
+    name: Single Node Virtual Cluster E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Free disk space
+        run: |
+          echo "## Disk space before cleanup"
+          df -h /
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache
+          sudo rm -rf /usr/local/share/boost
+          sudo docker image prune --all --force
+          echo "## Disk space after cleanup"
+          df -h /
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
+
+      - name: Install virtualization stack
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-kvm qemu-system-x86 qemu-utils \
+            libvirt-daemon-system libvirt-clients \
+            virtinst bridge-utils \
+            libguestfs-tools genisoimage \
+            dnsmasq-base \
+            python3-pip
+          sudo usermod -aG kvm,libvirt $USER
+          sudo systemctl enable --now libvirtd
+          sudo systemctl start virtlogd
+          # Create default libvirt storage pool
+          sudo mkdir -p /var/lib/libvirt/images
+          sudo virsh pool-define-as default dir --target /var/lib/libvirt/images
+          sudo virsh pool-build default
+          sudo virsh pool-start default
+          sudo virsh pool-autostart default
+          # Generate SSH key pair for kcli VM access (kcli requires ~/.ssh/id_rsa)
+          sudo mkdir -p /root/.ssh
+          sudo ssh-keygen -t rsa -b 2048 -f /root/.ssh/id_rsa -N ""
+          sudo chmod 700 /root/.ssh
+          sudo chmod 600 /root/.ssh/id_rsa
+          sudo ls -la /root/.ssh/
+
+      - name: Install kcli
+        run: |
+          sudo pip3 install "kcli>=99.0,<100"
+          kcli version
+
+      - name: Install podman
+        run: |
+          sudo apt-get install -y podman
+          podman version
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Deploy single-node virtual cluster and DRA driver
+        run: |
+          sudo -E env "PATH=$PATH" "HOME=/root" "SKIP_DELETE=TRUE" bash hack/ci-deploy-single-node-virtual-cluster.sh
+
+      - name: Verify SR-IOV VFs are available
+        run: |
+          KCONF=/root/.kcli/clusters/dra/auth/kubeconfig
+          echo "## Node status"
+          sudo kubectl --kubeconfig=$KCONF get nodes -o wide
+          echo "## DRA driver pods"
+          sudo kubectl --kubeconfig=$KCONF -n dra-driver-sriov get pods
+          echo "## SriovResourcePolicy"
+          sudo kubectl --kubeconfig=$KCONF -n dra-driver-sriov get sriovresourcepolicies -o yaml || true
+          echo "## ResourceSlices"
+          sudo kubectl --kubeconfig=$KCONF get resourceslices -o wide || true
+          echo "## ResourceSlice devices"
+          sudo kubectl --kubeconfig=$KCONF get resourceslices -o jsonpath='{range .items[*]}{.metadata.name}{": "}{range .spec.devices[*]}{.name}{" "}{end}{"\n"}{end}' || true
+          echo "## Device classes"
+          sudo kubectl --kubeconfig=$KCONF get deviceclass || true
+          echo "## VFs on VM"
+          sudo kcli ssh dra-ctlplane-0 "ls /sys/bus/pci/devices/0000:01:00.0/virtfn* 2>/dev/null; ls /sys/bus/pci/devices/0000:02:00.0/virtfn* 2>/dev/null" || true
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          KCONF=/root/.kcli/clusters/dra/auth/kubeconfig
+          echo "=== Node status ==="
+          sudo kubectl --kubeconfig=$KCONF get nodes -o wide || true
+          echo "=== All pods ==="
+          sudo kubectl --kubeconfig=$KCONF get pods -A || true
+          echo "=== DRA driver logs ==="
+          sudo kubectl --kubeconfig=$KCONF -n dra-driver-sriov logs -l app.kubernetes.io/name=dra-driver-sriov-chart --tail=200 || true
+          echo "=== SriovResourcePolicy ==="
+          sudo kubectl --kubeconfig=$KCONF -n dra-driver-sriov get sriovresourcepolicies -o yaml || true
+          echo "=== ResourceSlices ==="
+          sudo kubectl --kubeconfig=$KCONF get resourceslices -o yaml || true
+          echo "=== Events ==="
+          sudo kubectl --kubeconfig=$KCONF get events -A --sort-by=.lastTimestamp || true
+          echo "=== VF creation service status ==="
+          sudo kcli ssh dra-ctlplane-0 "systemctl status create-sriov-vfs.service; journalctl -u create-sriov-vfs.service --no-pager" || true
+          echo "=== PCI devices ==="
+          sudo kcli ssh dra-ctlplane-0 "lspci | grep -i ethernet; ls /sys/bus/pci/devices/*/sriov_numvfs 2>/dev/null | xargs -I{} sh -c 'echo {}:; cat {}'" || true
+          echo "=== VM list ==="
+          sudo kcli list vm || true
+          echo "=== libvirt domains ==="
+          sudo virsh list --all || true
