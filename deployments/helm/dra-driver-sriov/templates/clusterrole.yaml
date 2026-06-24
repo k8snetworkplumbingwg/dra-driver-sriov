@@ -5,6 +5,9 @@ metadata:
   name: {{ include "dra-driver-sriov.fullname" . }}-role
   namespace: {{ include "dra-driver-sriov.namespace" . }}
 rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
 - apiGroups: ["resource.k8s.io"]
   resources: ["resourceclaims"]
   verbs: ["get"]
