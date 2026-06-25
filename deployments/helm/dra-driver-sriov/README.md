@@ -151,6 +151,8 @@ The kubelet plugin runs as a DaemonSet on all nodes where SR-IOV devices should 
 | `kubeletPlugin.containers.plugin.resources` | object | `{}` | Resource requests/limits for plugin container |
 | `kubeletPlugin.containers.plugin.healthcheckPort` | int | `-1` | Port for health check (disabled if negative) |
 
+Limitation for `MULTUS` mode: The runtime DRA device metadata update path is not active, so KEP-5304 DRA device metadata via CDI-mounted files is not supported in this mode.
+
 ### Logging Parameters
 
 | Name | Type | Default | Description |
