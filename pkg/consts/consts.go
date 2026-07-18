@@ -56,6 +56,10 @@ const (
 	NetClass  = 0x02 // Network controller class
 	SysBusPci = "/sys/bus/pci/devices"
 
+	// SR-IOV eswitch mode constants
+	SriovModeLegacy    = "legacy"
+	SriovModeSwitchdev = "switchdev"
+
 	// Link type constants
 	LinkTypeEth        = "eth"
 	LinkTypeEthernet   = "ethernet"

@@ -263,12 +263,32 @@ func (h *Host) TryGetInterfaceName(pciAddr string) string {
 	return fInfos[0].Name()
 }
 
-// GetNicSriovMode returns the interface mode (simplified implementation)
-// This is a simplified version that returns "legacy" mode as fallback
-func (h *Host) GetNicSriovMode(_ string) string {
-	// For simplicity, always return legacy mode
-	// A full implementation would use netlink to query the eswitch mode
-	return "legacy"
+// GetNicSriovMode returns the SR-IOV eswitch mode ("switchdev" or "legacy") for
+// the NIC at the given PCI address.
+//
+// Detection uses the netdev's phys_switch_id sysfs attribute: a PF whose eswitch
+// is in switchdev mode exposes a non-empty phys_switch_id (the physical switch id
+// shared by the PF and its VF representors), whereas a PF in legacy mode exposes
+// an empty value. This mirrors how switchdev-aware tooling distinguishes the
+// modes, without requiring a netlink/devlink socket (which keeps it usable in
+// unit tests via RootDir and avoids extra privileges).
+func (h *Host) GetNicSriovMode(pciAddr string) string {
+	ifName := h.TryGetInterfaceName(pciAddr)
+	if ifName == "" {
+		return consts.SriovModeLegacy
+	}
+
+	physSwitchIDPath := buildSysPath(fmt.Sprintf("/sys/class/net/%s/phys_switch_id", ifName))
+	content, err := os.ReadFile(physSwitchIDPath)
+	if err != nil {
+		// Missing attribute (older kernels / non-switchdev-capable NICs) => legacy.
+		return consts.SriovModeLegacy
+	}
+
+	if strings.TrimSpace(string(content)) != "" {
+		return consts.SriovModeSwitchdev
+	}
+	return consts.SriovModeLegacy
 }
 
 // GetLinkType returns the link type for a given network interface

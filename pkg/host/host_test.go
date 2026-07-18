@@ -171,11 +171,52 @@ var _ = Describe("Host", func() {
 		})
 
 		Context("GetNicSriovMode", func() {
-			It("should return legacy mode", func() {
+			It("should return switchdev when phys_switch_id is non-empty", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth0",
+					"sys/class/net/eth0",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/net/eth0/phys_switch_id": []byte("aabbccddeeff\n"),
+				}
 				tearDown = fs.Use()
 
-				mode := h.GetNicSriovMode("0000:01:00.0")
-				Expect(mode).To(Equal("legacy"))
+				Expect(h.GetNicSriovMode("0000:01:00.0")).To(Equal(consts.SriovModeSwitchdev))
+			})
+
+			It("should return legacy when phys_switch_id is empty", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth0",
+					"sys/class/net/eth0",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/net/eth0/phys_switch_id": []byte("\n"),
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetNicSriovMode("0000:01:00.0")).To(Equal(consts.SriovModeLegacy))
+			})
+
+			It("should return legacy when phys_switch_id is absent", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0/net",
+					"sys/bus/pci/devices/0000:01:00.0/net/eth0",
+					"sys/class/net/eth0",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetNicSriovMode("0000:01:00.0")).To(Equal(consts.SriovModeLegacy))
+			})
+
+			It("should return legacy when the interface name cannot be resolved", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetNicSriovMode("0000:01:00.0")).To(Equal(consts.SriovModeLegacy))
 			})
 		})
 
