@@ -419,6 +419,15 @@ var _ = Describe("Host", func() {
 				_, err := h.BindDeviceDriver("0000:01:00.0", config)
 				Expect(err).NotTo(HaveOccurred())
 			})
+
+			It("should fail when explicit MAC setup fails before vfio bind", func() {
+				tearDown = fs.Use()
+				config := &configapi.VfConfig{Driver: consts.DriverVFIOPCI}
+
+				_, err := h.BindDeviceDriverWithMAC("0000:01:00.1", config, "de:ad:00:00:be:ef")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("failed to set MAC address on device"))
+			})
 		})
 
 		Context("IsDpdkDriver", func() {

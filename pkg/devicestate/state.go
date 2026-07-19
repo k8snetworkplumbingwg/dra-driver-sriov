@@ -120,7 +120,7 @@ func (s *Manager) isMultusMode() bool {
 
 // PrepareDevicesForClaim prepares the devices for a given claim
 // It will return the prepared devices for the claim
-func (s *Manager) PrepareDevicesForClaim(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim) (drasriovtypes.PreparedDevices, error) {
+func (s *Manager) PrepareDevicesForClaim(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim, macAddresses map[string]string) (drasriovtypes.PreparedDevices, error) {
 	logger := klog.FromContext(ctx).WithName("PrepareDevicesForClaim")
 
 	resultsConfig, err := getMapOfOpaqueDeviceConfigForDevice(configapi.Decoder, claim.Status.Allocation.Devices.Config)
@@ -129,7 +129,7 @@ func (s *Manager) PrepareDevicesForClaim(ctx context.Context, ifNameIndex *int, 
 		return nil, fmt.Errorf("error creating map of opaque device config for device: %v", err)
 	}
 
-	preparedDevices, err := s.prepareDevices(ctx, ifNameIndex, claim, resultsConfig)
+	preparedDevices, err := s.prepareDevices(ctx, ifNameIndex, claim, resultsConfig, macAddresses)
 	if err != nil {
 		logger.Error(err, "Prepare failed", "claim", *claim)
 		return nil, fmt.Errorf("prepare failed: %v", err)
@@ -166,7 +166,8 @@ func (s *Manager) PrepareDevicesForClaim(ctx context.Context, ifNameIndex *int, 
 
 func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 	claim *resourceapi.ResourceClaim,
-	resultsConfig map[string]*configapi.VfConfig) (drasriovtypes.PreparedDevices, error) {
+	resultsConfig map[string]*configapi.VfConfig,
+	macAddresses map[string]string) (drasriovtypes.PreparedDevices, error) {
 	logger := klog.FromContext(ctx).WithName("prepareDevices")
 	preparedDevices := drasriovtypes.PreparedDevices{}
 	for _, result := range claim.Status.Allocation.Devices.Results {
@@ -182,7 +183,7 @@ func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 		// make changes if needed
 		config.Normalize()
 
-		preparedDevice, err := s.applyConfigOnDevice(ctx, ifNameIndex, claim, config, &result)
+		preparedDevice, err := s.applyConfigOnDevice(ctx, ifNameIndex, claim, config, &result, macAddresses)
 		if err != nil {
 			logger.Error(err, "error applying config on device", "config", config, "result", result)
 			if rollbackErr := s.unprepareDevices(preparedDevices); rollbackErr != nil {
@@ -210,7 +211,7 @@ func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 	return preparedDevices, nil
 }
 
-func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim, config *configapi.VfConfig, result *resourceapi.DeviceRequestAllocationResult) (*drasriovtypes.PreparedDevice, error) {
+func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim, config *configapi.VfConfig, result *resourceapi.DeviceRequestAllocationResult, macAddresses map[string]string) (*drasriovtypes.PreparedDevice, error) {
 	logger := klog.FromContext(ctx).WithName("applyConfigOnDevice")
 	logger.V(3).Info("Applying config on device", "config", config, "result", result)
 	deviceInfo, exist := s.allocatable[result.Device]
@@ -248,8 +249,34 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 			return nil, fmt.Errorf("error converting net attach def config to sriov-cni format: %w", err)
 		}
 	}
+
+	// Add MAC address to netconf when KubeVirt provided one for this request.
+	mac := ""
+	if len(macAddresses) > 0 {
+		var found bool
+		mac, found = macAddresses[result.Request]
+		logger.V(3).Info("Looking up MAC address", "request", result.Request, "found", found)
+
+		if found && mac == "" {
+			return nil, fmt.Errorf("empty MAC value for request %q", result.Request)
+		}
+
+		if found {
+			logger.V(2).Info("Adding MAC address to network config", "request", result.Request, "mac", mac)
+			netAttachDefRawConfig, err = drasriovtypes.AddMACToNetConf(netAttachDefRawConfig, mac)
+			if err != nil {
+				return nil, fmt.Errorf("failed to add MAC address %q to network config for request %q: %w", mac, result.Request, err)
+			}
+		}
+	}
+
 	// Bind device to driver if specified in config
-	originalDriver, err := host.GetHelpers().BindDeviceDriver(pciAddress, config)
+	// For vfio-pci mode with MAC address: pass MAC so it can be set after unbind but before bind
+	macForBinding := ""
+	if mac != "" && config.Driver == consts.DriverVFIOPCI {
+		macForBinding = mac
+	}
+	originalDriver, err := host.GetHelpers().BindDeviceDriverWithMAC(pciAddress, config, macForBinding)
 	if err != nil {
 		return nil, fmt.Errorf("error binding device %s to driver: %w", pciAddress, err)
 	}
@@ -280,7 +307,7 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 	var deviceNodes []*cdispec.DeviceNode
 
 	// If device is bound to vfio-pci, add VFIO device nodes
-	if config.Driver == "vfio-pci" {
+	if config.Driver == consts.DriverVFIOPCI {
 		devFileHost, devFileContainer, err := host.GetHelpers().GetVFIODeviceFile(pciAddress)
 		if err != nil {
 			return nil, restoreDriverOnError(fmt.Errorf("error getting VFIO device file for device %s: %w", pciAddress, err))
