@@ -237,6 +237,50 @@ var _ = Describe("Manager", Serial, func() {
 			err := m.unprepareDevices(preparedDevices)
 			Expect(err).NotTo(HaveOccurred())
 		})
+
+		It("should reset native VF attributes when a VF block was applied", func() {
+			preparedDevices := drasriovtypes.PreparedDevices{
+				&drasriovtypes.PreparedDevice{
+					PciAddress: "0000:01:00.1",
+					Config: &configapi.VfConfig{
+						VF: &configapi.VFLinkConfig{VLAN: ptr.To(100)},
+					},
+					DeviceAttributes: map[string]resourceapi.DeviceAttribute{
+						consts.AttributePfPciAddress: {StringValue: ptr.To("0000:01:00.0")},
+						consts.AttributeVFID:         {IntValue: ptr.To(int64(3))},
+					},
+				},
+			}
+
+			mockHost.EXPECT().TryGetPFInterfaceName("0000:01:00.0").Return("eth0")
+			mockHost.EXPECT().ResetVF("eth0", 3).Return(nil)
+
+			m := &Manager{}
+			err := m.unprepareDevices(preparedDevices)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should continue unprepare when VF reset fails (best-effort)", func() {
+			preparedDevices := drasriovtypes.PreparedDevices{
+				&drasriovtypes.PreparedDevice{
+					PciAddress: "0000:01:00.1",
+					Config: &configapi.VfConfig{
+						VF: &configapi.VFLinkConfig{VLAN: ptr.To(100)},
+					},
+					DeviceAttributes: map[string]resourceapi.DeviceAttribute{
+						consts.AttributePfPciAddress: {StringValue: ptr.To("0000:01:00.0")},
+						consts.AttributeVFID:         {IntValue: ptr.To(int64(3))},
+					},
+				},
+			}
+
+			mockHost.EXPECT().TryGetPFInterfaceName("0000:01:00.0").Return("eth0")
+			mockHost.EXPECT().ResetVF("eth0", 3).Return(fmt.Errorf("netlink failed"))
+
+			m := &Manager{}
+			err := m.unprepareDevices(preparedDevices)
+			Expect(err).NotTo(HaveOccurred())
+		})
 	})
 
 	Context("Unprepare", func() {
@@ -991,6 +1035,117 @@ var _ = Describe("Manager", Serial, func() {
 			_, err := m.applyConfigOnDevice(context.Background(), &ifNameIndex, claim, config, result)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("error getting VFIO device file"))
+		})
+
+		It("configures native VF attributes in STANDALONE mode", func() {
+			netAttachDef := &netattdefv1.NetworkAttachmentDefinition{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-net", Namespace: "test-ns"},
+				Spec:       netattdefv1.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion":"0.3.1","type":"sriov"}`},
+			}
+			m := newTestManagerWithK8sClient(netAttachDef)
+			m.defaultInterfacePrefix = "net"
+			m.configurationMode = string(consts.ConfigurationModeStandalone)
+			m.allocatable = drasriovtypes.AllocatableDevices{
+				"device1": resourceapi.Device{
+					Name: "device1",
+					Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+						consts.AttributePciAddress:   {StringValue: ptr.To("0000:01:00.1")},
+						consts.AttributePfPciAddress: {StringValue: ptr.To("0000:01:00.0")},
+						consts.AttributeVFID:         {IntValue: ptr.To(int64(3))},
+					},
+				},
+			}
+
+			vfLink := &configapi.VFLinkConfig{VLAN: ptr.To(100), Trust: ptr.To(true)}
+			config := &configapi.VfConfig{NetAttachDefName: "test-net", VF: vfLink}
+			claim := &resourceapi.ResourceClaim{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-claim", Namespace: "test-ns", UID: "claim-uid"},
+				Status: resourceapi.ResourceClaimStatus{
+					ReservedFor: []resourceapi.ResourceClaimConsumerReference{{UID: "pod-uid"}},
+				},
+			}
+			result := &resourceapi.DeviceRequestAllocationResult{Device: "device1", Request: "req1", Pool: "pool1"}
+
+			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", config).Return("", nil)
+			mockHost.EXPECT().TryGetPFInterfaceName("0000:01:00.0").Return("eth0")
+			mockHost.EXPECT().ConfigureVF("eth0", 3, vfLink).Return(nil)
+
+			ifNameIndex := 0
+			preparedDevice, err := m.applyConfigOnDevice(context.Background(), &ifNameIndex, claim, config, result)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(preparedDevice).NotTo(BeNil())
+		})
+
+		It("does not configure native VF attributes in MULTUS mode", func() {
+			m := &Manager{
+				allocatable: drasriovtypes.AllocatableDevices{
+					"device1": {
+						Name: "device1",
+						Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+							consts.AttributePciAddress:   {StringValue: ptr.To("0000:01:00.1")},
+							consts.AttributePfPciAddress: {StringValue: ptr.To("0000:01:00.0")},
+							consts.AttributeVFID:         {IntValue: ptr.To(int64(3))},
+						},
+					},
+				},
+				configurationMode: string(consts.ConfigurationModeMultus),
+			}
+			config := &configapi.VfConfig{VF: &configapi.VFLinkConfig{VLAN: ptr.To(100)}}
+			claim := &resourceapi.ResourceClaim{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-claim", Namespace: "test-ns", UID: "claim-uid"},
+				Status: resourceapi.ResourceClaimStatus{
+					ReservedFor: []resourceapi.ResourceClaimConsumerReference{{UID: "pod-uid"}},
+				},
+			}
+			result := &resourceapi.DeviceRequestAllocationResult{Device: "device1", Request: "req1", Pool: "pool1"}
+
+			// No ConfigureVF/TryGetPFInterfaceName expectations: MULTUS mode must not touch VF attrs.
+			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", config).Return("", nil)
+
+			ifNameIndex := 0
+			preparedDevice, err := m.applyConfigOnDevice(context.Background(), &ifNameIndex, claim, config, result)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(preparedDevice).NotTo(BeNil())
+		})
+
+		It("restores the original driver when VF attribute configuration fails", func() {
+			netAttachDef := &netattdefv1.NetworkAttachmentDefinition{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-net", Namespace: "test-ns"},
+				Spec:       netattdefv1.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion":"0.3.1","type":"sriov"}`},
+			}
+			m := newTestManagerWithK8sClient(netAttachDef)
+			m.defaultInterfacePrefix = "net"
+			m.configurationMode = string(consts.ConfigurationModeStandalone)
+			m.allocatable = drasriovtypes.AllocatableDevices{
+				"device1": resourceapi.Device{
+					Name: "device1",
+					Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+						consts.AttributePciAddress:   {StringValue: ptr.To("0000:01:00.1")},
+						consts.AttributePfPciAddress: {StringValue: ptr.To("0000:01:00.0")},
+						consts.AttributeVFID:         {IntValue: ptr.To(int64(3))},
+					},
+				},
+			}
+
+			vfLink := &configapi.VFLinkConfig{VLAN: ptr.To(100)}
+			config := &configapi.VfConfig{Driver: "vfio-pci", NetAttachDefName: "test-net", VF: vfLink}
+			claim := &resourceapi.ResourceClaim{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-claim", Namespace: "test-ns", UID: "claim-uid"},
+				Status: resourceapi.ResourceClaimStatus{
+					ReservedFor: []resourceapi.ResourceClaimConsumerReference{{UID: "pod-uid"}},
+				},
+			}
+			result := &resourceapi.DeviceRequestAllocationResult{Device: "device1", Request: "req1", Pool: "pool1"}
+
+			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", config).Return("ixgbevf", nil)
+			mockHost.EXPECT().TryGetPFInterfaceName("0000:01:00.0").Return("eth0")
+			mockHost.EXPECT().ConfigureVF("eth0", 3, vfLink).Return(fmt.Errorf("netlink failed"))
+			mockHost.EXPECT().RestoreDeviceDriver("0000:01:00.1", "ixgbevf").Return(nil)
+
+			ifNameIndex := 0
+			_, err := m.applyConfigOnDevice(context.Background(), &ifNameIndex, claim, config, result)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to configure VF attributes"))
 		})
 	})
 
