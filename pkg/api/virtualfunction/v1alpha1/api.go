@@ -46,6 +46,33 @@ type VfConfig struct {
 	IfName                string `json:"ifName,omitempty"`
 	NetAttachDefName      string `json:"netAttachDefName,omitempty"`
 	NetAttachDefNamespace string `json:"netAttachDefNamespace,omitempty"`
+	// VF carries native VF link attributes applied via netlink at prepare time
+	// (STANDALONE mode only; in MULTUS mode sriov-cni owns these). All fields
+	// are pointers so that "unset" is distinguishable from a zero value and only
+	// explicitly requested attributes are applied.
+	VF *VFLinkConfig `json:"vf,omitempty"`
+}
+
+// VFLinkConfig holds native VF link attributes that are programmed on the PF via
+// netlink at prepare time. MAC configuration is intentionally excluded here and
+// handled separately; see the driver documentation.
+type VFLinkConfig struct {
+	// VLAN is the 802.1Q VLAN id to assign to the VF (0-4094; 0 clears it).
+	VLAN *int `json:"vlan,omitempty"`
+	// Qos is the 802.1p priority (QoS) associated with the VLAN (0-7).
+	Qos *int `json:"qos,omitempty"`
+	// VlanProto selects the VLAN protocol for QinQ, one of "802.1q" or "802.1ad".
+	VlanProto *string `json:"vlanProto,omitempty"`
+	// SpoofChk enables or disables MAC/VLAN anti-spoofing checks on the VF.
+	SpoofChk *bool `json:"spoofChk,omitempty"`
+	// Trust enables or disables trusted mode for the VF.
+	Trust *bool `json:"trust,omitempty"`
+	// MinTxRate is the minimum guaranteed transmit bandwidth in Mbps (0 clears it).
+	MinTxRate *int `json:"minTxRate,omitempty"`
+	// MaxTxRate is the maximum transmit bandwidth in Mbps (0 clears it).
+	MaxTxRate *int `json:"maxTxRate,omitempty"`
+	// LinkState controls the VF link state, one of "auto", "enable" or "disable".
+	LinkState *string `json:"linkState,omitempty"`
 }
 
 // DefaultGpuConfig provides the default GPU configuration.
@@ -71,6 +98,40 @@ func (c *VfConfig) Override(other *VfConfig) {
 	}
 	if other.NetAttachDefName != "" {
 		c.NetAttachDefName = other.NetAttachDefName
+	}
+	if other.VF != nil {
+		if c.VF == nil {
+			c.VF = &VFLinkConfig{}
+		}
+		c.VF.override(other.VF)
+	}
+}
+
+// override merges non-nil pointer fields from other into the receiver.
+func (v *VFLinkConfig) override(other *VFLinkConfig) {
+	if other.VLAN != nil {
+		v.VLAN = other.VLAN
+	}
+	if other.Qos != nil {
+		v.Qos = other.Qos
+	}
+	if other.VlanProto != nil {
+		v.VlanProto = other.VlanProto
+	}
+	if other.SpoofChk != nil {
+		v.SpoofChk = other.SpoofChk
+	}
+	if other.Trust != nil {
+		v.Trust = other.Trust
+	}
+	if other.MinTxRate != nil {
+		v.MinTxRate = other.MinTxRate
+	}
+	if other.MaxTxRate != nil {
+		v.MaxTxRate = other.MaxTxRate
+	}
+	if other.LinkState != nil {
+		v.LinkState = other.LinkState
 	}
 }
 

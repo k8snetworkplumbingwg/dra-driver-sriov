@@ -122,6 +122,10 @@ type Interface interface {
 	GetRDMADevicesForPCI(pciAddr string) []string
 	VerifyRDMACapability(pciAddr string) bool
 	GetRDMACharDevices(rdmaDeviceName string) ([]string, error)
+
+	// Native VF attribute configuration (applied via netlink on the PF)
+	ConfigureVF(pfName string, vfIndex int, cfg *configapi.VFLinkConfig) error
+	ResetVF(pfName string, vfIndex int) error
 }
 
 // Host provides unified host system functionality for SR-IOV, PCI operations, and driver management
@@ -853,4 +857,105 @@ func (h *Host) GetRDMACharDevices(rdmaDeviceName string) ([]string, error) {
 	h.log.Info("GetRDMACharDevices(): found character devices",
 		"rdmaDevice", rdmaDeviceName, "charDevices", charDevices)
 	return charDevices, nil
+}
+
+// Native VF Attribute Configuration
+
+// ConfigureVF applies the requested native VF link attributes on the given PF
+// interface via netlink. Only non-nil fields of cfg are applied. Attributes are
+// applied before the link state so that link_state is programmed last, matching
+// sriov-cni ordering. A nil cfg is a no-op.
+func (h *Host) ConfigureVF(pfName string, vfIndex int, cfg *configapi.VFLinkConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	if pfName == "" {
+		return fmt.Errorf("cannot configure VF %d: empty PF interface name", vfIndex)
+	}
+
+	// VLAN/QoS/proto are programmed together because netlink applies them via a
+	// single message. Only issue the call when at least one of them is requested.
+	if cfg.VLAN != nil || cfg.Qos != nil || cfg.VlanProto != nil {
+		vlan := valueOrZero(cfg.VLAN)
+		qos := valueOrZero(cfg.Qos)
+		proto := ""
+		if cfg.VlanProto != nil {
+			proto = *cfg.VlanProto
+		}
+		h.log.V(2).Info("ConfigureVF(): setting VF vlan", "pf", pfName, "vf", vfIndex, "vlan", vlan, "qos", qos, "proto", proto)
+		if err := h.netlinkProvider.SetVfVlanQosProto(pfName, vfIndex, vlan, qos, proto); err != nil {
+			return fmt.Errorf("failed to set vlan on VF %d of %s: %w", vfIndex, pfName, err)
+		}
+	}
+
+	if cfg.SpoofChk != nil {
+		h.log.V(2).Info("ConfigureVF(): setting VF spoofchk", "pf", pfName, "vf", vfIndex, "spoofchk", *cfg.SpoofChk)
+		if err := h.netlinkProvider.SetVfSpoofchk(pfName, vfIndex, *cfg.SpoofChk); err != nil {
+			return fmt.Errorf("failed to set spoofchk on VF %d of %s: %w", vfIndex, pfName, err)
+		}
+	}
+
+	if cfg.Trust != nil {
+		h.log.V(2).Info("ConfigureVF(): setting VF trust", "pf", pfName, "vf", vfIndex, "trust", *cfg.Trust)
+		if err := h.netlinkProvider.SetVfTrust(pfName, vfIndex, *cfg.Trust); err != nil {
+			return fmt.Errorf("failed to set trust on VF %d of %s: %w", vfIndex, pfName, err)
+		}
+	}
+
+	if cfg.MinTxRate != nil || cfg.MaxTxRate != nil {
+		minRate := valueOrZero(cfg.MinTxRate)
+		maxRate := valueOrZero(cfg.MaxTxRate)
+		h.log.V(2).Info("ConfigureVF(): setting VF rate", "pf", pfName, "vf", vfIndex, "minTxRate", minRate, "maxTxRate", maxRate)
+		if err := h.netlinkProvider.SetVfRate(pfName, vfIndex, minRate, maxRate); err != nil {
+			return fmt.Errorf("failed to set tx rate on VF %d of %s: %w", vfIndex, pfName, err)
+		}
+	}
+
+	// link_state is applied last.
+	if cfg.LinkState != nil {
+		h.log.V(2).Info("ConfigureVF(): setting VF link state", "pf", pfName, "vf", vfIndex, "linkState", *cfg.LinkState)
+		if err := h.netlinkProvider.SetVfState(pfName, vfIndex, *cfg.LinkState); err != nil {
+			return fmt.Errorf("failed to set link state on VF %d of %s: %w", vfIndex, pfName, err)
+		}
+	}
+
+	return nil
+}
+
+// ResetVF best-effort restores a VF to a neutral default state: vlan 0, spoofchk
+// on, trust off, rates 0 and link state auto. Errors are aggregated and returned
+// so callers can log them without aborting the whole unprepare flow.
+func (h *Host) ResetVF(pfName string, vfIndex int) error {
+	if pfName == "" {
+		return fmt.Errorf("cannot reset VF %d: empty PF interface name", vfIndex)
+	}
+
+	var errs []error
+	if err := h.netlinkProvider.SetVfVlanQosProto(pfName, vfIndex, 0, 0, ""); err != nil {
+		errs = append(errs, fmt.Errorf("reset vlan: %w", err))
+	}
+	if err := h.netlinkProvider.SetVfSpoofchk(pfName, vfIndex, true); err != nil {
+		errs = append(errs, fmt.Errorf("reset spoofchk: %w", err))
+	}
+	if err := h.netlinkProvider.SetVfTrust(pfName, vfIndex, false); err != nil {
+		errs = append(errs, fmt.Errorf("reset trust: %w", err))
+	}
+	if err := h.netlinkProvider.SetVfRate(pfName, vfIndex, 0, 0); err != nil {
+		errs = append(errs, fmt.Errorf("reset rate: %w", err))
+	}
+	if err := h.netlinkProvider.SetVfState(pfName, vfIndex, configapi.LinkStateAuto); err != nil {
+		errs = append(errs, fmt.Errorf("reset link state: %w", err))
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to reset VF %d of %s: %w", vfIndex, pfName, errors.Join(errs...))
+	}
+	return nil
+}
+
+// valueOrZero dereferences an int pointer, returning 0 when nil.
+func valueOrZero(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
 }

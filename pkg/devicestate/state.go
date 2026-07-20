@@ -270,6 +270,15 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 		}
 	}
 
+	// Apply native VF link attributes (vlan/spoofchk/trust/rate/link_state) via
+	// netlink. This is only done in STANDALONE mode; in MULTUS mode sriov-cni owns
+	// VF configuration and applying it here would conflict.
+	if s.isStandaloneMode() && config.VF != nil {
+		if err := s.configureVFAttributes(logger, deviceInfo, config.VF); err != nil {
+			return nil, restoreDriverOnError(err)
+		}
+	}
+
 	// create environment variables
 	envs := []string{
 		fmt.Sprintf("SRIOVNETWORK_VF_DEVICE_%s=%s", strings.ReplaceAll(result.Device, "-", "_"), *deviceInfo.Attributes[consts.AttributePciAddress].StringValue),
@@ -369,6 +378,61 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 	}
 
 	return preparedDevice, nil
+}
+
+// configureVFAttributes resolves the PF interface name and VF index for the
+// given device and applies the requested native VF link attributes via netlink.
+func (s *Manager) configureVFAttributes(logger klog.Logger, deviceInfo resourceapi.Device, vfCfg *configapi.VFLinkConfig) error {
+	pfPciAttr, ok := deviceInfo.Attributes[consts.AttributePfPciAddress]
+	if !ok || pfPciAttr.StringValue == nil {
+		return fmt.Errorf("cannot configure VF attributes: missing PF PCI address attribute")
+	}
+	pfName := host.GetHelpers().TryGetPFInterfaceName(*pfPciAttr.StringValue)
+	if pfName == "" {
+		return fmt.Errorf("cannot configure VF attributes: unable to resolve PF interface name for %s", *pfPciAttr.StringValue)
+	}
+
+	vfIDAttr, ok := deviceInfo.Attributes[consts.AttributeVFID]
+	if !ok || vfIDAttr.IntValue == nil {
+		return fmt.Errorf("cannot configure VF attributes: missing VF ID attribute")
+	}
+	vfIndex := int(*vfIDAttr.IntValue)
+
+	logger.V(2).Info("Configuring native VF attributes", "pf", pfName, "vf", vfIndex)
+	if err := host.GetHelpers().ConfigureVF(pfName, vfIndex, vfCfg); err != nil {
+		return fmt.Errorf("failed to configure VF attributes on %s vf %d: %w", pfName, vfIndex, err)
+	}
+	return nil
+}
+
+// resetVFAttributes best-effort reverts native VF attributes applied at prepare
+// time back to their defaults. It resolves the PF interface name and VF index
+// from the prepared device metadata attributes and logs (rather than returns)
+// any failures so the unprepare flow can continue.
+func (s *Manager) resetVFAttributes(logger klog.Logger, preparedDevice *drasriovtypes.PreparedDevice) {
+	pfPciAttr, ok := preparedDevice.DeviceAttributes[consts.AttributePfPciAddress]
+	if !ok || pfPciAttr.StringValue == nil {
+		logger.V(2).Info("Skipping VF attribute reset: missing PF PCI address attribute", "device", preparedDevice.PciAddress)
+		return
+	}
+	pfName := host.GetHelpers().TryGetPFInterfaceName(*pfPciAttr.StringValue)
+	if pfName == "" {
+		logger.V(2).Info("Skipping VF attribute reset: unable to resolve PF interface name", "device", preparedDevice.PciAddress, "pfPci", *pfPciAttr.StringValue)
+		return
+	}
+
+	vfIDAttr, ok := preparedDevice.DeviceAttributes[consts.AttributeVFID]
+	if !ok || vfIDAttr.IntValue == nil {
+		logger.V(2).Info("Skipping VF attribute reset: missing VF ID attribute", "device", preparedDevice.PciAddress)
+		return
+	}
+	vfIndex := int(*vfIDAttr.IntValue)
+
+	if err := host.GetHelpers().ResetVF(pfName, vfIndex); err != nil {
+		logger.Error(err, "Failed to reset native VF attributes", "device", preparedDevice.PciAddress, "pf", pfName, "vf", vfIndex)
+		return
+	}
+	logger.V(2).Info("Reset native VF attributes", "device", preparedDevice.PciAddress, "pf", pfName, "vf", vfIndex)
 }
 
 // handleRDMADevice handles RDMA device configuration and returns device nodes, environment variables, or an error
@@ -501,6 +565,12 @@ func (s *Manager) unprepareDevices(preparedDevices drasriovtypes.PreparedDevices
 		if preparedDevice.Config == nil {
 			logger.V(2).Info("Skipping prepared device with nil config during unprepare", "device", preparedDevice.PciAddress)
 			continue
+		}
+		// Best-effort reset of native VF attributes that were applied at prepare
+		// time (STANDALONE mode only). Failures are logged but do not abort the
+		// unprepare flow.
+		if preparedDevice.Config.VF != nil {
+			s.resetVFAttributes(logger, preparedDevice)
 		}
 		// Restore original driver if a driver change was made
 		if preparedDevice.Config.Driver != "" {

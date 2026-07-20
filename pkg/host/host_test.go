@@ -7,6 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"go.uber.org/mock/gomock"
+	"k8s.io/utils/ptr"
 
 	"github.com/k8snetworkplumbingwg/sriovnet"
 
@@ -838,6 +839,101 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("rdmaDeviceName cannot be empty"))
 				Expect(charDevices).To(BeNil())
+			})
+		})
+	})
+
+	Describe("Native VF Attribute Configuration", func() {
+		Context("ConfigureVF", func() {
+			It("should map every non-nil VFLinkConfig field to the matching setter", func() {
+				fake := &host.FakeNetlinkProvider{}
+				hTest := host.NewHostForTest(fake)
+
+				cfg := &configapi.VFLinkConfig{
+					VLAN:      ptr.To(100),
+					Qos:       ptr.To(3),
+					VlanProto: ptr.To(configapi.VlanProto8021ad),
+					SpoofChk:  ptr.To(true),
+					Trust:     ptr.To(false),
+					MinTxRate: ptr.To(100),
+					MaxTxRate: ptr.To(1000),
+					LinkState: ptr.To(configapi.LinkStateEnable),
+				}
+				Expect(hTest.ConfigureVF("eth0", 2, cfg)).NotTo(HaveOccurred())
+
+				Expect(fake.VlanCalls).To(HaveLen(1))
+				Expect(fake.VlanCalls[0]).To(Equal(host.VlanCall{PF: "eth0", VF: 2, Vlan: 100, Qos: 3, Proto: configapi.VlanProto8021ad}))
+				Expect(fake.SpoofchkCalls).To(Equal([]host.SpoofchkCall{{PF: "eth0", VF: 2, Enabled: true}}))
+				Expect(fake.TrustCalls).To(Equal([]host.TrustCall{{PF: "eth0", VF: 2, Enabled: false}}))
+				Expect(fake.RateCalls).To(Equal([]host.RateCall{{PF: "eth0", VF: 2, MinRate: 100, MaxRate: 1000}}))
+				Expect(fake.StateCalls).To(Equal([]host.StateCall{{PF: "eth0", VF: 2, State: configapi.LinkStateEnable}}))
+			})
+
+			It("should only call setters for the fields that are set", func() {
+				fake := &host.FakeNetlinkProvider{}
+				hTest := host.NewHostForTest(fake)
+
+				Expect(hTest.ConfigureVF("eth0", 0, &configapi.VFLinkConfig{Trust: ptr.To(true)})).NotTo(HaveOccurred())
+
+				Expect(fake.VlanCalls).To(BeEmpty())
+				Expect(fake.SpoofchkCalls).To(BeEmpty())
+				Expect(fake.RateCalls).To(BeEmpty())
+				Expect(fake.StateCalls).To(BeEmpty())
+				Expect(fake.TrustCalls).To(HaveLen(1))
+			})
+
+			It("should issue a single vlan call when only qos is set", func() {
+				fake := &host.FakeNetlinkProvider{}
+				hTest := host.NewHostForTest(fake)
+
+				Expect(hTest.ConfigureVF("eth0", 1, &configapi.VFLinkConfig{Qos: ptr.To(5)})).NotTo(HaveOccurred())
+
+				Expect(fake.VlanCalls).To(Equal([]host.VlanCall{{PF: "eth0", VF: 1, Vlan: 0, Qos: 5, Proto: ""}}))
+			})
+
+			It("should be a no-op for a nil config", func() {
+				fake := &host.FakeNetlinkProvider{}
+				hTest := host.NewHostForTest(fake)
+
+				Expect(hTest.ConfigureVF("eth0", 0, nil)).NotTo(HaveOccurred())
+				Expect(fake.VlanCalls).To(BeEmpty())
+				Expect(fake.StateCalls).To(BeEmpty())
+			})
+
+			It("should return an error when the PF name is empty", func() {
+				hTest := host.NewHostForTest(&host.FakeNetlinkProvider{})
+				err := hTest.ConfigureVF("", 0, &configapi.VFLinkConfig{Trust: ptr.To(true)})
+				Expect(err).To(HaveOccurred())
+			})
+
+			It("should propagate setter errors", func() {
+				fake := &host.FakeNetlinkProvider{TrustErr: fmt.Errorf("boom")}
+				hTest := host.NewHostForTest(fake)
+				err := hTest.ConfigureVF("eth0", 0, &configapi.VFLinkConfig{Trust: ptr.To(true)})
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("trust"))
+			})
+		})
+
+		Context("ResetVF", func() {
+			It("should reset all VF attributes to their defaults", func() {
+				fake := &host.FakeNetlinkProvider{}
+				hTest := host.NewHostForTest(fake)
+
+				Expect(hTest.ResetVF("eth0", 4)).NotTo(HaveOccurred())
+
+				Expect(fake.VlanCalls).To(Equal([]host.VlanCall{{PF: "eth0", VF: 4, Vlan: 0, Qos: 0, Proto: ""}}))
+				Expect(fake.SpoofchkCalls).To(Equal([]host.SpoofchkCall{{PF: "eth0", VF: 4, Enabled: true}}))
+				Expect(fake.TrustCalls).To(Equal([]host.TrustCall{{PF: "eth0", VF: 4, Enabled: false}}))
+				Expect(fake.RateCalls).To(Equal([]host.RateCall{{PF: "eth0", VF: 4, MinRate: 0, MaxRate: 0}}))
+				Expect(fake.StateCalls).To(Equal([]host.StateCall{{PF: "eth0", VF: 4, State: configapi.LinkStateAuto}}))
+			})
+
+			It("should aggregate setter errors", func() {
+				fake := &host.FakeNetlinkProvider{VlanErr: fmt.Errorf("v"), StateErr: fmt.Errorf("s")}
+				hTest := host.NewHostForTest(fake)
+				err := hTest.ResetVF("eth0", 0)
+				Expect(err).To(HaveOccurred())
 			})
 		})
 	})

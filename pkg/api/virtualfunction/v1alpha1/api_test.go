@@ -20,6 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 )
@@ -396,6 +397,104 @@ var _ = Describe("VfConfig", func() {
 		It("should work with default config", func() {
 			config := DefaultVfConfig()
 			Expect(func() { config.Normalize() }).NotTo(Panic())
+		})
+	})
+
+	Describe("VF link attributes", func() {
+		Context("Validate", func() {
+			It("should accept a config with valid VF attributes", func() {
+				config := &VfConfig{
+					Driver:           "netdevice",
+					NetAttachDefName: "net",
+					VF: &VFLinkConfig{
+						VLAN:      ptr.To(100),
+						Qos:       ptr.To(3),
+						VlanProto: ptr.To(VlanProto8021ad),
+						SpoofChk:  ptr.To(true),
+						Trust:     ptr.To(false),
+						MinTxRate: ptr.To(100),
+						MaxTxRate: ptr.To(1000),
+						LinkState: ptr.To(LinkStateEnable),
+					},
+				}
+				Expect(config.Validate()).NotTo(HaveOccurred())
+			})
+
+			It("should accept a nil VF block", func() {
+				config := &VfConfig{Driver: "netdevice", NetAttachDefName: "net"}
+				Expect(config.Validate()).NotTo(HaveOccurred())
+			})
+
+			It("should reject an out-of-range vlan", func() {
+				config := &VfConfig{Driver: "netdevice", NetAttachDefName: "net", VF: &VFLinkConfig{VLAN: ptr.To(5000)}}
+				err := config.Validate()
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("vlan"))
+			})
+
+			It("should reject an out-of-range qos", func() {
+				config := &VfConfig{Driver: "netdevice", NetAttachDefName: "net", VF: &VFLinkConfig{Qos: ptr.To(9)}}
+				err := config.Validate()
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("qos"))
+			})
+
+			It("should reject an invalid vlanProto", func() {
+				config := &VfConfig{Driver: "netdevice", NetAttachDefName: "net", VF: &VFLinkConfig{VlanProto: ptr.To("802.1x")}}
+				err := config.Validate()
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("vlanProto"))
+			})
+
+			It("should reject an invalid linkState", func() {
+				config := &VfConfig{Driver: "netdevice", NetAttachDefName: "net", VF: &VFLinkConfig{LinkState: ptr.To("up")}}
+				err := config.Validate()
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("linkState"))
+			})
+
+			It("should reject minTxRate greater than maxTxRate", func() {
+				config := &VfConfig{Driver: "netdevice", NetAttachDefName: "net", VF: &VFLinkConfig{MinTxRate: ptr.To(2000), MaxTxRate: ptr.To(1000)}}
+				err := config.Validate()
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("maxTxRate"))
+			})
+
+			It("should reject a negative txRate", func() {
+				config := &VfConfig{Driver: "netdevice", NetAttachDefName: "net", VF: &VFLinkConfig{MaxTxRate: ptr.To(-1)}}
+				err := config.Validate()
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("maxTxRate"))
+			})
+		})
+
+		Context("Override", func() {
+			It("should set the VF block when base has none", func() {
+				base := &VfConfig{Driver: "netdevice", NetAttachDefName: "net"}
+				other := &VfConfig{VF: &VFLinkConfig{VLAN: ptr.To(100), Trust: ptr.To(true)}}
+				base.Override(other)
+				Expect(base.VF).NotTo(BeNil())
+				Expect(*base.VF.VLAN).To(Equal(100))
+				Expect(*base.VF.Trust).To(BeTrue())
+			})
+
+			It("should merge only non-nil VF fields", func() {
+				base := &VfConfig{VF: &VFLinkConfig{VLAN: ptr.To(100), Qos: ptr.To(2), Trust: ptr.To(false)}}
+				other := &VfConfig{VF: &VFLinkConfig{VLAN: ptr.To(200), LinkState: ptr.To(LinkStateAuto)}}
+				base.Override(other)
+				Expect(*base.VF.VLAN).To(Equal(200))                // overridden
+				Expect(*base.VF.Qos).To(Equal(2))                   // preserved
+				Expect(*base.VF.Trust).To(BeFalse())                // preserved
+				Expect(*base.VF.LinkState).To(Equal(LinkStateAuto)) // added
+			})
+
+			It("should leave the VF block untouched when other has none", func() {
+				base := &VfConfig{VF: &VFLinkConfig{VLAN: ptr.To(100)}}
+				other := &VfConfig{Driver: "netdevice"}
+				base.Override(other)
+				Expect(base.VF).NotTo(BeNil())
+				Expect(*base.VF.VLAN).To(Equal(100))
+			})
 		})
 	})
 })
