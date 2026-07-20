@@ -91,6 +91,8 @@ type Interface interface {
 	TryGetPFInterfaceName(pciAddr string) string
 	GetNicSriovMode(pciAddr string) string
 	GetLinkType(pciAddr string) (string, error)
+	GetVdpaType(pciAddr string) string
+	GetIBPKey(pciAddr string) string
 
 	// Topology functions
 	GetNumaNode(pciAddress string) (string, error)
@@ -331,6 +333,70 @@ func (h *Host) GetLinkType(pciAddr string) (string, error) {
 		h.log.V(1).Info("Unsupported link type, defaulting to unknown", "interface", ifName, "type", typeInt)
 		return consts.LinkTypeUnknown, nil
 	}
+}
+
+// GetVdpaType returns the vDPA management type for the VF identified by pciAddr.
+// A vDPA device is exposed as a child device under the VF's PCI sysfs directory
+// (/sys/bus/pci/devices/<pci>/vdpaN); the driver bound to it determines the type:
+//   - vhost_vdpa  -> "vhost"
+//   - virtio_vdpa -> "virtio"
+//
+// It returns "" when the VF exposes no vDPA device or the bound driver is unknown.
+func (h *Host) GetVdpaType(pciAddr string) string {
+	devDir := buildSysBusPciPath(pciAddr, "")
+	entries, err := os.ReadDir(devDir)
+	if err != nil {
+		h.log.V(4).Info("failed to read PCI device directory for vdpa lookup", "pciAddr", pciAddr, "err", err)
+		return ""
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "vdpa") {
+			continue
+		}
+		driverLink := filepath.Join(devDir, entry.Name(), "driver")
+		target, err := os.Readlink(driverLink)
+		if err != nil {
+			continue
+		}
+		switch filepath.Base(target) {
+		case "vhost_vdpa":
+			return consts.VdpaTypeVhost
+		case "virtio_vdpa":
+			return consts.VdpaTypeVirtio
+		default:
+			h.log.V(4).Info("unknown vdpa driver, ignoring", "pciAddr", pciAddr, "driver", filepath.Base(target))
+			return ""
+		}
+	}
+	return ""
+}
+
+// GetIBPKey returns the InfiniBand partition key (pkey) of the VF identified by
+// pciAddr. It resolves the VF's own netdev (/sys/bus/pci/devices/<pci>/net/<name>)
+// and reads /sys/class/net/<name>/pkey.
+//
+// Unlike TryGetPFInterfaceName (which is PF-only), this reads the VF's netdev
+// directly from sysfs. It returns "" when the VF has no netdev or the device is
+// not InfiniBand (no pkey file).
+func (h *Host) GetIBPKey(pciAddr string) string {
+	netDir := buildSysBusPciPath(pciAddr, "net")
+	entries, err := os.ReadDir(netDir)
+	if err != nil {
+		h.log.V(4).Info("failed to read net directory for pkey lookup", "pciAddr", pciAddr, "err", err)
+		return ""
+	}
+	if len(entries) == 0 {
+		return ""
+	}
+	ifName := entries[0].Name()
+
+	pkeyPath := buildSysPath(fmt.Sprintf("/sys/class/net/%s/pkey", ifName))
+	content, err := os.ReadFile(pkeyPath) /* #nosec G304 */
+	if err != nil {
+		h.log.V(4).Info("failed to read pkey", "pciAddr", pciAddr, "interface", ifName, "err", err)
+		return ""
+	}
+	return strings.TrimSpace(string(content))
 }
 
 // GetNumaNode returns the NUMA node for a given PCI device.
