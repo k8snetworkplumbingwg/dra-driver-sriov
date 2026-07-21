@@ -46,7 +46,16 @@ const (
 	AttributeVdpaType = DriverName + "/vdpaType"
 	// AttributePKey is the InfiniBand partition key of the VF.
 	// It is only published for InfiniBand links.
-	AttributePKey               = DriverName + "/pKey"
+	AttributePKey = DriverName + "/pKey"
+	// AttributeRepresentor is the host-side switchdev representor netdev name of
+	// the VF (e.g. "enp3s0f0_0"). It is only published for PFs in switchdev mode
+	// and lets external tooling (e.g. tc-flower hardware offload) locate the
+	// representor for an allocated VF.
+	AttributeRepresentor = DriverName + "/representor"
+	// AttributePhysPortName is the kernel phys_port_name of the VF representor
+	// (e.g. "pf0vf0"). It is the kernel-stable identifier of the representor and
+	// is only published, alongside AttributeRepresentor, for PFs in switchdev mode.
+	AttributePhysPortName       = DriverName + "/physPortName"
 	AttributeMultusDeviceID     = MultusAttributePrefix + "/deviceID"
 	AttributeMultusResourceName = MultusAttributePrefix + "/resourceName"
 	// Use upstream Kubernetes standard attribute prefix for pciAddress

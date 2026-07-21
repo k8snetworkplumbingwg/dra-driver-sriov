@@ -93,6 +93,7 @@ type Interface interface {
 	GetLinkType(pciAddr string) (string, error)
 	GetVdpaType(pciAddr string) string
 	GetIBPKey(pciAddr string) string
+	GetVFRepresentor(pfPciAddr string, vfIndex int) (representor, physPortName string, err error)
 
 	// Topology functions
 	GetNumaNode(pciAddress string) (string, error)
@@ -397,6 +398,42 @@ func (h *Host) GetIBPKey(pciAddr string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(content))
+}
+
+// GetVFRepresentor returns the host-side switchdev representor netdev name for
+// the VF at vfIndex under the PF identified by pfPciAddr, together with the
+// representor's kernel phys_port_name (e.g. "pf0vf0").
+//
+// It resolves the PF uplink netdev via TryGetPFInterfaceName and delegates the
+// representor lookup to sriovnet (devlink-based, with a phys_port_name sysfs
+// fallback). This is only meaningful for PFs in switchdev mode; callers must
+// gate on the eswitch mode.
+//
+// The phys_port_name is best-effort: if it cannot be read the representor name
+// is still returned with an empty physPortName and a nil error.
+func (h *Host) GetVFRepresentor(pfPciAddr string, vfIndex int) (representor, physPortName string, err error) {
+	uplink := h.TryGetPFInterfaceName(pfPciAddr)
+	if uplink == "" {
+		return "", "", fmt.Errorf("unable to determine PF uplink netdev for %s", pfPciAddr)
+	}
+
+	representor, err = h.sriovnetProvider.GetVfRepresentor(uplink, vfIndex)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get VF representor for uplink %s vfIndex %d: %w", uplink, vfIndex, err)
+	}
+	if representor == "" {
+		return "", "", nil
+	}
+
+	// phys_port_name is the kernel-stable identifier of the representor; read it
+	// best-effort from sysfs so we can publish it alongside the netdev name.
+	physPortPath := buildSysPath(fmt.Sprintf("/sys/class/net/%s/phys_port_name", representor))
+	content, readErr := os.ReadFile(physPortPath) /* #nosec G304 */
+	if readErr != nil {
+		h.log.V(4).Info("failed to read representor phys_port_name", "representor", representor, "err", readErr)
+		return representor, "", nil
+	}
+	return representor, strings.TrimSpace(string(content)), nil
 }
 
 // GetNumaNode returns the NUMA node for a given PCI device.

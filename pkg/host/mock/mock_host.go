@@ -261,6 +261,22 @@ func (mr *MockInterfaceMockRecorder) GetVFList(pfPciAddress any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetVFList", reflect.TypeOf((*MockInterface)(nil).GetVFList), pfPciAddress)
 }
 
+// GetVFRepresentor mocks base method.
+func (m *MockInterface) GetVFRepresentor(pfPciAddr string, vfIndex int) (string, string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetVFRepresentor", pfPciAddr, vfIndex)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(string)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// GetVFRepresentor indicates an expected call of GetVFRepresentor.
+func (mr *MockInterfaceMockRecorder) GetVFRepresentor(pfPciAddr, vfIndex any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetVFRepresentor", reflect.TypeOf((*MockInterface)(nil).GetVFRepresentor), pfPciAddr, vfIndex)
+}
+
 // GetVdpaType mocks base method.
 func (m *MockInterface) GetVdpaType(pciAddr string) string {
 	m.ctrl.T.Helper()

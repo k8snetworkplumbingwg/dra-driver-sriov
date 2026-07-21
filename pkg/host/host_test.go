@@ -424,6 +424,79 @@ var _ = Describe("Host", func() {
 				Expect(h.GetIBPKey("0000:02:00.1")).To(BeEmpty())
 			})
 		})
+
+		Context("GetVFRepresentor", func() {
+			It("should return the representor and its phys_port_name", func() {
+				hRep := host.NewHostForTest(nil, &host.FakeSriovnetProvider{
+					UplinkName:      "enp3s0f0",
+					RepresentorName: "enp3s0f0_0",
+				})
+				fs.Dirs = []string{"sys/class/net/enp3s0f0_0"}
+				fs.Files = map[string][]byte{
+					"sys/class/net/enp3s0f0_0/phys_port_name": []byte("pf0vf0\n"),
+				}
+				tearDown = fs.Use()
+
+				rep, ppn, err := hRep.GetVFRepresentor("0000:03:00.0", 0)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(rep).To(Equal("enp3s0f0_0"))
+				Expect(ppn).To(Equal("pf0vf0"))
+			})
+
+			It("should return the representor with empty phys_port_name when the file is missing", func() {
+				hRep := host.NewHostForTest(nil, &host.FakeSriovnetProvider{
+					UplinkName:      "enp3s0f0",
+					RepresentorName: "enp3s0f0_1",
+				})
+				fs.Dirs = []string{"sys/class/net/enp3s0f0_1"}
+				tearDown = fs.Use()
+
+				rep, ppn, err := hRep.GetVFRepresentor("0000:03:00.0", 1)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(rep).To(Equal("enp3s0f0_1"))
+				Expect(ppn).To(BeEmpty())
+			})
+
+			It("should return an error when the uplink netdev cannot be determined", func() {
+				hRep := host.NewHostForTest(nil, &host.FakeSriovnetProvider{
+					UplinkError: fmt.Errorf("invalid PCI address"),
+				})
+				tearDown = fs.Use()
+
+				rep, ppn, err := hRep.GetVFRepresentor("0000:03:00.0", 0)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("unable to determine PF uplink netdev"))
+				Expect(rep).To(BeEmpty())
+				Expect(ppn).To(BeEmpty())
+			})
+
+			It("should return an error when the representor lookup fails", func() {
+				hRep := host.NewHostForTest(nil, &host.FakeSriovnetProvider{
+					UplinkName:       "enp3s0f0",
+					RepresentorError: sriovnet.ErrRepresentorNotFound,
+				})
+				tearDown = fs.Use()
+
+				rep, ppn, err := hRep.GetVFRepresentor("0000:03:00.0", 0)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("failed to get VF representor"))
+				Expect(rep).To(BeEmpty())
+				Expect(ppn).To(BeEmpty())
+			})
+
+			It("should return empty values without error when the representor is empty", func() {
+				hRep := host.NewHostForTest(nil, &host.FakeSriovnetProvider{
+					UplinkName:      "enp3s0f0",
+					RepresentorName: "",
+				})
+				tearDown = fs.Use()
+
+				rep, ppn, err := hRep.GetVFRepresentor("0000:03:00.0", 0)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(rep).To(BeEmpty())
+				Expect(ppn).To(BeEmpty())
+			})
+		})
 	})
 
 	Describe("Topology Functions", func() {

@@ -160,6 +160,23 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 				pKey = host.GetHelpers().GetIBPKey(vfInfo.PciAddress)
 			}
 
+			// Host-side switchdev representor, only applicable when the PF is in
+			// switchdev mode. Surfaced so tc-flower hardware offload tooling can
+			// correlate an allocated VF with its representor. A lookup failure is
+			// non-fatal: the representor attributes are simply omitted.
+			representor := ""
+			physPortName := ""
+			if pfInfo.EswitchMode == consts.EswitchModeSwitchdev {
+				rep, ppn, err := host.GetHelpers().GetVFRepresentor(pfInfo.Address, vfInfo.VFID)
+				if err != nil {
+					logger.V(2).Info("Failed to get VF representor, omitting representor attributes",
+						"pf", pfInfo.NetName, "vfAddress", vfInfo.PciAddress, "vfID", vfInfo.VFID, "err", err)
+				} else {
+					representor = rep
+					physPortName = ppn
+				}
+			}
+
 			logger.V(2).Info("Adding VF device to resource list",
 				"deviceName", deviceName,
 				"vfAddress", vfInfo.PciAddress,
@@ -169,7 +186,9 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 				"pf", pfInfo.NetName,
 				"rdmaCapable", rdmaCapable,
 				"vdpaType", vdpaType,
-				"pKey", pKey)
+				"pKey", pKey,
+				"representor", representor,
+				"physPortName", physPortName)
 
 			// Build device attributes
 			attributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
@@ -232,6 +251,16 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			if pKey != "" {
 				attributes[consts.AttributePKey] = resourceapi.DeviceAttribute{
 					StringValue: ptr.To(pKey),
+				}
+			}
+			if representor != "" {
+				attributes[consts.AttributeRepresentor] = resourceapi.DeviceAttribute{
+					StringValue: ptr.To(representor),
+				}
+			}
+			if physPortName != "" {
+				attributes[consts.AttributePhysPortName] = resourceapi.DeviceAttribute{
+					StringValue: ptr.To(physPortName),
 				}
 			}
 
