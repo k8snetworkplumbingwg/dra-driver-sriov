@@ -15,6 +15,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
 func (d *Driver) PrepareResourceClaims(ctx context.Context, claims []*resourceapi.ResourceClaim) (map[k8stypes.UID]kubeletplugin.PrepareResult, error) {
@@ -183,8 +184,13 @@ func (d *Driver) prepareResourceClaim(ctx context.Context, ifNameIndex *int, cla
 					return false, nil // Continue retrying
 				}
 
-				// Copy original devices list to fresh claim
-				freshClaim.Status.Devices = originalDevices
+				// Rebuild this driver's entries on top of the latest claim.
+				// status.devices is shared with every other driver that
+				// contributed a device, and a conflict here most likely came
+				// from one of them, so restoring a whole-list snapshot taken
+				// before the conflict would undo their write.
+				freshClaim.Status.Devices = types.MergeDeviceStatuses(
+					freshClaim.Status.Devices, originalDevices, consts.DriverName)
 				claim = freshClaim // Use fresh claim for next retry
 
 				logger.V(2).Info("Refreshed claim, retrying status update", "claim", claim.UID)
