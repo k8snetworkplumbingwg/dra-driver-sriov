@@ -193,13 +193,28 @@ WantedBy=default.target' > /etc/systemd/system/load-br-netfilter.service
 systemctl daemon-reload
 systemctl enable --now load-br-netfilter
 
+cat > /usr/local/bin/create-sriov-vfs.sh << 'VFSCRIPT'
+#!/usr/bin/bash
+set -euo pipefail
+for driver_link in /sys/bus/pci/devices/*/driver; do
+  [[ -e "\$driver_link" ]] || continue
+  readlink -f "\$driver_link" | grep -q '/igb\$' || continue
+  pf="\$(dirname "\$driver_link")"
+  addr="\$(basename "\$pf")"
+  echo 0 > "\$pf/sriov_numvfs" || true
+  echo 5 > "\$pf/sriov_numvfs"
+  echo "Created VFs on \$addr"
+done
+VFSCRIPT
+chmod +x /usr/local/bin/create-sriov-vfs.sh
+
 echo '[Unit]
 Description=create sriov vfs
 Before=network-pre.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/bash -ec "for pf in \$(ls -d /sys/bus/pci/devices/*/driver 2>/dev/null | while read d; do readlink -f \$d | grep -q /igb\$ && dirname \$d; done); do addr=\$(basename \$pf); echo 0 > \$pf/sriov_numvfs || true; echo 5 > \$pf/sriov_numvfs; echo Created VFs on \$addr; done"
+ExecStart=/usr/local/bin/create-sriov-vfs.sh
 StandardOutput=journal+console
 StandardError=journal+console
 
