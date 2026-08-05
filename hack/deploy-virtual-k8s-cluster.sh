@@ -227,6 +227,23 @@ grubby --update-kernel=DEFAULT --args=pci=realloc
 grubby --update-kernel=DEFAULT --args=iommu=pt
 grubby --update-kernel=DEFAULT --args=intel_iommu=on
 
+echo '[Unit]
+Description=load VFIO modules for DRA VFIO demos
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash -c "modprobe vfio && modprobe vfio_iommu_type1 && modprobe vfio-pci"
+RemainAfterExit=yes
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target' > /etc/systemd/system/load-vfio.service
+
+systemctl daemon-reload
+systemctl enable --now load-vfio
+
 EOF
 }
 

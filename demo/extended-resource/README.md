@@ -23,8 +23,11 @@ In both cases, the scheduler transparently creates a ResourceClaim with an `Exac
 
 ### 1. SriovResourcePolicy (Dual-Port)
 The `SriovResourcePolicy` defines two resource groups — one per physical NIC port:
-- **port1-vfs**: VFs on PCI bus `08:00.{2,3,4,5}`
-- **port2-vfs**: VFs on PCI bus `08:02.{2,3,4,5}`
+- **port1-vfs**: VFs whose PF netdev is `eth0`
+- **port2-vfs**: VFs whose PF netdev is `eth1`
+
+Filters use `pfNames` (not hardcoded PCI addresses) so the same fixture works on
+virtual clusters and hardware with different bus layouts.
 
 ### 2. DeviceClasses
 Two DeviceClasses define per-port extended resources:
@@ -55,7 +58,7 @@ Pods use standard `resources.requests` / `resources.limits` — no `resourceClai
 │  SriovResourcePolicy "dual-port-vfs"                     │
 │  ┌───────────────────┐  ┌───────────────────┐            │
 │  │ port1-vfs         │  │ port2-vfs         │            │
-│  │ 08:00.{2,3,4,5}   │  │ 08:02.{2,3,4,5}   │            │
+│  │ pfNames: eth0     │  │ pfNames: eth1     │            │
 │  └────────┬──────────┘  └────────┬──────────┘            │
 │           │                      │                       │
 │  DeviceClass "sriov-port1"    DeviceClass "sriov-port2"  │
@@ -165,16 +168,21 @@ The other demos in this repository (`single-vf-claim/`, `resourceclaim/`, `vfio-
 
 ## Customization
 
-### Changing PCI Addresses
+### Changing PF Names
 
-Update the `SriovResourcePolicy` in `deviceclass.yaml` with your actual VF PCI addresses:
+Update the `SriovResourcePolicy` in `deviceclass.yaml` so `pfNames` match your SR-IOV
+physical functions:
 
 ```bash
-# Find VF PCI addresses on your host
-ls -la /sys/class/net/eth2/device/virtfn*/
-ls -la /sys/class/net/eth3/device/virtfn*/
+# List PFs that have VFs
+for n in /sys/class/net/*/device/sriov_numvfs; do
+  [ -e "$n" ] || continue
+  iface=$(echo "$n" | cut -d/ -f5)
+  echo "$iface numvfs=$(cat "$n")"
+done
 ```
 
+Then set `pfNames: ["<pf-name>"]` on each policy config (defaults assume `eth0` / `eth1`).
 ### Using Different Extended Resource Names
 
 Edit `extendedResourceName` in each DeviceClass and update the pod specs accordingly:

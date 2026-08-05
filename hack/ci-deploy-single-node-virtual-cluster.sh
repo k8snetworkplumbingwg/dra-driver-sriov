@@ -230,6 +230,23 @@ grubby --update-kernel=DEFAULT --args=pci=realloc
 grubby --update-kernel=DEFAULT --args=iommu=pt
 grubby --update-kernel=DEFAULT --args=intel_iommu=on
 
+echo '[Unit]
+Description=load VFIO modules for DRA VFIO demos
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash -c "modprobe vfio && modprobe vfio_iommu_type1 && modprobe vfio-pci"
+RemainAfterExit=yes
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target' > /etc/systemd/system/load-vfio.service
+
+systemctl daemon-reload
+systemctl enable --now load-vfio
+
 EOF
 }
 
@@ -388,18 +405,6 @@ if [ $DS_ATTEMPTS -ge $DS_MAX_ATTEMPTS ]; then
     exit 1
 fi
 
-echo "## apply SriovResourcePolicy to advertise all SR-IOV devices"
-cat <<EOF | kubectl apply -f -
-apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
-kind: SriovResourcePolicy
-metadata:
-  name: all-devices
-  namespace: dra-driver-sriov
-spec:
-  configs:
-  - {}
-EOF
-
 echo "## verify VFs were created after reboot"
 kcli ssh $cluster_name-ctlplane-0 << 'VERIFY_EOF'
 echo "=== PCI ethernet devices ==="
@@ -434,20 +439,6 @@ kubectl -n dra-driver-sriov delete pod -l app.kubernetes.io/name=dra-driver-srio
 echo "## wait for DRA driver pod to be ready again"
 sleep 10
 kubectl -n dra-driver-sriov wait --for=condition=ready pod -l app.kubernetes.io/name=dra-driver-sriov-chart --timeout=120s
-
-echo "## wait for ResourceSlices to be populated with devices"
-ATTEMPTS=0
-MAX_ATTEMPTS=30
-while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
-    DEVICE_COUNT=$(kubectl get resourceslices -o jsonpath='{.items[0].spec.devices}' 2>/dev/null | grep -co '"name"' || true)
-    if [ -n "$DEVICE_COUNT" ] && [ "$DEVICE_COUNT" -gt "0" ] 2>/dev/null; then
-        echo "## ResourceSlices have $DEVICE_COUNT devices published"
-        break
-    fi
-    echo "## Waiting for devices in ResourceSlices (attempt $ATTEMPTS)..."
-    sleep 5
-    ATTEMPTS=$((ATTEMPTS+1))
-done
 
 echo "## Single-node virtual cluster deployed successfully"
 echo "## KUBECONFIG=${KUBECONFIG}"
