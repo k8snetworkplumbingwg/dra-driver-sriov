@@ -9,6 +9,26 @@ total_number_of_nodes=1
 
 export OPERATOR_EXEC=kubectl
 
+cleanup_only=false
+for arg in "$@"; do
+  case "$arg" in
+    --cleanup)
+      cleanup_only=true
+      ;;
+    -h|--help)
+      echo "Usage: $0 [--cleanup]"
+      echo "  (default)  Tear down any existing cluster, then deploy a new one."
+      echo "  --cleanup  Tear down the cluster and exit."
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $arg" >&2
+      echo "Usage: $0 [--cleanup]" >&2
+      exit 1
+      ;;
+  esac
+done
+
 check_requirements() {
   for cmd in kcli virsh podman make go; do
     if ! command -v "$cmd" &> /dev/null; then
@@ -19,23 +39,22 @@ check_requirements() {
   return 0
 }
 
-echo "## checking requirements"
-check_requirements
-echo "## delete existing cluster name $cluster_name"
-kcli delete cluster $cluster_name -y || true
-kcli delete network ${cluster_name}-sriov -y || true
-kcli delete network ${network_name} -y || true
-
-function cleanup {
-  kcli delete cluster $cluster_name -y || true
-  kcli delete network ${cluster_name}-sriov -y || true
-  kcli delete network ${network_name} -y || true
-  sudo rm -f /etc/containers/registries.conf.d/003-${cluster_name}.conf
+cleanup() {
+  echo "## cleaning up cluster $cluster_name"
+  kcli delete cluster "$cluster_name" -y || true
+  kcli delete network "${cluster_name}-sriov" -y || true
+  kcli delete network "${network_name}" -y || true
+  sudo rm -f "/etc/containers/registries.conf.d/003-${cluster_name}.conf"
 }
 
-if [ -z "$SKIP_DELETE" ]; then
-  trap cleanup EXIT
+if [ "$cleanup_only" = true ]; then
+  cleanup
+  exit 0
 fi
+
+echo "## checking requirements"
+check_requirements
+cleanup
 
 kcli create network -c 192.168.120.0/24 ${network_name}
 kcli create network -c 192.168.${virtual_router_id}.0/24 --nodhcp -i ${cluster_name}-sriov

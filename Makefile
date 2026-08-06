@@ -234,25 +234,23 @@ chart-push: ## Push chart (pass VERSION=v1.0.0 or VERSION=sha)
 
 .PHONY: deploy-virtual-k8s-cluster
 deploy-virtual-k8s-cluster:
-	SKIP_DELETE=TRUE ./hack/deploy-virtual-k8s-cluster.sh
+	./hack/deploy-virtual-k8s-cluster.sh
 
 .PHONY: deploy-single-node-virtual-cluster-standalone
 deploy-single-node-virtual-cluster-standalone:
-	SKIP_DELETE=TRUE DRA_DRIVER_MODE=STANDALONE ./hack/ci-deploy-single-node-virtual-cluster.sh
+	DRA_DRIVER_MODE=STANDALONE ./hack/ci-deploy-single-node-virtual-cluster.sh
 
 .PHONY: deploy-single-node-virtual-cluster-multus
 deploy-single-node-virtual-cluster-multus:
-	SKIP_DELETE=TRUE DRA_DRIVER_MODE=MULTUS ./hack/ci-deploy-single-node-virtual-cluster.sh
+	DRA_DRIVER_MODE=MULTUS ./hack/ci-deploy-single-node-virtual-cluster.sh
 
-.PHONY: undeploy-virtual-k8s-cluster
+.PHONY: delete-virtual-k8s-cluster
 delete-virtual-k8s-cluster:
-	./hack/delete-virtual-k8s-cluster.sh
+	./hack/deploy-virtual-k8s-cluster.sh --cleanup
+	./hack/ci-deploy-single-node-virtual-cluster.sh --cleanup
 
 redeploy-dra-driver-virtual-cluster:
 	./hack/virtual-cluster-redeploy.sh
-
-e2e-tests:
-	./hack/deploy-virtual-k8s-cluster.sh
 
 # Workload e2e against an already-deployed cluster (requires KUBECONFIG).
 # Optional: E2E_LABEL_FILTER='!Multus && !Alignment' to skip Multus/alignment demos.

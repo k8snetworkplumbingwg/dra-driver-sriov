@@ -99,7 +99,7 @@ jobs:
 
       - name: Deploy single-node virtual cluster and DRA driver
         run: |
-          sudo -E env "PATH=$PATH" "HOME=/root" "SKIP_DELETE=TRUE" bash hack/ci-deploy-single-node-virtual-cluster.sh
+          sudo -E env "PATH=$PATH" "HOME=/root" bash hack/ci-deploy-single-node-virtual-cluster.sh
 
       - name: Verify SR-IOV VFs are available
         run: |
