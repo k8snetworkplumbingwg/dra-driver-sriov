@@ -373,10 +373,10 @@ CONTAINER_TOOL=podman IMAGE_NAME=${SRIOV_DRIVER_IMAGE} make -C deployments/conta
 podman push --tls-verify=false "${SRIOV_DRIVER_IMAGE}"
 podman rmi -fi ${SRIOV_DRIVER_IMAGE}
 
-# remove the crio bridge and let flannel to recreate
+# remove the crio bridge and let flannel to recreate (cni0 may already be gone after reboot)
 kcli ssh $cluster_name-ctlplane-0 << EOF
 sudo su
-if [ $(ip a | grep 10.85.0 | wc -l) -eq 0 ]; then ip link del cni0; fi
+if [ \$(ip a | grep 10.85.0 | wc -l) -eq 0 ]; then ip link del cni0 2>/dev/null || true; fi
 EOF
 
 kubectl -n ${MULTUS_NAMESPACE} delete po -l name=multus --ignore-not-found=true
