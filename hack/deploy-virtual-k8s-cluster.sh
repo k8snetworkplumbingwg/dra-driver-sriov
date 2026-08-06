@@ -39,21 +39,33 @@ check_requirements() {
   return 0
 }
 
+# kcli delete wrapper; ignore failure only if output confirms the resource is absent.
+kcli_delete() {
+  local out rc=0
+  out=$(kcli delete "$@" -y 2>&1) || rc=$?
+  [[ -n "$out" ]] && printf '%s\n' "$out"
+  if [[ $rc -ne 0 ]] && ! grep -qi 'not found' <<<"$out"; then
+    return "$rc"
+  fi
+  return 0
+}
+
 cleanup() {
   echo "## cleaning up cluster $cluster_name"
-  kcli delete cluster "$cluster_name" -y || true
-  kcli delete network "$cluster_name" -y || true
-  kcli delete network "${network_name}" -y || true
+  kcli_delete cluster "$cluster_name"
+  kcli_delete network "$cluster_name"
+  kcli_delete network "${network_name}"
   sudo rm -f "/etc/containers/registries.conf.d/003-${cluster_name}.conf"
 }
+
+echo "## checking requirements"
+check_requirements
 
 if [ "$cleanup_only" = true ]; then
   cleanup
   exit 0
 fi
 
-echo "## checking requirements"
-check_requirements
 cleanup
 
 kcli create network -c 192.168.120.0/24 ${network_name}
@@ -374,20 +386,20 @@ podman push --tls-verify=false "${SRIOV_DRIVER_IMAGE}"
 podman rmi -fi ${SRIOV_DRIVER_IMAGE}
 
 # remove the crio bridge and let flannel to recreate (cni0 may already be gone after reboot)
-kcli ssh $cluster_name-ctlplane-0 << EOF
+kcli ssh "${cluster_name}-ctlplane-0" << EOF
 sudo su
 if [ \$(ip a | grep 10.85.0 | wc -l) -eq 0 ]; then ip link del cni0 2>/dev/null || true; fi
 EOF
 
-kubectl -n ${MULTUS_NAMESPACE} delete po -l name=multus --ignore-not-found=true
 kubectl -n kube-system delete po -l k8s-app=kube-dns --ignore-not-found=true
 
 TIMEOUT=400
 echo "## wait for coredns"
 kubectl -n kube-system wait --for=condition=available deploy/coredns --timeout=${TIMEOUT}s
 echo "## wait for multus"
-# kubectl wait -l name=multus fails immediately if the DaemonSet has not
-# recreated pods yet after the delete above; wait on the DS rollout instead.
+# Force a new DaemonSet revision so rollout status waits for fresh Multus pods
+# instead of returning immediately on the previous completed revision.
+kubectl -n ${MULTUS_NAMESPACE} rollout restart daemonset/kube-multus-ds
 kubectl -n ${MULTUS_NAMESPACE} rollout status daemonset/kube-multus-ds --timeout=${TIMEOUT}s
 
 echo "## deploy cert manager"

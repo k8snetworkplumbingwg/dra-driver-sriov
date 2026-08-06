@@ -39,21 +39,33 @@ check_requirements() {
   return 0
 }
 
+# kcli delete wrapper; ignore failure only if output confirms the resource is absent.
+kcli_delete() {
+  local out rc=0
+  out=$(kcli delete "$@" -y 2>&1) || rc=$?
+  [[ -n "$out" ]] && printf '%s\n' "$out"
+  if [[ $rc -ne 0 ]] && ! grep -qi 'not found' <<<"$out"; then
+    return "$rc"
+  fi
+  return 0
+}
+
 cleanup() {
   echo "## cleaning up cluster $cluster_name"
-  kcli delete cluster "$cluster_name" -y || true
-  kcli delete network "${cluster_name}-sriov" -y || true
-  kcli delete network "${network_name}" -y || true
+  kcli_delete cluster "$cluster_name"
+  kcli_delete network "${cluster_name}-sriov"
+  kcli_delete network "${network_name}"
   sudo rm -f "/etc/containers/registries.conf.d/003-${cluster_name}.conf"
 }
+
+echo "## checking requirements"
+check_requirements
 
 if [ "$cleanup_only" = true ]; then
   cleanup
   exit 0
 fi
 
-echo "## checking requirements"
-check_requirements
 cleanup
 
 kcli create network -c 192.168.120.0/24 ${network_name}
@@ -215,15 +227,25 @@ systemctl enable --now load-br-netfilter
 cat > /usr/local/bin/create-sriov-vfs.sh << 'VFSCRIPT'
 #!/usr/bin/bash
 set -euo pipefail
+created=0
 for driver_link in /sys/bus/pci/devices/*/driver; do
   [[ -e "\$driver_link" ]] || continue
   readlink -f "\$driver_link" | grep -q '/igb\$' || continue
   pf="\$(dirname "\$driver_link")"
   addr="\$(basename "\$pf")"
+  [[ -w "\$pf/sriov_numvfs" ]] || continue
+  [[ -r "\$pf/sriov_totalvfs" ]] || continue
+  totalvfs="\$(cat "\$pf/sriov_totalvfs")"
+  [[ "\$totalvfs" -ge 5 ]] || continue
   echo 0 > "\$pf/sriov_numvfs" || true
   echo 5 > "\$pf/sriov_numvfs"
   echo "Created VFs on \$addr"
+  created=\$((created + 1))
 done
+if [[ "\$created" -eq 0 ]]; then
+  echo "error: no igb PF with writable sriov_numvfs and sriov_totalvfs >= 5" >&2
+  exit 1
+fi
 VFSCRIPT
 chmod +x /usr/local/bin/create-sriov-vfs.sh
 
@@ -304,20 +326,20 @@ if ! $ready; then
 fi
 
 # remove the crio bridge and let flannel recreate (cni0 may already be gone after reboot)
-kcli ssh $cluster_name-ctlplane-0 << EOF
+kcli ssh "${cluster_name}-ctlplane-0" << EOF
 sudo su
 if [ \$(ip a | grep 10.85.0 | wc -l) -eq 0 ]; then ip link del cni0 2>/dev/null || true; fi
 EOF
 
-kubectl -n ${MULTUS_NAMESPACE} delete po -l name=multus --ignore-not-found=true
 kubectl -n kube-system delete po -l k8s-app=kube-dns --ignore-not-found=true
 
 TIMEOUT=400
 echo "## wait for coredns"
 kubectl -n kube-system wait --for=condition=available deploy/coredns --timeout=${TIMEOUT}s
 echo "## wait for multus"
-# kubectl wait -l name=multus fails immediately if the DaemonSet has not
-# recreated pods yet after the delete above; wait on the DS rollout instead.
+# Force a new DaemonSet revision so rollout status waits for fresh Multus pods
+# instead of returning immediately on the previous completed revision.
+kubectl -n ${MULTUS_NAMESPACE} rollout restart daemonset/kube-multus-ds
 kubectl -n ${MULTUS_NAMESPACE} rollout status daemonset/kube-multus-ds --timeout=${TIMEOUT}s
 
 ## Deploy internal registry
