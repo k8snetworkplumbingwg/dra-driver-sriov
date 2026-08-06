@@ -6,11 +6,8 @@ import (
 	"fmt"
 
 	resourceapi "k8s.io/api/resource/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
 
@@ -168,47 +165,17 @@ func (d *Driver) prepareResourceClaim(ctx context.Context, ifNameIndex *int, cla
 		}
 	}
 
-	// Store original devices list to preserve across conflict retries
-	originalDevices := claim.Status.Devices
-
-	err = wait.ExponentialBackoffWithContext(ctx, consts.Backoff, func(ctx context.Context) (bool, error) {
-		_, updateErr := d.client.ResourceV1().ResourceClaims(claim.Namespace).UpdateStatus(ctx, claim, metav1.UpdateOptions{})
-		if updateErr != nil {
-			// If this is a conflict error, fetch fresh claim and copy over devices list
-			if apierrors.IsConflict(updateErr) {
-				logger.V(2).Info("Conflict detected, refreshing claim", "claim", claim.UID)
-
-				freshClaim, fetchErr := d.client.ResourceV1().ResourceClaims(claim.Namespace).Get(ctx, claim.Name, metav1.GetOptions{})
-				if fetchErr != nil {
-					logger.V(2).Info("Failed to fetch fresh claim", "claim", claim.UID, "error", fetchErr.Error())
-					return false, nil // Continue retrying
-				}
-
-				// Rebuild this driver's entries on top of the latest claim.
-				// status.devices is shared with every other driver that
-				// contributed a device, and a conflict here most likely came
-				// from one of them, so restoring a whole-list snapshot taken
-				// before the conflict would undo their write.
-				freshClaim.Status.Devices = types.MergeDeviceStatuses(
-					freshClaim.Status.Devices, originalDevices, consts.DriverName)
-				claim = freshClaim // Use fresh claim for next retry
-
-				logger.V(2).Info("Refreshed claim, retrying status update", "claim", claim.UID)
-				return false, nil // Continue retrying with the merged claim
-			}
-			// An invalid, forbidden or not-found response keeps failing the same
-			// way, so return it instead of retrying until the backoff expires and
-			// hides the real error. Transient and network failures fall through.
-			if types.IsPermanentStatusUpdateError(updateErr) {
-				return false, updateErr
-			}
-			logger.V(2).Info("Retrying claim status update", "claim", claim.UID, "error", updateErr.Error())
-			return false, nil
-		}
-		return true, nil // Success
-	})
-
-	if err != nil {
+	// status.devices is shared with every other driver that contributed a device
+	// to the claim, so the retry refetches and merges on conflict rather than
+	// restoring a pre-conflict snapshot. The status write is best-effort here: on
+	// failure the devices are still prepared, so log and return them.
+	if err := types.UpdateClaimStatusWithRetry(
+		ctx,
+		d.client.ResourceV1().ResourceClaims(claim.Namespace),
+		claim,
+		consts.DriverName,
+		consts.Backoff,
+	); err != nil {
 		logger.Error(err, "Failed to update claim status after retries", "claim", claim.UID)
 	}
 
