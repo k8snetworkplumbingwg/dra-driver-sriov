@@ -316,7 +316,9 @@ TIMEOUT=400
 echo "## wait for coredns"
 kubectl -n kube-system wait --for=condition=available deploy/coredns --timeout=${TIMEOUT}s
 echo "## wait for multus"
-kubectl -n ${MULTUS_NAMESPACE} wait --for=condition=ready -l name=multus pod --timeout=${TIMEOUT}s
+# kubectl wait -l name=multus fails immediately if the DaemonSet has not
+# recreated pods yet after the delete above; wait on the DS rollout instead.
+kubectl -n ${MULTUS_NAMESPACE} rollout status daemonset/kube-multus-ds --timeout=${TIMEOUT}s
 
 ## Deploy internal registry
 kubectl create namespace container-registry --dry-run=client -o yaml | kubectl apply -f -
