@@ -45,6 +45,26 @@ func keyOf(status resourceapi.AllocatedDeviceStatus) deviceStatusKey {
 	return key
 }
 
+// UpsertDeviceStatus replaces the entry in list whose key (driver, pool, device
+// and share ID) matches status, or appends status when none matches. It keeps
+// status.devices free of duplicate keys: on the API server the list is a
+// listType=map, so a second entry with the same key is rejected as invalid
+// rather than merged. Callers that build status by appending should upsert so a
+// device already reported on the claim is updated in place instead of doubled.
+func UpsertDeviceStatus(
+	list []resourceapi.AllocatedDeviceStatus,
+	status resourceapi.AllocatedDeviceStatus,
+) []resourceapi.AllocatedDeviceStatus {
+	key := keyOf(status)
+	for i := range list {
+		if keyOf(list[i]) == key {
+			list[i] = status
+			return list
+		}
+	}
+	return append(list, status)
+}
+
 // MergeDeviceStatuses returns latest with this driver's entries replaced by
 // desired, preserving every entry owned by another driver.
 //
@@ -54,9 +74,10 @@ func keyOf(status resourceapi.AllocatedDeviceStatus) deviceStatusKey {
 // entry another driver wrote in the meantime, so the retry has to merge onto
 // the latest list rather than replace it.
 //
-// Entries are ordered with the preserved foreign ones first, in the order they
-// appear in latest, followed by desired in its own order, so a retry that
-// changes nothing produces no diff.
+// Foreign entries keep their original order and this driver's entries follow.
+// status.devices is a listType=map keyed by driver, pool, device and share ID,
+// so the API server treats it as an unordered set and the position of an entry
+// carries no meaning of its own.
 func MergeDeviceStatuses(
 	latest []resourceapi.AllocatedDeviceStatus,
 	desired []resourceapi.AllocatedDeviceStatus,
@@ -74,19 +95,14 @@ func MergeDeviceStatuses(
 		merged = append(merged, status)
 	}
 
-	// Then this driver's own entries, deduplicated so a retry cannot append a
-	// second copy of a device it already reported.
-	seen := make(map[deviceStatusKey]struct{}, len(desired))
+	// Then this driver's own entries. Upsert rather than append so a repeated key
+	// keeps the last value, and the result never carries two entries with the same
+	// key, which the API server would reject.
 	for _, status := range desired {
 		if status.Driver != driverName {
 			continue
 		}
-		key := keyOf(status)
-		if _, dup := seen[key]; dup {
-			continue
-		}
-		seen[key] = struct{}{}
-		merged = append(merged, status)
+		merged = UpsertDeviceStatus(merged, status)
 	}
 
 	return merged

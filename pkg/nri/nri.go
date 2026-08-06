@@ -455,10 +455,16 @@ func (p *Plugin) updateClaimNetworkDataWithRetry(ctx context.Context, claim *res
 				claim = freshClaim // Use fresh claim for next retry
 
 				logger.V(2).Info("Refreshed claim, retrying status update", "claim", claim.UID)
-			} else {
-				logger.V(2).Info("Retrying claim status update", "claim", claim.UID, "error", updateErr.Error())
+				return false, nil // Continue retrying with the merged claim
 			}
-			return false, nil // Return false to continue retrying, nil to not fail immediately
+			// An invalid, forbidden or not-found response keeps failing the same
+			// way, so return it instead of retrying until the backoff expires and
+			// hides the real error. Transient and network failures fall through.
+			if types.IsPermanentStatusUpdateError(updateErr) {
+				return false, updateErr
+			}
+			logger.V(2).Info("Retrying claim status update", "claim", claim.UID, "error", updateErr.Error())
+			return false, nil
 		}
 		return true, nil // Success
 	})

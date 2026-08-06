@@ -132,4 +132,57 @@ var _ = Describe("MergeDeviceStatuses", func() {
 
 		Expect(identities(second)).To(Equal(identities(first)))
 	})
+
+	It("keeps the last value when desired repeats a key", func() {
+		// The prepare path now upserts, so desired should not carry duplicates;
+		// if one ever slips through, the merge keeps the newest rather than the
+		// stale first copy.
+		stale := status(ownDriver, "vf-pool", "vf0")
+		stale.NetworkData = &resourceapi.NetworkDeviceData{InterfaceName: "eth-old"}
+		fresh := status(ownDriver, "vf-pool", "vf0")
+		fresh.NetworkData = &resourceapi.NetworkDeviceData{InterfaceName: "eth0"}
+
+		merged := types.MergeDeviceStatuses(nil, []resourceapi.AllocatedDeviceStatus{stale, fresh}, ownDriver)
+
+		Expect(merged).To(HaveLen(1))
+		Expect(merged[0].NetworkData.InterfaceName).To(Equal("eth0"))
+	})
+})
+
+var _ = Describe("UpsertDeviceStatus", func() {
+	It("appends a device that is not present yet", func() {
+		list := []resourceapi.AllocatedDeviceStatus{status(ownDriver, "vf-pool", "vf0")}
+
+		got := types.UpsertDeviceStatus(list, status(ownDriver, "vf-pool", "vf1"))
+
+		Expect(identities(got)).To(Equal([]string{
+			ownDriver + "/vf-pool/vf0",
+			ownDriver + "/vf-pool/vf1",
+		}))
+	})
+
+	It("replaces an existing entry in place instead of doubling it", func() {
+		// The prepare path used to append unconditionally, so a claim already
+		// carrying this device ended up with two entries the API server rejects.
+		old := status(ownDriver, "vf-pool", "vf0")
+		old.NetworkData = &resourceapi.NetworkDeviceData{InterfaceName: "eth-old"}
+		fresh := status(ownDriver, "vf-pool", "vf0")
+		fresh.NetworkData = &resourceapi.NetworkDeviceData{InterfaceName: "eth0"}
+
+		got := types.UpsertDeviceStatus([]resourceapi.AllocatedDeviceStatus{old}, fresh)
+
+		Expect(got).To(HaveLen(1))
+		Expect(got[0].NetworkData.InterfaceName).To(Equal("eth0"))
+	})
+
+	It("keeps two shares of one device apart", func() {
+		list := []resourceapi.AllocatedDeviceStatus{sharedStatus(ownDriver, "vf-pool", "vf0", "share-a")}
+
+		got := types.UpsertDeviceStatus(list, sharedStatus(ownDriver, "vf-pool", "vf0", "share-b"))
+
+		Expect(identities(got)).To(ConsistOf(
+			ownDriver+"/vf-pool/vf0#share-a",
+			ownDriver+"/vf-pool/vf0#share-b",
+		))
+	})
 })
