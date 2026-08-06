@@ -105,15 +105,24 @@ vet:
 	go vet $(MODULE)/...
 
 COVERAGE_FILE := coverage.out
+# Exclude generated mocks and cluster-only e2e helpers from unit-test coverage.
+COVERAGE_EXCLUDE := '_mock\.go|test/e2e/'
+
+define filter-coverage
+	grep -vE $(COVERAGE_EXCLUDE) $(COVERAGE_FILE) > $(COVERAGE_FILE).filtered
+	mv $(COVERAGE_FILE).filtered $(COVERAGE_FILE)
+endef
+
 test:
 	KUBEBUILDER_ASSETS=$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir=$(ENVTEST_ASSETS_DIR) -p path) go test -v -coverprofile=$(COVERAGE_FILE) $(MODULE)/...
+	$(filter-coverage)
 
 test-coverage:
 	KUBEBUILDER_ASSETS=$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir=$(ENVTEST_ASSETS_DIR) -p path) go test -v -covermode=atomic -coverprofile=$(COVERAGE_FILE) $(MODULE)/...
+	$(filter-coverage)
 
 coverage: test
-	cat $(COVERAGE_FILE) | grep -v "_mock.go" > $(COVERAGE_FILE).no-mocks
-	go tool cover -func=$(COVERAGE_FILE).no-mocks
+	go tool cover -func=$(COVERAGE_FILE)
 
 generate: generate-deepcopy generate-crds mock-generate
 

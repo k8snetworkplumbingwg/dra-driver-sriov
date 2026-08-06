@@ -57,4 +57,4 @@ make e2e-workloads E2E_LABEL_FILTER='!Multus && !Alignment'
 | `demo_*_test.go` | one file per demo directory |
 | `e2e_suite_test.go` | suite bootstrap and failure debug dumps |
 
-All test files under `test/e2e/` (except the `!e2e` stub) use `//go:build e2e` so `make test` does not run them. The `framework` package has no build tag so editors/gopls can type-check it without extra build tags.
+All test files under `test/e2e/` (except the `!e2e` stub) use `//go:build e2e` so `make test` does not run them. The `framework` package has no build tag so editors/gopls can type-check it without extra build tags; unit-test coverage excludes `test/e2e/` (see `COVERAGE_EXCLUDE` in the Makefile).
