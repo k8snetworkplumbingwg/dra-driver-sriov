@@ -303,6 +303,21 @@ if ! $ready; then
   exit 1
 fi
 
+# remove the crio bridge and let flannel recreate
+kcli ssh $cluster_name-ctlplane-0 << EOF
+sudo su
+if [ \$(ip a | grep 10.85.0 | wc -l) -eq 0 ]; then ip link del cni0; fi
+EOF
+
+kubectl -n ${MULTUS_NAMESPACE} delete po -l name=multus --ignore-not-found=true
+kubectl -n kube-system delete po -l k8s-app=kube-dns --ignore-not-found=true
+
+TIMEOUT=400
+echo "## wait for coredns"
+kubectl -n kube-system wait --for=condition=available deploy/coredns --timeout=${TIMEOUT}s
+echo "## wait for multus"
+kubectl -n ${MULTUS_NAMESPACE} wait --for=condition=ready -l name=multus pod --timeout=${TIMEOUT}s
+
 ## Deploy internal registry
 kubectl create namespace container-registry --dry-run=client -o yaml | kubectl apply -f -
 

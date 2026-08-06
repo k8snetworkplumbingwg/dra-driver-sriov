@@ -19,9 +19,13 @@ env:
 
 jobs:
   virtual-e2e:
-    name: Single Node Virtual Cluster E2E
+    name: Virtual E2E (${{ matrix.mode }})
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [standalone, multus]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -99,25 +103,14 @@ jobs:
 
       - name: Deploy single-node virtual cluster and DRA driver
         run: |
-          sudo -E env "PATH=$PATH" "HOME=/root" bash hack/ci-deploy-single-node-virtual-cluster.sh
+          sudo -E env "PATH=$PATH" "HOME=/root" \
+            "DRA_DRIVER_MODE=$(echo '${{ matrix.mode }}' | tr '[:lower:]' '[:upper:]')" \
+            bash hack/ci-deploy-single-node-virtual-cluster.sh
 
-      - name: Verify SR-IOV VFs are available
+      - name: Run workload e2e tests
         run: |
           KCONF=/root/.kcli/clusters/dra/auth/kubeconfig
-          echo "## Node status"
-          sudo kubectl --kubeconfig=$KCONF get nodes -o wide
-          echo "## DRA driver pods"
-          sudo kubectl --kubeconfig=$KCONF -n dra-driver-sriov get pods
-          echo "## SriovResourcePolicy"
-          sudo kubectl --kubeconfig=$KCONF -n dra-driver-sriov get sriovresourcepolicies -o yaml || true
-          echo "## ResourceSlices"
-          sudo kubectl --kubeconfig=$KCONF get resourceslices -o wide || true
-          echo "## ResourceSlice devices"
-          sudo kubectl --kubeconfig=$KCONF get resourceslices -o jsonpath='{range .items[*]}{.metadata.name}{": "}{range .spec.devices[*]}{.name}{" "}{end}{"\n"}{end}' || true
-          echo "## Device classes"
-          sudo kubectl --kubeconfig=$KCONF get deviceclass || true
-          echo "## VFs on VM"
-          sudo kcli ssh dra-ctlplane-0 "ls /sys/bus/pci/devices/0000:01:00.0/virtfn* 2>/dev/null; ls /sys/bus/pci/devices/0000:02:00.0/virtfn* 2>/dev/null" || true
+          sudo -E env "PATH=$PATH" "HOME=/root" "KUBECONFIG=$KCONF" make e2e-workloads
 
       - name: Collect logs on failure
         if: failure()

@@ -28,7 +28,11 @@ export KUBECONFIG="${KUBECONFIG:-$HOME/.kcli/clusters/dra/auth/kubeconfig}"
 make e2e-workloads
 ```
 
-Filter by Ginkgo labels:
+CI (`.github/workflows/virtual-e2e.yaml`) runs this suite in a matrix for both
+`standalone` and `multus` driver modes. Multus demos auto-skip when Multus or
+`MULTUS` mode is not detected.
+
+Filter by Ginkgo labels locally:
 
 ```bash
 make e2e-workloads E2E_LABEL_FILTER='!Multus && !Alignment'

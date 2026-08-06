@@ -9,6 +9,7 @@ api_ip=${API_IP:-192.168.120.250}
 virtual_router_id=${VIRTUAL_ROUTER_ID:-200}
 
 export NAMESPACE="dra-driver-sriov"
+export MULTUS_NAMESPACE="kube-system"
 export KUBECONFIG=/root/.kcli/clusters/$cluster_name/auth/kubeconfig
 
 export DRA_DRIVER_MODE=${DRA_DRIVER_MODE:-STANDALONE}

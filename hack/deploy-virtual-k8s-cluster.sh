@@ -8,7 +8,6 @@ total_number_of_nodes=$((1 + NUM_OF_WORKERS))
 
 ## Global configuration
 export OPERATOR_EXEC=kubectl
-export MULTUS_NAMESPACE="kube-system"
 
 cleanup_only=false
 for arg in "$@"; do
@@ -288,10 +287,6 @@ if ! kubectl wait --for=condition=ready node --all --timeout=10m; then
   exit 1
 fi
 
-# remove the patch after multus bug is fixed
-# https://github.com/k8snetworkplumbingwg/multus-cni/issues/1221
-kubectl patch  -n ${MULTUS_NAMESPACE} ds/kube-multus-ds --type=json -p='[{"op": "replace", "path": "/spec/template/spec/initContainers/0/command", "value":["cp", "-f","/usr/src/multus-cni/bin/multus-shim", "/host/opt/cni/bin/multus-shim"]}]'
-
 ## Deploy internal registry
 kubectl create namespace container-registry
 
@@ -427,7 +422,7 @@ echo "## Waiting for daemonset to be ready..."
 while true; do
     DESIRED=$(kubectl -n dra-driver-sriov get ds/dra-driver-sriov-dra-driver-sriov-chart-kubeletplugin -o jsonpath='{.status.desiredNumberScheduled}' 2>/dev/null || echo "0")
     READY=$(kubectl -n dra-driver-sriov get ds/dra-driver-sriov-dra-driver-sriov-chart-kubeletplugin -o jsonpath='{.status.numberReady}' 2>/dev/null || echo "0")
-    
+
     if [ "$DESIRED" != "" ] && [ "$DESIRED" != "0" ] && [ "$DESIRED" = "$READY" ]; then
         echo "## Daemonset is ready ($READY/$DESIRED)"
         break
