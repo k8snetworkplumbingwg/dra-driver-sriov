@@ -29,8 +29,8 @@ make e2e-workloads
 ```
 
 CI (`.github/workflows/virtual-e2e.yaml`) runs this suite in a matrix for both
-`standalone` and `multus` driver modes. Multus demos auto-skip when Multus or
-`MULTUS` mode is not detected.
+`standalone` and `multus` driver modes. Mode-specific demos auto-skip based on
+cluster detection (`SkipUnlessMultus` / `SkipUnlessStandalone`).
 
 Filter by Ginkgo labels locally:
 

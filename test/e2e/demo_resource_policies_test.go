@@ -9,7 +9,7 @@ import (
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/test/e2e/framework"
 )
 
-var _ = Describe("demo/resource-policies", Label(framework.LabelResourcePolicy), Serial, Ordered, func() {
+var _ = Describe("demo/resource-policies", Label(framework.LabelResourcePolicy, framework.LabelStandalone), Serial, Ordered, func() {
 	const (
 		ns        = "vf-test4"
 		podName   = "pod0"
@@ -34,6 +34,7 @@ var _ = Describe("demo/resource-policies", Label(framework.LabelResourcePolicy),
 	})
 
 	It("applies resource policies and starts a filtered VF pod", func() {
+		clients.SkipUnlessStandalone(ctx)
 		clients.SkipIfNodeMissing(ctx, "dra-ctlplane-0.dra.lab")
 
 		path, err := framework.DemoPath("resource-policies", "resource-policy.yaml")

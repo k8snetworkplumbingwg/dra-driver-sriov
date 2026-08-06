@@ -12,7 +12,7 @@ import (
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/test/e2e/framework"
 )
 
-var _ = Describe("demo/single-vf-claim", Serial, Ordered, func() {
+var _ = Describe("demo/single-vf-claim", Label(framework.LabelStandalone), Serial, Ordered, func() {
 	const (
 		ns        = "vf-test1"
 		podName   = "pod0"
@@ -31,6 +31,8 @@ var _ = Describe("demo/single-vf-claim", Serial, Ordered, func() {
 	})
 
 	It("allocates a single VF, brings up net1, and reclaims on delete", func() {
+		clients.SkipUnlessStandalone(ctx)
+
 		path, err := framework.DemoPath("single-vf-claim", "single-vf.yaml")
 		Expect(err).NotTo(HaveOccurred())
 

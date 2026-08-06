@@ -13,6 +13,7 @@ import (
 
 const (
 	LabelMultus           = "Multus"
+	LabelStandalone       = "Standalone"
 	LabelVfio             = "Vfio"
 	LabelExtendedResource = "ExtendedResource"
 	LabelAlignment        = "Alignment"
@@ -29,6 +30,15 @@ func (c *Clients) SkipUnlessMultus(ctx context.Context) {
 	}
 	if mode := c.detectDriverMode(ctx); mode != "" && mode != "MULTUS" {
 		Skip("driver configurationMode=" + mode + " (need MULTUS)")
+	}
+}
+
+// SkipUnlessStandalone skips demos that rely on the NRI attach path (ifName /
+// netAttachDefName) when the driver is in MULTUS mode. In MULTUS mode NRI is
+// disabled and secondary interfaces only appear via Multus pod annotations.
+func (c *Clients) SkipUnlessStandalone(ctx context.Context) {
+	if mode := c.detectDriverMode(ctx); mode == "MULTUS" {
+		Skip("driver configurationMode=MULTUS (need STANDALONE / NRI)")
 	}
 }
 
