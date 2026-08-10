@@ -86,7 +86,20 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 
 	ctrlMock := gomock.NewController(GinkgoT())
 	devState := mock.NewMockDeviceState(ctrlMock)
-	devState.EXPECT().GetAllocatableDevices().AnyTimes().Return(defaultAllocatableDevices())
+	devState.EXPECT().GetPolicyCandidateDevices(gomock.Any()).AnyTimes().DoAndReturn(
+		func(includePciAddressInventory bool) drasriovtypes.AllocatableDevices {
+			alloc := defaultAllocatableDevices()
+			if !includePciAddressInventory {
+				return alloc
+			}
+			for name, device := range defaultPciInventoryDevices() {
+				if _, exists := alloc[name]; !exists {
+					alloc[name] = device
+				}
+			}
+			return alloc
+		},
+	)
 	devState.EXPECT().UpdatePolicyDevices(gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
 		func(_ context.Context, m map[string]map[resourcev1.QualifiedName]resourcev1.DeviceAttribute) error {
 			applied = m
@@ -148,7 +161,43 @@ func defaultAllocatableDevices() drasriovtypes.AllocatableDevices {
 	}
 }
 
+func defaultPciInventoryDevices() drasriovtypes.AllocatableDevices {
+	vendor := "8086"
+	dev := "1889"
+	pci := "0000:af:00.5"
+	pcieRoot := "pci0000:af"
+	return drasriovtypes.AllocatableDevices{
+		"0000-af-00-5": resourcev1.Device{
+			Name: "0000-af-00-5",
+			Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{
+				sriovconsts.AttributeVendorID:           {StringValue: &vendor},
+				sriovconsts.AttributeDeviceID:           {StringValue: &dev},
+				sriovconsts.AttributePciAddress:         {StringValue: &pci},
+				sriovconsts.AttributeStandardPciAddress: {StringValue: &pci},
+				sriovconsts.AttributePCIeRoot:           {StringValue: &pcieRoot},
+			},
+		},
+	}
+}
+
 var _ = Describe("SriovResourcePolicyReconciler (envtest)", func() {
+	cleanupPolicies := func(ctx context.Context) {
+		policyList := &sriovdrav1alpha1.SriovResourcePolicyList{}
+		Expect(k8sClient.List(ctx, policyList, client.InNamespace("dra-driver-sriov"))).To(Succeed())
+		for i := range policyList.Items {
+			Expect(k8sClient.Delete(ctx, &policyList.Items[i])).To(Succeed())
+		}
+		Eventually(func() int {
+			refreshed := &sriovdrav1alpha1.SriovResourcePolicyList{}
+			Expect(k8sClient.List(ctx, refreshed, client.InNamespace("dra-driver-sriov"))).To(Succeed())
+			return len(refreshed.Items)
+		}, 5*time.Second, 200*time.Millisecond).Should(BeZero())
+	}
+
+	AfterEach(func(ctx SpecContext) {
+		cleanupPolicies(ctx)
+	})
+
 	It("should handle no policies in namespace", func(ctx SpecContext) {
 		Consistently(func() int {
 			return len(applied)
@@ -181,7 +230,7 @@ var _ = Describe("SriovResourcePolicyReconciler (envtest)", func() {
 
 		Consistently(func() int {
 			return len(applied)
-		}, 1*time.Second, 200*time.Millisecond).Should(BeNumerically(">=", 1))
+		}, 1*time.Second, 200*time.Millisecond).Should(Equal(0))
 	})
 
 	It("should merge multiple matching policies", func(ctx SpecContext) {
@@ -199,17 +248,6 @@ var _ = Describe("SriovResourcePolicyReconciler (envtest)", func() {
 	})
 
 	It("should apply DeviceAttributes when selector matches", func(ctx SpecContext) {
-		// Clean up existing policies
-		for _, name := range []string{"rp-empty-selector", "rp-duplicate"} {
-			rp := &sriovdrav1alpha1.SriovResourcePolicy{}
-			if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: "dra-driver-sriov", Name: name}, rp); err == nil {
-				_ = k8sClient.Delete(ctx, rp)
-			}
-		}
-
-		// Wait for deletion
-		time.Sleep(500 * time.Millisecond)
-
 		resName := "my-pool"
 		da := &sriovdrav1alpha1.DeviceAttributes{
 			ObjectMeta: metav1.ObjectMeta{
@@ -247,6 +285,48 @@ var _ = Describe("SriovResourcePolicyReconciler (envtest)", func() {
 			}
 			return false
 		}, 5*time.Second, 200*time.Millisecond).Should(BeTrue())
+	})
+
+	It("should match PCI inventory device only when pciAddresses filter is used", func(ctx SpecContext) {
+		matchingPolicy := &sriovdrav1alpha1.SriovResourcePolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "rp-pci-inventory-match", Namespace: "dra-driver-sriov"},
+			Spec: sriovdrav1alpha1.SriovResourcePolicySpec{
+				Configs: []sriovdrav1alpha1.Config{{
+					ResourceFilters: []sriovdrav1alpha1.ResourceFilter{
+						{PciAddresses: []string{"0000:af:00.5"}},
+					},
+				}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, matchingPolicy)).To(Succeed())
+
+		Eventually(func() bool {
+			_, ok := applied["0000-af-00-5"]
+			return ok
+		}, 5*time.Second, 200*time.Millisecond).Should(BeTrue())
+
+		cleanupPolicies(ctx)
+		Eventually(func() bool {
+			_, ok := applied["0000-af-00-5"]
+			return !ok
+		}, 5*time.Second, 200*time.Millisecond).Should(BeTrue())
+
+		nonMatchingPolicy := &sriovdrav1alpha1.SriovResourcePolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "rp-pci-inventory-miss", Namespace: "dra-driver-sriov"},
+			Spec: sriovdrav1alpha1.SriovResourcePolicySpec{
+				Configs: []sriovdrav1alpha1.Config{{
+					ResourceFilters: []sriovdrav1alpha1.ResourceFilter{
+						{PciAddresses: []string{"0000:af:00.6"}},
+					},
+				}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, nonMatchingPolicy)).To(Succeed())
+
+		Consistently(func() bool {
+			_, ok := applied["0000-af-00-5"]
+			return ok
+		}, time.Second, 200*time.Millisecond).Should(BeFalse())
 	})
 
 	It("should requeue when node is missing (direct Reconcile call)", func(ctx SpecContext) {

@@ -23,8 +23,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/containernetworking/cni/pkg/invoke"
@@ -33,48 +35,67 @@ import (
 )
 
 // Source: https://github.com/containernetworking/cni/blob/v1.3.0/pkg/invoke/raw_exec.go
-// with ChrootDir removed
 
 // RawExec implements invoke.Exec to execute CNI with chroot
 type RawExec struct {
-	Stderr io.Writer
-	// ChrootDir string
+	Stderr    io.Writer
+	ChrootDir string
 	version.PluginDecoder
+}
+
+// baseExecEnv returns the minimal host environment forwarded to CNI plugins.
+func baseExecEnv() []string {
+	pathValue, hasPath := os.LookupEnv("PATH")
+	if !hasPath {
+		return nil
+	}
+	return []string{"PATH=" + pathValue}
 }
 
 // ExecPlugin executes CNI plugin with given environment/stdin data.
 func (e *RawExec) ExecPlugin(ctx context.Context, pluginPath string, stdinData []byte, environ []string) ([]byte, error) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	c := exec.CommandContext(ctx, pluginPath)
-	// // execute delegate CNI with host filesystem context.
-	// // source: https://github.com/k8snetworkplumbingwg/multus-cni/blob/v4.2.2/pkg/server/exec_chroot.go
-	// c.SysProcAttr = &syscall.SysProcAttr{
-	// 	Chroot: e.ChrootDir,
-	// }
-	c.Env = environ
-	c.Stdin = bytes.NewBuffer(stdinData)
-	c.Stdout = stdout
-	c.Stderr = stderr
+	var lastErr error
 
 	// Retry the command on "text file busy" errors
 	for i := 0; i <= 10; i++ {
+		stdout.Reset()
+		stderr.Reset()
+		c := exec.CommandContext(ctx, pluginPath)
+		// Execute delegate CNI with host filesystem context when configured.
+		if e.ChrootDir != "" {
+			c.SysProcAttr = &syscall.SysProcAttr{
+				Chroot: e.ChrootDir,
+			}
+		}
+		// Forward only a minimal base environment and layer CNI variables on top.
+		c.Env = append(baseExecEnv(), environ...)
+		c.Stdin = bytes.NewBuffer(stdinData)
+		c.Stdout = stdout
+		c.Stderr = stderr
+
 		err := c.Run()
 
 		// Command succeeded
 		if err == nil {
+			lastErr = nil
 			break
 		}
 
 		// If the plugin is currently about to be written, then we wait a
 		// second and try it again
 		if strings.Contains(err.Error(), "text file busy") {
+			lastErr = err
 			time.Sleep(time.Second)
 			continue
 		}
 
 		// All other errors except than the busy text file
 		return nil, e.pluginErr(err, stdout.Bytes(), stderr.Bytes())
+	}
+	if lastErr != nil {
+		return nil, e.pluginErr(lastErr, stdout.Bytes(), stderr.Bytes())
 	}
 
 	// Copy stderr to caller's buffer in case plugin printed to both
