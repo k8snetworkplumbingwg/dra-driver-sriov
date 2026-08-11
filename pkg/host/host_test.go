@@ -887,13 +887,26 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 				Expect(fake.TrustCalls).To(HaveLen(1))
 			})
 
-			It("should issue a single vlan call when only qos is set", func() {
+			It("should reject partial vlan groups without writing zero values", func() {
 				fake := &host.FakeNetlinkProvider{}
 				hTest := host.NewHostForTest(fake)
 
-				Expect(hTest.ConfigureVF("eth0", testPtr(1), &configapi.VFLinkConfig{Qos: testPtr(5)})).NotTo(HaveOccurred())
+				err := hTest.ConfigureVF("eth0", testPtr(1), &configapi.VFLinkConfig{Qos: testPtr(5)})
 
-				Expect(fake.VlanCalls).To(Equal([]host.VlanCall{{PF: "eth0", VF: 1, Vlan: 0, Qos: 5, Proto: ""}}))
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("vlan, qos and vlanProto"))
+				Expect(fake.VlanCalls).To(BeEmpty())
+			})
+
+			It("should reject partial rate groups without writing zero values", func() {
+				fake := &host.FakeNetlinkProvider{}
+				hTest := host.NewHostForTest(fake)
+
+				err := hTest.ConfigureVF("eth0", testPtr(1), &configapi.VFLinkConfig{MaxTxRate: testPtr(1000)})
+
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("minTxRate and maxTxRate"))
+				Expect(fake.RateCalls).To(BeEmpty())
 			})
 
 			It("should be a no-op for a nil config", func() {
@@ -930,8 +943,18 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 			It("should reset all VF attributes to their defaults", func() {
 				fake := &host.FakeNetlinkProvider{}
 				hTest := host.NewHostForTest(fake)
+				cfg := &configapi.VFLinkConfig{
+					VLAN:      testPtr(100),
+					Qos:       testPtr(3),
+					VlanProto: testPtr(configapi.VlanProto8021q),
+					SpoofChk:  testPtr(false),
+					Trust:     testPtr(true),
+					MinTxRate: testPtr(100),
+					MaxTxRate: testPtr(1000),
+					LinkState: testPtr(configapi.LinkStateEnable),
+				}
 
-				Expect(hTest.ResetVF("eth0", testPtr(4))).NotTo(HaveOccurred())
+				Expect(hTest.ResetVF("eth0", testPtr(4), cfg)).NotTo(HaveOccurred())
 
 				Expect(fake.VlanCalls).To(Equal([]host.VlanCall{{PF: "eth0", VF: 4, Vlan: 0, Qos: 0, Proto: ""}}))
 				Expect(fake.SpoofchkCalls).To(Equal([]host.SpoofchkCall{{PF: "eth0", VF: 4, Enabled: true}}))
@@ -940,16 +963,35 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 				Expect(fake.StateCalls).To(Equal([]host.StateCall{{PF: "eth0", VF: 4, State: configapi.LinkStateAuto}}))
 			})
 
+			It("should reset only fields owned by DRA", func() {
+				fake := &host.FakeNetlinkProvider{}
+				hTest := host.NewHostForTest(fake)
+
+				Expect(hTest.ResetVF("eth0", testPtr(4), &configapi.VFLinkConfig{Trust: testPtr(true)})).NotTo(HaveOccurred())
+
+				Expect(fake.VlanCalls).To(BeEmpty())
+				Expect(fake.SpoofchkCalls).To(BeEmpty())
+				Expect(fake.TrustCalls).To(Equal([]host.TrustCall{{PF: "eth0", VF: 4, Enabled: false}}))
+				Expect(fake.RateCalls).To(BeEmpty())
+				Expect(fake.StateCalls).To(BeEmpty())
+			})
+
 			It("should return an error when the VF index is nil", func() {
 				hTest := host.NewHostForTest(&host.FakeNetlinkProvider{})
-				err := hTest.ResetVF("eth0", nil)
+				err := hTest.ResetVF("eth0", nil, &configapi.VFLinkConfig{Trust: testPtr(true)})
 				Expect(err).To(HaveOccurred())
 			})
 
 			It("should aggregate setter errors", func() {
 				fake := &host.FakeNetlinkProvider{VlanErr: fmt.Errorf("v"), StateErr: fmt.Errorf("s")}
 				hTest := host.NewHostForTest(fake)
-				err := hTest.ResetVF("eth0", testPtr(0))
+				cfg := &configapi.VFLinkConfig{
+					VLAN:      testPtr(100),
+					Qos:       testPtr(3),
+					VlanProto: testPtr(configapi.VlanProto8021q),
+					LinkState: testPtr(configapi.LinkStateEnable),
+				}
+				err := hTest.ResetVF("eth0", testPtr(0), cfg)
 				Expect(err).To(HaveOccurred())
 			})
 		})

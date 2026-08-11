@@ -37,6 +37,15 @@ func (c *VfConfig) Validate() error {
 // validate checks the native VF link attributes for valid ranges and values.
 // Only non-nil (explicitly requested) fields are validated.
 func (v *VFLinkConfig) validate() error {
+	vlanFieldsSet := v.VLAN != nil || v.Qos != nil || v.VlanProto != nil
+	if vlanFieldsSet && (v.VLAN == nil || v.Qos == nil || v.VlanProto == nil) {
+		return fmt.Errorf("vlan, qos and vlanProto must be set together")
+	}
+	rateFieldsSet := v.MinTxRate != nil || v.MaxTxRate != nil
+	if rateFieldsSet && (v.MinTxRate == nil || v.MaxTxRate == nil) {
+		return fmt.Errorf("minTxRate and maxTxRate must be set together")
+	}
+
 	if v.VLAN != nil && (*v.VLAN < vlanMin || *v.VLAN > vlanMax) {
 		return fmt.Errorf("vlan %d out of range [%d-%d]", *v.VLAN, vlanMin, vlanMax)
 	}

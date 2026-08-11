@@ -58,6 +58,7 @@ type VfConfig struct {
 // handled separately; see the driver documentation.
 type VFLinkConfig struct {
 	// VLAN is the 802.1Q VLAN id to assign to the VF (0-4094; 0 clears it).
+	// VLAN, Qos and VlanProto must be specified together.
 	VLAN *int `json:"vlan,omitempty"`
 	// Qos is the 802.1p priority (QoS) associated with the VLAN (0-7).
 	Qos *int `json:"qos,omitempty"`
@@ -68,6 +69,7 @@ type VFLinkConfig struct {
 	// Trust enables or disables trusted mode for the VF.
 	Trust *bool `json:"trust,omitempty"`
 	// MinTxRate is the minimum guaranteed transmit bandwidth in Mbps (0 clears it).
+	// MinTxRate and MaxTxRate must be specified together.
 	MinTxRate *int `json:"minTxRate,omitempty"`
 	// MaxTxRate is the maximum transmit bandwidth in Mbps (0 clears it).
 	MaxTxRate *int `json:"maxTxRate,omitempty"`

@@ -347,17 +347,17 @@ func (mr *MockInterfaceMockRecorder) PCI() *gomock.Call {
 }
 
 // ResetVF mocks base method.
-func (m *MockInterface) ResetVF(pfName string, vfIndex *int) error {
+func (m *MockInterface) ResetVF(pfName string, vfIndex *int, cfg *v1alpha1.VFLinkConfig) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ResetVF", pfName, vfIndex)
+	ret := m.ctrl.Call(m, "ResetVF", pfName, vfIndex, cfg)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // ResetVF indicates an expected call of ResetVF.
-func (mr *MockInterfaceMockRecorder) ResetVF(pfName, vfIndex any) *gomock.Call {
+func (mr *MockInterfaceMockRecorder) ResetVF(pfName, vfIndex, cfg any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetVF", reflect.TypeOf((*MockInterface)(nil).ResetVF), pfName, vfIndex)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetVF", reflect.TypeOf((*MockInterface)(nil).ResetVF), pfName, vfIndex, cfg)
 }
 
 // RestoreDeviceDriver mocks base method.

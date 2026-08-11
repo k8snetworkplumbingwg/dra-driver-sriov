@@ -247,6 +247,12 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 		if err != nil {
 			return nil, fmt.Errorf("error converting net attach def config to sriov-cni format: %w", err)
 		}
+		if config.VF != nil {
+			netAttachDefRawConfig, err = drasriovtypes.RemoveOwnedVFAttributesFromNetConf(netAttachDefRawConfig, config.VF)
+			if err != nil {
+				return nil, fmt.Errorf("error removing DRA-owned VF attributes from sriov-cni config: %w", err)
+			}
+		}
 	}
 	// Bind device to driver if specified in config
 	originalDriver, err := host.GetHelpers().BindDeviceDriver(pciAddress, config)
@@ -262,6 +268,17 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 		}
 		return cause
 	}
+	var configuredVFPFName string
+	var configuredVFIndex *int
+	var configuredVFCfg *configapi.VFLinkConfig
+	rollbackOnError := func(cause error) error {
+		if configuredVFCfg != nil {
+			if resetErr := resetVFAttributesAtTarget(logger, pciAddress, configuredVFPFName, configuredVFIndex, configuredVFCfg); resetErr != nil {
+				cause = fmt.Errorf("%w; additionally failed to reset native VF attributes: %v", cause, resetErr)
+			}
+		}
+		return restoreDriverOnError(cause)
+	}
 
 	// Ensure that the kernel module are loaded if the user request vhost mounts
 	if config.AddVhostMount {
@@ -274,9 +291,13 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 	// netlink. This is only done in STANDALONE mode; in MULTUS mode sriov-cni owns
 	// VF configuration and applying it here would conflict.
 	if s.isStandaloneMode() && config.VF != nil {
-		if err := configureVFAttributes(logger, deviceInfo, config.VF); err != nil {
+		pfName, vfIndex, err := configureVFAttributes(logger, deviceInfo, config.VF)
+		if err != nil {
 			return nil, restoreDriverOnError(err)
 		}
+		configuredVFPFName = pfName
+		configuredVFIndex = vfIndex
+		configuredVFCfg = config.VF
 	}
 
 	// create environment variables
@@ -292,7 +313,7 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 	if config.Driver == "vfio-pci" {
 		devFileHost, devFileContainer, err := host.GetHelpers().GetVFIODeviceFile(pciAddress)
 		if err != nil {
-			return nil, restoreDriverOnError(fmt.Errorf("error getting VFIO device file for device %s: %w", pciAddress, err))
+			return nil, rollbackOnError(fmt.Errorf("error getting VFIO device file for device %s: %w", pciAddress, err))
 		}
 
 		// Add VFIO device node
@@ -331,7 +352,7 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 	// Add RDMA character devices if applicable
 	rdmaDeviceNodes, rdmaEnvs, err := s.handleRDMADevice(ctx, deviceInfo, pciAddress, result.Device)
 	if err != nil {
-		return nil, restoreDriverOnError(fmt.Errorf("error handling RDMA device: %w", err))
+		return nil, rollbackOnError(fmt.Errorf("error handling RDMA device: %w", err))
 	}
 	deviceNodes = append(deviceNodes, rdmaDeviceNodes...)
 	envs = append(envs, rdmaEnvs...)
@@ -382,16 +403,16 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 
 // configureVFAttributes resolves the PF interface name and VF index for the
 // given device and applies the requested native VF link attributes via netlink.
-func configureVFAttributes(logger klog.Logger, deviceInfo resourceapi.Device, vfCfg *configapi.VFLinkConfig) error {
+func configureVFAttributes(logger klog.Logger, deviceInfo resourceapi.Device, vfCfg *configapi.VFLinkConfig) (string, *int, error) {
 	pfName, vfIndex, err := resolveVFTargetFromQualified(deviceInfo.Attributes)
 	if err != nil {
-		return fmt.Errorf("cannot configure VF attributes: %w", err)
+		return "", nil, fmt.Errorf("cannot configure VF attributes: %w", err)
 	}
 	logger.V(2).Info("Configuring native VF attributes", "pf", pfName, "vf", *vfIndex)
 	if err := host.GetHelpers().ConfigureVF(pfName, vfIndex, vfCfg); err != nil {
-		return fmt.Errorf("failed to configure VF attributes on %s vf %d: %w", pfName, *vfIndex, err)
+		return "", nil, fmt.Errorf("failed to configure VF attributes on %s vf %d: %w", pfName, *vfIndex, err)
 	}
-	return nil
+	return pfName, vfIndex, nil
 }
 
 // resetVFAttributes reverts native VF attributes applied at prepare time back to
@@ -401,10 +422,14 @@ func resetVFAttributes(logger klog.Logger, preparedDevice *drasriovtypes.Prepare
 	if err != nil {
 		return fmt.Errorf("cannot reset native VF attributes for %s: %w", preparedDevice.PciAddress, err)
 	}
-	if err := host.GetHelpers().ResetVF(pfName, vfIndex); err != nil {
-		return fmt.Errorf("failed to reset native VF attributes for %s on %s vf %d: %w", preparedDevice.PciAddress, pfName, *vfIndex, err)
+	return resetVFAttributesAtTarget(logger, preparedDevice.PciAddress, pfName, vfIndex, preparedDevice.Config.VF)
+}
+
+func resetVFAttributesAtTarget(logger klog.Logger, pciAddress, pfName string, vfIndex *int, vfCfg *configapi.VFLinkConfig) error {
+	if err := host.GetHelpers().ResetVF(pfName, vfIndex, vfCfg); err != nil {
+		return fmt.Errorf("failed to reset native VF attributes for %s on %s vf %d: %w", pciAddress, pfName, *vfIndex, err)
 	}
-	logger.V(2).Info("Reset native VF attributes", "device", preparedDevice.PciAddress, "pf", pfName, "vf", *vfIndex)
+	logger.V(2).Info("Reset native VF attributes", "device", pciAddress, "pf", pfName, "vf", *vfIndex)
 	return nil
 }
 

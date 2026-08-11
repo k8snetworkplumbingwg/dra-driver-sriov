@@ -430,6 +430,28 @@ var _ = Describe("VfConfig", func() {
 				Expect(config.Validate()).NotTo(HaveOccurred())
 			})
 
+			It("should reject a partial VLAN group", func() {
+				config := &VfConfig{
+					Driver:           "netdevice",
+					NetAttachDefName: "net",
+					VF:               &VFLinkConfig{VLAN: testPtr(100)},
+				}
+				err := config.Validate()
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("vlan, qos and vlanProto"))
+			})
+
+			It("should reject a partial rate group", func() {
+				config := &VfConfig{
+					Driver:           "netdevice",
+					NetAttachDefName: "net",
+					VF:               &VFLinkConfig{MaxTxRate: testPtr(1000)},
+				}
+				err := config.Validate()
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("minTxRate and maxTxRate"))
+			})
+
 			It("should reject an out-of-range vlan", func() {
 				config := &VfConfig{Driver: "netdevice", NetAttachDefName: "net", VF: &VFLinkConfig{VLAN: testPtr(5000)}}
 				err := config.Validate()

@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1beta1"
 
+	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 	draTypes "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
@@ -117,6 +118,69 @@ var _ = Describe("Types", func() {
 			err = json.Unmarshal([]byte(result), &config)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(config["deviceID"]).To(Equal(""))
+		})
+	})
+
+	Context("RemoveOwnedVFAttributesFromNetConf", func() {
+		It("removes only attributes owned by DRA", func() {
+			vlan := 100
+			qos := 3
+			proto := configapi.VlanProto8021q
+			spoofChk := true
+			originalConfig := `{
+				"type": "sriov",
+				"vlan": 200,
+				"vlanQoS": 4,
+				"vlanProto": "802.1ad",
+				"spoofchk": "off",
+				"trust": "on",
+				"min_tx_rate": 10,
+				"max_tx_rate": 100,
+				"link_state": "disable",
+				"ipam": {"type": "host-local"}
+			}`
+
+			result, err := draTypes.RemoveOwnedVFAttributesFromNetConf(originalConfig, &configapi.VFLinkConfig{
+				VLAN:      &vlan,
+				Qos:       &qos,
+				VlanProto: &proto,
+				SpoofChk:  &spoofChk,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			var config map[string]interface{}
+			Expect(json.Unmarshal([]byte(result), &config)).To(Succeed())
+			Expect(config).NotTo(HaveKey("vlan"))
+			Expect(config).NotTo(HaveKey("vlanQoS"))
+			Expect(config).NotTo(HaveKey("vlanProto"))
+			Expect(config).NotTo(HaveKey("spoofchk"))
+			Expect(config).To(HaveKeyWithValue("trust", "on"))
+			Expect(config).To(HaveKeyWithValue("min_tx_rate", BeNumerically("==", 10)))
+			Expect(config).To(HaveKeyWithValue("max_tx_rate", BeNumerically("==", 100)))
+			Expect(config).To(HaveKeyWithValue("link_state", "disable"))
+			Expect(config["ipam"]).To(Equal(map[string]interface{}{"type": "host-local"}))
+		})
+
+		It("removes owned fields from sriov plugins in a conflist", func() {
+			trust := true
+			originalConfig := `{
+				"cniVersion": "1.0.0",
+				"plugins": [
+					{"type": "bridge", "vlan": 200},
+					{"type": "sriov", "vlan": 200, "trust": "off"}
+				]
+			}`
+
+			result, err := draTypes.RemoveOwnedVFAttributesFromNetConf(originalConfig, &configapi.VFLinkConfig{
+				Trust: &trust,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			var config map[string]interface{}
+			Expect(json.Unmarshal([]byte(result), &config)).To(Succeed())
+			plugins := config["plugins"].([]interface{})
+			Expect(plugins[0]).To(Equal(map[string]interface{}{"type": "bridge", "vlan": float64(200)}))
+			Expect(plugins[1]).To(Equal(map[string]interface{}{"type": "sriov", "vlan": float64(200)}))
 		})
 	})
 
