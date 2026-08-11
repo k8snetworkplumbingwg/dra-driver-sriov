@@ -7,7 +7,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"go.uber.org/mock/gomock"
-	"k8s.io/utils/ptr"
 
 	"github.com/k8snetworkplumbingwg/sriovnet"
 
@@ -16,6 +15,12 @@ import (
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host"
 	mock_host "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host/mock"
 )
+
+func testPtr[T any](value T) *T {
+	p := new(T)
+	*p = value
+	return p
+}
 
 var _ = Describe("Host", func() {
 	var (
@@ -850,16 +855,16 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 				hTest := host.NewHostForTest(fake)
 
 				cfg := &configapi.VFLinkConfig{
-					VLAN:      ptr.To(100),
-					Qos:       ptr.To(3),
-					VlanProto: ptr.To(configapi.VlanProto8021ad),
-					SpoofChk:  ptr.To(true),
-					Trust:     ptr.To(false),
-					MinTxRate: ptr.To(100),
-					MaxTxRate: ptr.To(1000),
-					LinkState: ptr.To(configapi.LinkStateEnable),
+					VLAN:      testPtr(100),
+					Qos:       testPtr(3),
+					VlanProto: testPtr(configapi.VlanProto8021ad),
+					SpoofChk:  testPtr(true),
+					Trust:     testPtr(false),
+					MinTxRate: testPtr(100),
+					MaxTxRate: testPtr(1000),
+					LinkState: testPtr(configapi.LinkStateEnable),
 				}
-				Expect(hTest.ConfigureVF("eth0", 2, cfg)).NotTo(HaveOccurred())
+				Expect(hTest.ConfigureVF("eth0", testPtr(2), cfg)).NotTo(HaveOccurred())
 
 				Expect(fake.VlanCalls).To(HaveLen(1))
 				Expect(fake.VlanCalls[0]).To(Equal(host.VlanCall{PF: "eth0", VF: 2, Vlan: 100, Qos: 3, Proto: configapi.VlanProto8021ad}))
@@ -873,7 +878,7 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 				fake := &host.FakeNetlinkProvider{}
 				hTest := host.NewHostForTest(fake)
 
-				Expect(hTest.ConfigureVF("eth0", 0, &configapi.VFLinkConfig{Trust: ptr.To(true)})).NotTo(HaveOccurred())
+				Expect(hTest.ConfigureVF("eth0", testPtr(0), &configapi.VFLinkConfig{Trust: testPtr(true)})).NotTo(HaveOccurred())
 
 				Expect(fake.VlanCalls).To(BeEmpty())
 				Expect(fake.SpoofchkCalls).To(BeEmpty())
@@ -886,7 +891,7 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 				fake := &host.FakeNetlinkProvider{}
 				hTest := host.NewHostForTest(fake)
 
-				Expect(hTest.ConfigureVF("eth0", 1, &configapi.VFLinkConfig{Qos: ptr.To(5)})).NotTo(HaveOccurred())
+				Expect(hTest.ConfigureVF("eth0", testPtr(1), &configapi.VFLinkConfig{Qos: testPtr(5)})).NotTo(HaveOccurred())
 
 				Expect(fake.VlanCalls).To(Equal([]host.VlanCall{{PF: "eth0", VF: 1, Vlan: 0, Qos: 5, Proto: ""}}))
 			})
@@ -895,21 +900,27 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 				fake := &host.FakeNetlinkProvider{}
 				hTest := host.NewHostForTest(fake)
 
-				Expect(hTest.ConfigureVF("eth0", 0, nil)).NotTo(HaveOccurred())
+				Expect(hTest.ConfigureVF("eth0", testPtr(0), nil)).NotTo(HaveOccurred())
 				Expect(fake.VlanCalls).To(BeEmpty())
 				Expect(fake.StateCalls).To(BeEmpty())
 			})
 
 			It("should return an error when the PF name is empty", func() {
 				hTest := host.NewHostForTest(&host.FakeNetlinkProvider{})
-				err := hTest.ConfigureVF("", 0, &configapi.VFLinkConfig{Trust: ptr.To(true)})
+				err := hTest.ConfigureVF("", testPtr(0), &configapi.VFLinkConfig{Trust: testPtr(true)})
+				Expect(err).To(HaveOccurred())
+			})
+
+			It("should return an error when the VF index is nil", func() {
+				hTest := host.NewHostForTest(&host.FakeNetlinkProvider{})
+				err := hTest.ConfigureVF("eth0", nil, &configapi.VFLinkConfig{Trust: testPtr(true)})
 				Expect(err).To(HaveOccurred())
 			})
 
 			It("should propagate setter errors", func() {
 				fake := &host.FakeNetlinkProvider{TrustErr: fmt.Errorf("boom")}
 				hTest := host.NewHostForTest(fake)
-				err := hTest.ConfigureVF("eth0", 0, &configapi.VFLinkConfig{Trust: ptr.To(true)})
+				err := hTest.ConfigureVF("eth0", testPtr(0), &configapi.VFLinkConfig{Trust: testPtr(true)})
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("trust"))
 			})
@@ -920,7 +931,7 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 				fake := &host.FakeNetlinkProvider{}
 				hTest := host.NewHostForTest(fake)
 
-				Expect(hTest.ResetVF("eth0", 4)).NotTo(HaveOccurred())
+				Expect(hTest.ResetVF("eth0", testPtr(4))).NotTo(HaveOccurred())
 
 				Expect(fake.VlanCalls).To(Equal([]host.VlanCall{{PF: "eth0", VF: 4, Vlan: 0, Qos: 0, Proto: ""}}))
 				Expect(fake.SpoofchkCalls).To(Equal([]host.SpoofchkCall{{PF: "eth0", VF: 4, Enabled: true}}))
@@ -929,10 +940,16 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 				Expect(fake.StateCalls).To(Equal([]host.StateCall{{PF: "eth0", VF: 4, State: configapi.LinkStateAuto}}))
 			})
 
+			It("should return an error when the VF index is nil", func() {
+				hTest := host.NewHostForTest(&host.FakeNetlinkProvider{})
+				err := hTest.ResetVF("eth0", nil)
+				Expect(err).To(HaveOccurred())
+			})
+
 			It("should aggregate setter errors", func() {
 				fake := &host.FakeNetlinkProvider{VlanErr: fmt.Errorf("v"), StateErr: fmt.Errorf("s")}
 				hTest := host.NewHostForTest(fake)
-				err := hTest.ResetVF("eth0", 0)
+				err := hTest.ResetVF("eth0", testPtr(0))
 				Expect(err).To(HaveOccurred())
 			})
 		})

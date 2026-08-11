@@ -253,14 +253,14 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			mockHost.EXPECT().TryGetPFInterfaceName("0000:01:00.0").Return("eth0")
-			mockHost.EXPECT().ResetVF("eth0", 3).Return(nil)
+			mockHost.EXPECT().ResetVF("eth0", ptr.To(3)).Return(nil)
 
 			m := &Manager{}
 			err := m.unprepareDevices(preparedDevices)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should continue unprepare when VF reset fails (best-effort)", func() {
+		It("should return an error when VF reset fails", func() {
 			preparedDevices := drasriovtypes.PreparedDevices{
 				&drasriovtypes.PreparedDevice{
 					PciAddress: "0000:01:00.1",
@@ -275,9 +275,29 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			mockHost.EXPECT().TryGetPFInterfaceName("0000:01:00.0").Return("eth0")
-			mockHost.EXPECT().ResetVF("eth0", 3).Return(fmt.Errorf("netlink failed"))
+			mockHost.EXPECT().ResetVF("eth0", ptr.To(3)).Return(fmt.Errorf("netlink failed"))
 
 			m := &Manager{}
+			err := m.unprepareDevices(preparedDevices)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to reset native VF attributes"))
+		})
+
+		It("should skip VF reset in MULTUS mode", func() {
+			preparedDevices := drasriovtypes.PreparedDevices{
+				&drasriovtypes.PreparedDevice{
+					PciAddress: "0000:01:00.1",
+					Config: &configapi.VfConfig{
+						VF: &configapi.VFLinkConfig{VLAN: ptr.To(100)},
+					},
+					DeviceAttributes: map[string]resourceapi.DeviceAttribute{
+						consts.AttributePfPciAddress: {StringValue: ptr.To("0000:01:00.0")},
+						consts.AttributeVFID:         {IntValue: ptr.To(int64(3))},
+					},
+				},
+			}
+
+			m := &Manager{configurationMode: string(consts.ConfigurationModeMultus)}
 			err := m.unprepareDevices(preparedDevices)
 			Expect(err).NotTo(HaveOccurred())
 		})
@@ -1068,7 +1088,7 @@ var _ = Describe("Manager", Serial, func() {
 
 			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", config).Return("", nil)
 			mockHost.EXPECT().TryGetPFInterfaceName("0000:01:00.0").Return("eth0")
-			mockHost.EXPECT().ConfigureVF("eth0", 3, vfLink).Return(nil)
+			mockHost.EXPECT().ConfigureVF("eth0", ptr.To(3), vfLink).Return(nil)
 
 			ifNameIndex := 0
 			preparedDevice, err := m.applyConfigOnDevice(context.Background(), &ifNameIndex, claim, config, result)
@@ -1139,7 +1159,7 @@ var _ = Describe("Manager", Serial, func() {
 
 			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", config).Return("ixgbevf", nil)
 			mockHost.EXPECT().TryGetPFInterfaceName("0000:01:00.0").Return("eth0")
-			mockHost.EXPECT().ConfigureVF("eth0", 3, vfLink).Return(fmt.Errorf("netlink failed"))
+			mockHost.EXPECT().ConfigureVF("eth0", ptr.To(3), vfLink).Return(fmt.Errorf("netlink failed"))
 			mockHost.EXPECT().RestoreDeviceDriver("0000:01:00.1", "ixgbevf").Return(nil)
 
 			ifNameIndex := 0
