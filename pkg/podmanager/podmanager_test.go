@@ -11,6 +11,7 @@ import (
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1beta1"
 
+	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/podmanager"
 	draTypes "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
@@ -445,6 +446,36 @@ var _ = Describe("PodManager", func() {
 			Expect(retrievedDevices[0].NetworkDeviceData).NotTo(BeNil())
 			Expect(retrievedDevices[0].NetworkDeviceData.InterfaceName).To(Equal("net1"))
 			Expect(retrievedDevices[0].NetworkDeviceData.IPs).To(Equal([]string{"10.10.0.10/24"}))
+		})
+
+		It("should persist pending cleanup metadata before commit", func() {
+			pending := &draTypes.PreparedDevice{
+				Device: drapbv1.Device{DeviceName: "pending-device"},
+				Config: &configapi.VfConfig{
+					Driver:           "vfio-pci",
+					NetAttachDefName: "net",
+				},
+				PciAddress:          "0000:03:00.1",
+				OriginalDriver:      "ixgbevf",
+				OriginalDriverKnown: true,
+			}
+
+			Expect(pm.BeginPrepare(claimUID, pending)).To(Succeed())
+			Expect(pm.PendingPrepares()).To(HaveKey(claimUID))
+
+			pm2, err := podmanager.NewPodManager(config)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pm2.PendingPrepares()).To(HaveKey(claimUID))
+
+			Expect(pm.Set(podUID, claimUID, draTypes.PreparedDevices{pending})).To(Succeed())
+			Expect(pm.PendingPrepares()).NotTo(HaveKey(claimUID))
+
+			pm3, err := podmanager.NewPodManager(config)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pm3.PendingPrepares()).NotTo(HaveKey(claimUID))
+			committed, found := pm3.Get(podUID, claimUID)
+			Expect(found).To(BeTrue())
+			Expect(committed).To(HaveLen(1))
 		})
 	})
 

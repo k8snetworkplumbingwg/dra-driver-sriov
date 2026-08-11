@@ -26,12 +26,18 @@ func (c *VfConfig) Validate() error {
 		return fmt.Errorf("no net attach def name set")
 	}
 	if c.VF != nil {
-		if err := c.VF.validate(); err != nil {
+		if err := c.VF.Validate(); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+// Validate checks the native VF link attributes for valid ranges and values.
+// Only non-nil (explicitly requested) fields are validated.
+func (v *VFLinkConfig) Validate() error {
+	return v.validate()
 }
 
 // validate checks the native VF link attributes for valid ranges and values.

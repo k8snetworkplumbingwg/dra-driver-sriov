@@ -153,6 +153,12 @@ type PreparedDevice struct {
 	PodUID              string
 	NetAttachDefConfig  string
 	OriginalDriver      string // Store original driver for restoration during unprepare
+	// NativeVFAttributesOwned records that this prepared device owns native VF
+	// attributes, independent of the configuration mode used after a restart.
+	NativeVFAttributesOwned bool `json:"nativeVFAttributesOwned,omitempty"`
+	// OriginalDriverKnown distinguishes an empty original driver from missing
+	// cleanup metadata in a pending prepare transaction.
+	OriginalDriverKnown bool `json:"originalDriverKnown,omitempty"`
 }
 
 func (p *PreparedDevice) ToKubeletPluginDevice(networkData *resourceapi.NetworkDeviceData) kubeletplugin.Device {
@@ -189,14 +195,16 @@ type Checkpoint struct {
 }
 
 type CheckpointV1 struct {
-	PreparedClaimsByPodUID PreparedClaimsByPodUID `json:"preparedClaimsByPodUID,omitempty"`
+	PreparedClaimsByPodUID          PreparedClaimsByPodUID   `json:"preparedClaimsByPodUID,omitempty"`
+	PendingPreparedDevicesByClaimID PreparedDevicesByClaimID `json:"pendingPreparedDevicesByClaimID,omitempty"`
 }
 
 func NewCheckpoint() *Checkpoint {
 	pc := &Checkpoint{
 		Checksum: 0,
 		V1: &CheckpointV1{
-			PreparedClaimsByPodUID: make(PreparedClaimsByPodUID),
+			PreparedClaimsByPodUID:          make(PreparedClaimsByPodUID),
+			PendingPreparedDevicesByClaimID: make(PreparedDevicesByClaimID),
 		},
 	}
 	return pc

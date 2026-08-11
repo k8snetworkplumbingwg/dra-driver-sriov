@@ -42,10 +42,11 @@ type Manager struct {
 	// device key also indicates that the device is advertised (policy-matched).
 	policyAttrKeys    map[string]map[resourceapi.QualifiedName]bool
 	configurationMode string
+	prepareStore      PrepareTransactionStore
 }
 
 // NewManager creates a new device-state manager and initializes allocatable SR-IOV devices.
-func NewManager(config *drasriovtypes.Config, cdi *cdi.Handler, deviceInfoStore DeviceInfoStore) (*Manager, error) {
+func NewManager(config *drasriovtypes.Config, cdi *cdi.Handler, deviceInfoStore DeviceInfoStore, prepareStore ...PrepareTransactionStore) (*Manager, error) {
 	if config == nil {
 		return nil, fmt.Errorf("config must not be nil")
 	}
@@ -77,6 +78,9 @@ func NewManager(config *drasriovtypes.Config, cdi *cdi.Handler, deviceInfoStore 
 		deviceInfoStore:        deviceInfoStore,
 		allocatable:            allocatable,
 		configurationMode:      configurationMode,
+	}
+	if len(prepareStore) > 0 && prepareStore[0] != nil {
+		state.prepareStore = prepareStore[0]
 	}
 
 	return state, nil
@@ -146,6 +150,8 @@ func (s *Manager) PrepareDevicesForClaim(ctx context.Context, ifNameIndex *int, 
 		}
 		if rollbackErr := s.unprepareDevices(preparedDevices); rollbackErr != nil {
 			rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback failed: %w", rollbackErr))
+		} else if abortErr := s.abortPendingPrepare(claim.UID); abortErr != nil {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("pending cleanup metadata removal failed: %w", abortErr))
 		}
 		return nil, errors.Join(rollbackErrs...)
 	}
@@ -157,6 +163,8 @@ func (s *Manager) PrepareDevicesForClaim(ctx context.Context, ifNameIndex *int, 
 		}
 		if rollbackErr := s.unprepareDevices(preparedDevices); rollbackErr != nil {
 			rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback failed: %w", rollbackErr))
+		} else if abortErr := s.abortPendingPrepare(claim.UID); abortErr != nil {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("pending cleanup metadata removal failed: %w", abortErr))
 		}
 		return nil, errors.Join(rollbackErrs...)
 	}
@@ -169,6 +177,23 @@ func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 	resultsConfig map[string]*configapi.VfConfig) (drasriovtypes.PreparedDevices, error) {
 	logger := klog.FromContext(ctx).WithName("prepareDevices")
 	preparedDevices := drasriovtypes.PreparedDevices{}
+
+	for _, result := range claim.Status.Allocation.Devices.Results {
+		if result.Driver != consts.DriverName {
+			continue
+		}
+		config, ok := resultsConfig[result.Request]
+		if !ok {
+			config = configapi.DefaultVfConfig()
+		}
+		config.Normalize()
+		if config.VF != nil {
+			if err := config.Validate(); err != nil {
+				return nil, fmt.Errorf("invalid VfConfig for request %s: %w", result.Request, err)
+			}
+		}
+	}
+
 	for _, result := range claim.Status.Allocation.Devices.Results {
 		if result.Driver != consts.DriverName {
 			continue
@@ -187,6 +212,11 @@ func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 			logger.Error(err, "error applying config on device", "config", config, "result", result)
 			if rollbackErr := s.unprepareDevices(preparedDevices); rollbackErr != nil {
 				return nil, fmt.Errorf("error applying config on device: %v; rollback failed: %v", err, rollbackErr)
+			}
+			for _, preparedDevice := range preparedDevices {
+				if abortErr := s.abortPendingPrepareDevice(claim.UID, preparedDevice.PciAddress); abortErr != nil {
+					return nil, fmt.Errorf("error applying config on device: %v; pending cleanup metadata removal failed: %v", err, abortErr)
+				}
 			}
 			return nil, fmt.Errorf("error applying config on device: %v", err)
 		}
@@ -213,6 +243,11 @@ func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim, config *configapi.VfConfig, result *resourceapi.DeviceRequestAllocationResult) (*drasriovtypes.PreparedDevice, error) {
 	logger := klog.FromContext(ctx).WithName("applyConfigOnDevice")
 	logger.V(3).Info("Applying config on device", "config", config, "result", result)
+	if s.isStandaloneMode() && config.VF != nil {
+		if err := config.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid VfConfig: %w", err)
+		}
+	}
 	deviceInfo, exist := s.allocatable[result.Device]
 	if !exist {
 		return nil, fmt.Errorf("device %s not found in allocatable devices", result.Device)
@@ -254,36 +289,78 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 			}
 		}
 	}
-	// Bind device to driver if specified in config
-	originalDriver, err := host.GetHelpers().BindDeviceDriver(pciAddress, config)
+
+	pendingDevice, pendingPFName, pendingVFIndex, err := s.beginPendingPrepare(
+		claim,
+		deviceInfo,
+		config,
+		result,
+		pciAddress,
+		multusResourceName,
+		multusDeviceID,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("error binding device %s to driver: %w", pciAddress, err)
+		return nil, err
 	}
-	restoreDriverOnError := func(cause error) error {
-		if config.Driver == "" {
-			return cause
-		}
-		if restoreErr := host.GetHelpers().RestoreDeviceDriver(pciAddress, originalDriver); restoreErr != nil {
-			return fmt.Errorf("%w; additionally failed to restore original driver for device %s: %v", cause, pciAddress, restoreErr)
-		}
-		return cause
+	originalDriver := ""
+	if pendingDevice != nil {
+		originalDriver = pendingDevice.OriginalDriver
 	}
+
 	var configuredVFPFName string
 	var configuredVFIndex *int
 	var configuredVFCfg *configapi.VFLinkConfig
 	rollbackOnError := func(cause error) error {
-		if configuredVFCfg != nil {
-			if resetErr := resetVFAttributesAtTarget(logger, pciAddress, configuredVFPFName, configuredVFIndex, configuredVFCfg); resetErr != nil {
-				cause = fmt.Errorf("%w; additionally failed to reset native VF attributes: %v", cause, resetErr)
+		var cleanupErrs []error
+		if configuredVFCfg != nil || pendingDevice != nil {
+			vfCfg := configuredVFCfg
+			pfName := configuredVFPFName
+			vfIndex := configuredVFIndex
+			if vfCfg == nil && pendingDevice != nil && pendingDevice.NativeVFAttributesOwned {
+				vfCfg = pendingDevice.Config.VF
+				pfName = pendingPFName
+				vfIndex = pendingVFIndex
+			}
+			if vfCfg != nil {
+				if resetErr := resetVFAttributesAtTarget(logger, pciAddress, pfName, vfIndex, vfCfg); resetErr != nil {
+					cleanupErrs = append(cleanupErrs, fmt.Errorf("failed to reset native VF attributes: %w", resetErr))
+				}
 			}
 		}
-		return restoreDriverOnError(cause)
+		restoredCause := cause
+		if config.Driver != "" {
+			if restoreErr := host.GetHelpers().RestoreDeviceDriver(pciAddress, originalDriver); restoreErr != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("failed to restore original driver for device %s: %w", pciAddress, restoreErr))
+			}
+		}
+		if len(cleanupErrs) > 0 {
+			restoredCause = errors.Join(append([]error{cause}, cleanupErrs...)...)
+		}
+		if pendingDevice != nil && len(cleanupErrs) == 0 {
+			if abortErr := s.abortPendingPrepareDevice(claim.UID, pciAddress); abortErr != nil {
+				restoredCause = errors.Join(restoredCause, fmt.Errorf("failed to remove pending cleanup metadata: %w", abortErr))
+			}
+		}
+		return restoredCause
+	}
+
+	// Bind device to driver if specified in config. The pending transaction was
+	// persisted before this host mutation.
+	boundOriginalDriver, err := host.GetHelpers().BindDeviceDriver(pciAddress, config)
+	if err != nil {
+		if pendingDevice == nil {
+			return nil, fmt.Errorf("error binding device %s to driver: %w", pciAddress, err)
+		}
+		return nil, rollbackOnError(fmt.Errorf("error binding device %s to driver: %w", pciAddress, err))
+	}
+	if config.Driver != "" {
+		originalDriver = boundOriginalDriver
 	}
 
 	// Ensure that the kernel module are loaded if the user request vhost mounts
 	if config.AddVhostMount {
 		if err := host.GetHelpers().EnsureVhostModulesLoaded(); err != nil {
-			return nil, restoreDriverOnError(fmt.Errorf("failed to ensure vhost modules are loaded: %w", err))
+			return nil, rollbackOnError(fmt.Errorf("failed to ensure vhost modules are loaded: %w", err))
 		}
 	}
 
@@ -291,9 +368,17 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 	// netlink. This is only done in STANDALONE mode; in MULTUS mode sriov-cni owns
 	// VF configuration and applying it here would conflict.
 	if s.isStandaloneMode() && config.VF != nil {
-		pfName, vfIndex, err := configureVFAttributes(logger, deviceInfo, config.VF)
-		if err != nil {
-			return nil, restoreDriverOnError(err)
+		pfName := pendingPFName
+		vfIndex := pendingVFIndex
+		if pfName == "" || vfIndex == nil {
+			pfName, vfIndex, err = resolveVFTargetFromQualified(deviceInfo.Attributes)
+			if err != nil {
+				return nil, rollbackOnError(fmt.Errorf("cannot configure VF attributes: %w", err))
+			}
+		}
+		logger.V(2).Info("Configuring native VF attributes", "pf", pfName, "vf", *vfIndex)
+		if err := host.GetHelpers().ConfigureVF(pfName, vfIndex, config.VF); err != nil {
+			return nil, rollbackOnError(fmt.Errorf("failed to configure VF attributes on %s vf %d: %w", pfName, *vfIndex, err))
 		}
 		configuredVFPFName = pfName
 		configuredVFIndex = vfIndex
@@ -386,33 +471,159 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 			DeviceName:   result.Device,
 			CdiDeviceIds: []string{s.cdi.GetClaimDevices(string(claim.UID), result.Device), s.cdi.GetPodSpecName(string(claim.Status.ReservedFor[0].UID))},
 		},
-		ContainerEdits:     &cdiapi.ContainerEdits{ContainerEdits: edits},
-		NetAttachDefConfig: netAttachDefRawConfig,
-		IfName:             ifName,
-		PciAddress:         pciAddress,
-		MultusDeviceID:     multusDeviceID,
-		MultusResourceName: multusResourceName,
-		DeviceAttributes:   metadataAttributes,
-		PodUID:             string(claim.Status.ReservedFor[0].UID),
-		Config:             config,
-		OriginalDriver:     originalDriver,
+		ContainerEdits:          &cdiapi.ContainerEdits{ContainerEdits: edits},
+		NetAttachDefConfig:      netAttachDefRawConfig,
+		IfName:                  ifName,
+		PciAddress:              pciAddress,
+		MultusDeviceID:          multusDeviceID,
+		MultusResourceName:      multusResourceName,
+		DeviceAttributes:        metadataAttributes,
+		PodUID:                  string(claim.Status.ReservedFor[0].UID),
+		Config:                  config,
+		OriginalDriver:          originalDriver,
+		NativeVFAttributesOwned: s.isStandaloneMode() && config.VF != nil,
+		OriginalDriverKnown:     config.Driver != "",
 	}
 
 	return preparedDevice, nil
 }
 
-// configureVFAttributes resolves the PF interface name and VF index for the
-// given device and applies the requested native VF link attributes via netlink.
-func configureVFAttributes(logger klog.Logger, deviceInfo resourceapi.Device, vfCfg *configapi.VFLinkConfig) (string, *int, error) {
-	pfName, vfIndex, err := resolveVFTargetFromQualified(deviceInfo.Attributes)
-	if err != nil {
-		return "", nil, fmt.Errorf("cannot configure VF attributes: %w", err)
+func (s *Manager) beginPendingPrepare(
+	claim *resourceapi.ResourceClaim,
+	deviceInfo resourceapi.Device,
+	config *configapi.VfConfig,
+	result *resourceapi.DeviceRequestAllocationResult,
+	pciAddress string,
+	multusResourceName string,
+	multusDeviceID string,
+) (*drasriovtypes.PreparedDevice, string, *int, error) {
+	if s.prepareStore == nil || (config.Driver == "" && !(s.isStandaloneMode() && config.VF != nil)) {
+		return nil, "", nil, nil
 	}
-	logger.V(2).Info("Configuring native VF attributes", "pf", pfName, "vf", *vfIndex)
-	if err := host.GetHelpers().ConfigureVF(pfName, vfIndex, vfCfg); err != nil {
-		return "", nil, fmt.Errorf("failed to configure VF attributes on %s vf %d: %w", pfName, *vfIndex, err)
+
+	pendingDevice := &drasriovtypes.PreparedDevice{
+		ClaimNamespacedName: kubeletplugin.NamespacedObject{
+			NamespacedName: k8stypes.NamespacedName{
+				Name:      claim.Name,
+				Namespace: claim.Namespace,
+			},
+			UID: claim.UID,
+		},
+		Device: drapbv1.Device{
+			RequestNames: []string{result.Request},
+			PoolName:     result.Pool,
+			DeviceName:   result.Device,
+		},
+		PciAddress:              pciAddress,
+		DeviceAttributes:        buildMetadataAttributes(deviceInfo.Attributes, ""),
+		PodUID:                  string(claim.Status.ReservedFor[0].UID),
+		MultusResourceName:      multusResourceName,
+		MultusDeviceID:          multusDeviceID,
+		Config:                  config.DeepCopy(),
+		NativeVFAttributesOwned: s.isStandaloneMode() && config.VF != nil,
+		OriginalDriverKnown:     config.Driver != "",
 	}
-	return pfName, vfIndex, nil
+
+	var pfName string
+	var vfIndex *int
+	if pendingDevice.NativeVFAttributesOwned {
+		var err error
+		pfName, vfIndex, err = resolveVFTargetFromQualified(deviceInfo.Attributes)
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("cannot persist VF cleanup metadata: %w", err)
+		}
+	}
+
+	if config.Driver != "" {
+		originalDriver, err := host.GetHelpers().GetDriverByBusAndDevice(pciAddress)
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("cannot persist driver cleanup metadata for %s: %w", pciAddress, err)
+		}
+		pendingDevice.OriginalDriver = originalDriver
+	}
+
+	if err := s.prepareStore.BeginPrepare(claim.UID, pendingDevice); err != nil {
+		return nil, "", nil, fmt.Errorf("cannot persist cleanup metadata for %s: %w", pciAddress, err)
+	}
+	return pendingDevice, pfName, vfIndex, nil
+}
+
+func (s *Manager) abortPendingPrepare(claimID k8stypes.UID) error {
+	if s.prepareStore == nil {
+		return nil
+	}
+	return s.prepareStore.AbortPendingPrepare(claimID)
+}
+
+func (s *Manager) abortPendingPrepareDevice(claimID k8stypes.UID, pciAddress string) error {
+	if s.prepareStore == nil {
+		return nil
+	}
+	return s.prepareStore.AbortPendingPrepareDevice(claimID, pciAddress)
+}
+
+// ReconcilePendingPrepares rolls back durable prepare transactions left by a
+// process crash. Pending metadata is retained when cleanup is incomplete so a
+// later restart can retry it. VF cleanup deliberately uses the existing
+// field-scoped neutral reset because netlink exposes no portable getter for
+// the prior per-field values.
+func (s *Manager) ReconcilePendingPrepares() error {
+	if s.prepareStore == nil {
+		return nil
+	}
+
+	var errs []error
+	for claimID, preparedDevices := range s.prepareStore.PendingPrepares() {
+		if err := s.reconcilePendingDevices(preparedDevices); err != nil {
+			errs = append(errs, fmt.Errorf("failed to reconcile pending prepare for claim %s: %w", claimID, err))
+			continue
+		}
+		if err := s.prepareStore.AbortPendingPrepare(claimID); err != nil {
+			errs = append(errs, fmt.Errorf("failed to remove reconciled prepare metadata for claim %s: %w", claimID, err))
+		}
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
+}
+
+func (s *Manager) reconcilePendingDevices(preparedDevices drasriovtypes.PreparedDevices) error {
+	for _, preparedDevice := range preparedDevices {
+		if preparedDevice == nil {
+			return fmt.Errorf("pending prepared device is nil")
+		}
+		if preparedDevice.Config == nil {
+			return fmt.Errorf("pending prepared device %s has no config", preparedDevice.PciAddress)
+		}
+		if preparedDevice.Config.Driver != "" && !preparedDevice.OriginalDriverKnown {
+			return fmt.Errorf("pending prepared device %s has incomplete original driver metadata", preparedDevice.PciAddress)
+		}
+		if preparedDevice.NativeVFAttributesOwned {
+			if preparedDevice.Config.VF == nil {
+				return fmt.Errorf("pending prepared device %s has no VF cleanup config", preparedDevice.PciAddress)
+			}
+			pfAttr, pfFound := preparedDevice.DeviceAttributes[consts.AttributePfPciAddress]
+			vfAttr, vfFound := preparedDevice.DeviceAttributes[consts.AttributeVFID]
+			if !pfFound || pfAttr.StringValue == nil || *pfAttr.StringValue == "" {
+				return fmt.Errorf("pending prepared device %s has incomplete VF target metadata: missing PF PCI address", preparedDevice.PciAddress)
+			}
+			if !vfFound || vfAttr.IntValue == nil {
+				return fmt.Errorf("pending prepared device %s has incomplete VF target metadata: missing VF ID", preparedDevice.PciAddress)
+			}
+		}
+	}
+	var errs []error
+	if err := s.cleanDeviceInfoFilesForPreparedDevices(context.Background(), preparedDevices); err != nil {
+		errs = append(errs, fmt.Errorf("failed to clean pending device-info files: %w", err))
+	}
+	if err := s.unpreparePendingDevices(preparedDevices); err != nil {
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
 }
 
 // resetVFAttributes reverts native VF attributes applied at prepare time back to
@@ -562,8 +773,14 @@ func (s *Manager) Unprepare(claimUID string, preparedDevices drasriovtypes.Prepa
 		errs = append(errs, fmt.Errorf("unable to clean device-info files for claim: %v", err))
 	}
 
-	if err := s.unprepareDevices(preparedDevices); err != nil {
-		errs = append(errs, fmt.Errorf("unprepare failed: %v", err))
+	unprepareErr := s.unprepareDevices(preparedDevices)
+	if unprepareErr != nil {
+		errs = append(errs, fmt.Errorf("unprepare failed: %v", unprepareErr))
+	}
+	if unprepareErr == nil {
+		if err := s.abortPendingPrepare(k8stypes.UID(claimUID)); err != nil {
+			errs = append(errs, fmt.Errorf("unable to remove pending prepare metadata: %v", err))
+		}
 	}
 
 	err := s.cdi.DeleteSpecFile(claimUID)
@@ -586,6 +803,14 @@ func (s *Manager) Unprepare(claimUID string, preparedDevices drasriovtypes.Prepa
 
 // unprepareDevices reverts the driver configuration for the prepared devices
 func (s *Manager) unprepareDevices(preparedDevices drasriovtypes.PreparedDevices) error {
+	return s.unprepareDevicesWithOwnership(preparedDevices, false)
+}
+
+func (s *Manager) unpreparePendingDevices(preparedDevices drasriovtypes.PreparedDevices) error {
+	return s.unprepareDevicesWithOwnership(preparedDevices, true)
+}
+
+func (s *Manager) unprepareDevicesWithOwnership(preparedDevices drasriovtypes.PreparedDevices, pending bool) error {
 	logger := klog.FromContext(context.Background()).WithName("unprepareDevices")
 	var errs []error
 	for _, preparedDevice := range preparedDevices {
@@ -600,7 +825,7 @@ func (s *Manager) unprepareDevices(preparedDevices drasriovtypes.PreparedDevices
 		// In STANDALONE mode we own VF link attributes and must reset them.
 		// In MULTUS mode sriov-cni owns VF configuration, so we skip resetting
 		// to avoid conflicting with CNI lifecycle.
-		if s.isStandaloneMode() && preparedDevice.Config.VF != nil {
+		if preparedDevice.NativeVFAttributesOwned || (!pending && s.isStandaloneMode() && preparedDevice.Config.VF != nil) {
 			if err := resetVFAttributes(logger, preparedDevice); err != nil {
 				logger.Error(err, "Failed to reset native VF attributes", "device", preparedDevice.PciAddress)
 				errs = append(errs, err)

@@ -937,6 +937,74 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("trust"))
 			})
+
+			It("should roll back completed setters when a later setter fails", func() {
+				fake := &host.FakeNetlinkProvider{StateErr: fmt.Errorf("state failed")}
+				hTest := host.NewHostForTest(fake)
+				cfg := &configapi.VFLinkConfig{
+					VLAN:      testPtr(100),
+					Qos:       testPtr(3),
+					VlanProto: testPtr(configapi.VlanProto8021q),
+					SpoofChk:  testPtr(false),
+					Trust:     testPtr(true),
+					MinTxRate: testPtr(100),
+					MaxTxRate: testPtr(1000),
+					LinkState: testPtr(configapi.LinkStateEnable),
+				}
+
+				err := hTest.ConfigureVF("eth0", testPtr(0), cfg)
+				Expect(err).To(HaveOccurred())
+
+				Expect(fake.VlanCalls).To(Equal([]host.VlanCall{
+					{PF: "eth0", VF: 0, Vlan: 100, Qos: 3, Proto: configapi.VlanProto8021q},
+					{PF: "eth0", VF: 0, Vlan: 0, Qos: 0, Proto: ""},
+				}))
+				Expect(fake.SpoofchkCalls).To(Equal([]host.SpoofchkCall{
+					{PF: "eth0", VF: 0, Enabled: false},
+					{PF: "eth0", VF: 0, Enabled: true},
+				}))
+				Expect(fake.TrustCalls).To(Equal([]host.TrustCall{
+					{PF: "eth0", VF: 0, Enabled: true},
+					{PF: "eth0", VF: 0, Enabled: false},
+				}))
+				Expect(fake.RateCalls).To(Equal([]host.RateCall{
+					{PF: "eth0", VF: 0, MinRate: 100, MaxRate: 1000},
+					{PF: "eth0", VF: 0, MinRate: 0, MaxRate: 0},
+				}))
+				Expect(fake.StateCalls).To(Equal([]host.StateCall{
+					{PF: "eth0", VF: 0, State: configapi.LinkStateEnable},
+				}))
+			})
+
+			It("should reject invalid rates before any setter", func() {
+				fake := &host.FakeNetlinkProvider{}
+				hTest := host.NewHostForTest(fake)
+
+				err := hTest.ConfigureVF("eth0", testPtr(0), &configapi.VFLinkConfig{
+					MinTxRate: testPtr(1000),
+					MaxTxRate: testPtr(100),
+				})
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("must not exceed"))
+				Expect(fake.VlanCalls).To(BeEmpty())
+				Expect(fake.SpoofchkCalls).To(BeEmpty())
+				Expect(fake.TrustCalls).To(BeEmpty())
+				Expect(fake.RateCalls).To(BeEmpty())
+				Expect(fake.StateCalls).To(BeEmpty())
+			})
+
+			It("should reject negative rates before any setter", func() {
+				fake := &host.FakeNetlinkProvider{}
+				hTest := host.NewHostForTest(fake)
+
+				err := hTest.ConfigureVF("eth0", testPtr(0), &configapi.VFLinkConfig{
+					MinTxRate: testPtr(-1),
+					MaxTxRate: testPtr(100),
+				})
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("minTxRate"))
+				Expect(fake.RateCalls).To(BeEmpty())
+			})
 		})
 
 		Context("ResetVF", func() {
