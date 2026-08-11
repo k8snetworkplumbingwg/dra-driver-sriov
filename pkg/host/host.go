@@ -870,12 +870,38 @@ func (h *Host) ConfigureVF(pfName string, vfIndex *int, cfg *configapi.VFLinkCon
 	if cfg == nil {
 		return nil
 	}
-	if err := validateVFAttributeGroups(cfg); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return err
 	}
 	resolvedVFIndex, err := validateVFConfigInput("configure", pfName, vfIndex)
 	if err != nil {
 		return err
+	}
+
+	type rollbackAction struct {
+		name string
+		fn   func() error
+	}
+	var rollbackActions []rollbackAction
+	rollbackCompleted := func(cause error) error {
+		var rollbackErrs []error
+		for index := len(rollbackActions) - 1; index >= 0; index-- {
+			action := rollbackActions[index]
+			if err := action.fn(); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback %s: %w", action.name, err))
+			}
+		}
+		if len(rollbackErrs) == 0 {
+			return cause
+		}
+		return fmt.Errorf("%w; additionally failed to roll back VF attributes: %w", cause, errors.Join(rollbackErrs...))
+	}
+	apply := func(name string, setter, rollback func() error) error {
+		if err := setter(); err != nil {
+			return rollbackCompleted(err)
+		}
+		rollbackActions = append(rollbackActions, rollbackAction{name: name, fn: rollback})
+		return nil
 	}
 
 	// VLAN/QoS/proto are programmed together because netlink applies them via a
@@ -884,19 +910,43 @@ func (h *Host) ConfigureVF(pfName string, vfIndex *int, cfg *configapi.VFLinkCon
 		vlan := valueOrZero(cfg.VLAN)
 		qos := valueOrZero(cfg.Qos)
 		proto := valueOrEmpty(cfg.VlanProto)
-		if err := h.setVFVlan(pfName, resolvedVFIndex, vlan, qos, proto); err != nil {
+		if err := apply(
+			"vlan",
+			func() error {
+				return h.setVFVlan(pfName, resolvedVFIndex, vlan, qos, proto)
+			},
+			func() error {
+				return h.setVFVlan(pfName, resolvedVFIndex, 0, 0, "")
+			},
+		); err != nil {
 			return err
 		}
 	}
 
 	if cfg.SpoofChk != nil {
-		if err := h.setVFSpoofChk(pfName, resolvedVFIndex, *cfg.SpoofChk); err != nil {
+		if err := apply(
+			"spoofchk",
+			func() error {
+				return h.setVFSpoofChk(pfName, resolvedVFIndex, *cfg.SpoofChk)
+			},
+			func() error {
+				return h.setVFSpoofChk(pfName, resolvedVFIndex, true)
+			},
+		); err != nil {
 			return err
 		}
 	}
 
 	if cfg.Trust != nil {
-		if err := h.setVFTrust(pfName, resolvedVFIndex, *cfg.Trust); err != nil {
+		if err := apply(
+			"trust",
+			func() error {
+				return h.setVFTrust(pfName, resolvedVFIndex, *cfg.Trust)
+			},
+			func() error {
+				return h.setVFTrust(pfName, resolvedVFIndex, false)
+			},
+		); err != nil {
 			return err
 		}
 	}
@@ -904,14 +954,30 @@ func (h *Host) ConfigureVF(pfName string, vfIndex *int, cfg *configapi.VFLinkCon
 	if cfg.MinTxRate != nil || cfg.MaxTxRate != nil {
 		minRate := valueOrZero(cfg.MinTxRate)
 		maxRate := valueOrZero(cfg.MaxTxRate)
-		if err := h.setVFRate(pfName, resolvedVFIndex, minRate, maxRate); err != nil {
+		if err := apply(
+			"tx rate",
+			func() error {
+				return h.setVFRate(pfName, resolvedVFIndex, minRate, maxRate)
+			},
+			func() error {
+				return h.setVFRate(pfName, resolvedVFIndex, 0, 0)
+			},
+		); err != nil {
 			return err
 		}
 	}
 
 	// link_state is applied last.
 	if cfg.LinkState != nil {
-		if err := h.setVFLinkState(pfName, resolvedVFIndex, *cfg.LinkState); err != nil {
+		if err := apply(
+			"link state",
+			func() error {
+				return h.setVFLinkState(pfName, resolvedVFIndex, *cfg.LinkState)
+			},
+			func() error {
+				return h.setVFLinkState(pfName, resolvedVFIndex, configapi.LinkStateAuto)
+			},
+		); err != nil {
 			return err
 		}
 	}
