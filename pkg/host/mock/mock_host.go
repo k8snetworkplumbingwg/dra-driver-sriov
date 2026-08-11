@@ -86,7 +86,7 @@ func (mr *MockInterfaceMockRecorder) BindDriverByBusAndDevice(device, driver any
 }
 
 // ConfigureVF mocks base method.
-func (m *MockInterface) ConfigureVF(pfName string, vfIndex int, cfg *v1alpha1.VFLinkConfig) error {
+func (m *MockInterface) ConfigureVF(pfName string, vfIndex *int, cfg *v1alpha1.VFLinkConfig) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ConfigureVF", pfName, vfIndex, cfg)
 	ret0, _ := ret[0].(error)
@@ -347,7 +347,7 @@ func (mr *MockInterfaceMockRecorder) PCI() *gomock.Call {
 }
 
 // ResetVF mocks base method.
-func (m *MockInterface) ResetVF(pfName string, vfIndex int) error {
+func (m *MockInterface) ResetVF(pfName string, vfIndex *int) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ResetVF", pfName, vfIndex)
 	ret0, _ := ret[0].(error)
