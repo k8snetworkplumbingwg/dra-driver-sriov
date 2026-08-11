@@ -125,7 +125,7 @@ type Interface interface {
 
 	// Native VF attribute configuration (applied via netlink on the PF)
 	ConfigureVF(pfName string, vfIndex *int, cfg *configapi.VFLinkConfig) error
-	ResetVF(pfName string, vfIndex *int) error
+	ResetVF(pfName string, vfIndex *int, cfg *configapi.VFLinkConfig) error
 }
 
 // Host provides unified host system functionality for SR-IOV, PCI operations, and driver management
@@ -862,12 +862,16 @@ func (h *Host) GetRDMACharDevices(rdmaDeviceName string) ([]string, error) {
 // Native VF Attribute Configuration
 
 // ConfigureVF applies the requested native VF link attributes on the given PF
-// interface via netlink. Only non-nil fields of cfg are applied. Attributes are
-// applied before the link state so that link_state is programmed last, matching
+// interface via netlink. Only non-nil fields of cfg are applied. VLAN/QoS/proto
+// and min/max rate are each applied as complete groups. Attributes are applied
+// before the link state so that link_state is programmed last, matching
 // sriov-cni ordering. A nil cfg is a no-op.
 func (h *Host) ConfigureVF(pfName string, vfIndex *int, cfg *configapi.VFLinkConfig) error {
 	if cfg == nil {
 		return nil
+	}
+	if err := validateVFAttributeGroups(cfg); err != nil {
+		return err
 	}
 	resolvedVFIndex, err := validateVFConfigInput("configure", pfName, vfIndex)
 	if err != nil {
@@ -915,33 +919,61 @@ func (h *Host) ConfigureVF(pfName string, vfIndex *int, cfg *configapi.VFLinkCon
 	return nil
 }
 
-// ResetVF best-effort restores a VF to a neutral default state: vlan 0, spoofchk
-// on, trust off, rates 0 and link state auto. Errors are aggregated and returned
-// so callers can log them without aborting the whole unprepare flow.
-func (h *Host) ResetVF(pfName string, vfIndex *int) error {
+// ResetVF best-effort restores only the native VF attributes owned by cfg to
+// their neutral defaults. Errors are aggregated and returned so callers can log
+// them without aborting the whole unprepare flow.
+func (h *Host) ResetVF(pfName string, vfIndex *int, cfg *configapi.VFLinkConfig) error {
+	if cfg == nil {
+		return nil
+	}
 	resolvedVFIndex, err := validateVFConfigInput("reset", pfName, vfIndex)
 	if err != nil {
 		return err
 	}
+	if err := validateVFAttributeGroups(cfg); err != nil {
+		return err
+	}
 
 	var errs []error
-	if err := h.setVFVlan(pfName, resolvedVFIndex, 0, 0, ""); err != nil {
-		errs = append(errs, fmt.Errorf("reset vlan: %w", err))
+	if cfg.VLAN != nil || cfg.Qos != nil || cfg.VlanProto != nil {
+		if err := h.setVFVlan(pfName, resolvedVFIndex, 0, 0, ""); err != nil {
+			errs = append(errs, fmt.Errorf("reset vlan: %w", err))
+		}
 	}
-	if err := h.setVFSpoofChk(pfName, resolvedVFIndex, true); err != nil {
-		errs = append(errs, fmt.Errorf("reset spoofchk: %w", err))
+	if cfg.SpoofChk != nil {
+		if err := h.setVFSpoofChk(pfName, resolvedVFIndex, true); err != nil {
+			errs = append(errs, fmt.Errorf("reset spoofchk: %w", err))
+		}
 	}
-	if err := h.setVFTrust(pfName, resolvedVFIndex, false); err != nil {
-		errs = append(errs, fmt.Errorf("reset trust: %w", err))
+	if cfg.Trust != nil {
+		if err := h.setVFTrust(pfName, resolvedVFIndex, false); err != nil {
+			errs = append(errs, fmt.Errorf("reset trust: %w", err))
+		}
 	}
-	if err := h.setVFRate(pfName, resolvedVFIndex, 0, 0); err != nil {
-		errs = append(errs, fmt.Errorf("reset rate: %w", err))
+	if cfg.MinTxRate != nil || cfg.MaxTxRate != nil {
+		if err := h.setVFRate(pfName, resolvedVFIndex, 0, 0); err != nil {
+			errs = append(errs, fmt.Errorf("reset rate: %w", err))
+		}
 	}
-	if err := h.setVFLinkState(pfName, resolvedVFIndex, configapi.LinkStateAuto); err != nil {
-		errs = append(errs, fmt.Errorf("reset link state: %w", err))
+	if cfg.LinkState != nil {
+		if err := h.setVFLinkState(pfName, resolvedVFIndex, configapi.LinkStateAuto); err != nil {
+			errs = append(errs, fmt.Errorf("reset link state: %w", err))
+		}
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("failed to reset VF %d of %s: %w", resolvedVFIndex, pfName, errors.Join(errs...))
+	}
+	return nil
+}
+
+func validateVFAttributeGroups(cfg *configapi.VFLinkConfig) error {
+	vlanFieldsSet := cfg.VLAN != nil || cfg.Qos != nil || cfg.VlanProto != nil
+	if vlanFieldsSet && (cfg.VLAN == nil || cfg.Qos == nil || cfg.VlanProto == nil) {
+		return fmt.Errorf("vlan, qos and vlanProto must be set together")
+	}
+	rateFieldsSet := cfg.MinTxRate != nil || cfg.MaxTxRate != nil
+	if rateFieldsSet && (cfg.MinTxRate == nil || cfg.MaxTxRate == nil) {
+		return fmt.Errorf("minTxRate and maxTxRate must be set together")
 	}
 	return nil
 }
