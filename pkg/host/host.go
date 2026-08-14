@@ -124,8 +124,9 @@ type Interface interface {
 	GetRDMACharDevices(rdmaDeviceName string) ([]string, error)
 
 	// Native VF attribute configuration (applied via netlink on the PF)
-	ConfigureVF(pfName string, vfIndex *int, cfg *configapi.VFLinkConfig) error
-	ResetVF(pfName string, vfIndex *int, cfg *configapi.VFLinkConfig) error
+	ConfigureVF(pfName string, vfIndex *int, cfg *configapi.VFLinkConfig) (*configapi.VFLinkConfig, error)
+	SnapshotVFAttributes(pfName string, vfIndex *int, cfg *configapi.VFLinkConfig) (*configapi.VFLinkConfig, error)
+	ResetVF(pfName string, vfIndex *int, restore *configapi.VFLinkConfig) error
 }
 
 // Host provides unified host system functionality for SR-IOV, PCI operations, and driver management
@@ -866,16 +867,25 @@ func (h *Host) GetRDMACharDevices(rdmaDeviceName string) ([]string, error) {
 // and min/max rate are each applied as complete groups. Attributes are applied
 // before the link state so that link_state is programmed last, matching
 // sriov-cni ordering. A nil cfg is a no-op.
-func (h *Host) ConfigureVF(pfName string, vfIndex *int, cfg *configapi.VFLinkConfig) error {
+//
+// ConfigureVF reads the attributes it is about to change first and returns that
+// snapshot. The snapshot is the rollback target on failure. Callers persist it
+// and pass it to ResetVF at unprepare time. Defaults such as spoofchk differ per
+// driver, so the driver never assumes one.
+func (h *Host) ConfigureVF(pfName string, vfIndex *int, cfg *configapi.VFLinkConfig) (*configapi.VFLinkConfig, error) {
 	if cfg == nil {
-		return nil
+		return nil, nil
 	}
 	if err := cfg.Validate(); err != nil {
-		return err
+		return nil, err
 	}
 	resolvedVFIndex, err := validateVFConfigInput("configure", pfName, vfIndex)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	original, err := h.snapshotVFAttributes(pfName, resolvedVFIndex, cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	type rollbackAction struct {
@@ -906,7 +916,7 @@ func (h *Host) ConfigureVF(pfName string, vfIndex *int, cfg *configapi.VFLinkCon
 
 	// VLAN/QoS/proto are programmed together because netlink applies them via a
 	// single message. Only issue the call when at least one of them is requested.
-	if cfg.VLAN != nil || cfg.Qos != nil || cfg.VlanProto != nil {
+	if original.VLAN != nil {
 		vlan := valueOrZero(cfg.VLAN)
 		qos := valueOrZero(cfg.Qos)
 		proto := valueOrEmpty(cfg.VlanProto)
@@ -916,42 +926,42 @@ func (h *Host) ConfigureVF(pfName string, vfIndex *int, cfg *configapi.VFLinkCon
 				return h.setVFVlan(pfName, resolvedVFIndex, vlan, qos, proto)
 			},
 			func() error {
-				return h.setVFVlan(pfName, resolvedVFIndex, 0, 0, "")
+				return h.setVFVlan(pfName, resolvedVFIndex, *original.VLAN, *original.Qos, *original.VlanProto)
 			},
 		); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	if cfg.SpoofChk != nil {
+	if original.SpoofChk != nil {
 		if err := apply(
 			"spoofchk",
 			func() error {
 				return h.setVFSpoofChk(pfName, resolvedVFIndex, *cfg.SpoofChk)
 			},
 			func() error {
-				return h.setVFSpoofChk(pfName, resolvedVFIndex, true)
+				return h.setVFSpoofChk(pfName, resolvedVFIndex, *original.SpoofChk)
 			},
 		); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	if cfg.Trust != nil {
+	if original.Trust != nil {
 		if err := apply(
 			"trust",
 			func() error {
 				return h.setVFTrust(pfName, resolvedVFIndex, *cfg.Trust)
 			},
 			func() error {
-				return h.setVFTrust(pfName, resolvedVFIndex, false)
+				return h.setVFTrust(pfName, resolvedVFIndex, *original.Trust)
 			},
 		); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	if cfg.MinTxRate != nil || cfg.MaxTxRate != nil {
+	if original.MinTxRate != nil {
 		minRate := valueOrZero(cfg.MinTxRate)
 		maxRate := valueOrZero(cfg.MaxTxRate)
 		if err := apply(
@@ -960,69 +970,117 @@ func (h *Host) ConfigureVF(pfName string, vfIndex *int, cfg *configapi.VFLinkCon
 				return h.setVFRate(pfName, resolvedVFIndex, minRate, maxRate)
 			},
 			func() error {
-				return h.setVFRate(pfName, resolvedVFIndex, 0, 0)
+				return h.setVFRate(pfName, resolvedVFIndex, *original.MinTxRate, *original.MaxTxRate)
 			},
 		); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	// link_state is applied last.
-	if cfg.LinkState != nil {
+	if original.LinkState != nil {
 		if err := apply(
 			"link state",
 			func() error {
 				return h.setVFLinkState(pfName, resolvedVFIndex, *cfg.LinkState)
 			},
 			func() error {
-				return h.setVFLinkState(pfName, resolvedVFIndex, configapi.LinkStateAuto)
+				return h.setVFLinkState(pfName, resolvedVFIndex, *original.LinkState)
 			},
 		); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	return nil
+	return original, nil
 }
 
-// ResetVF best-effort restores only the native VF attributes owned by cfg to
-// their neutral defaults. Errors are aggregated and returned so callers can log
-// them without aborting the whole unprepare flow.
-func (h *Host) ResetVF(pfName string, vfIndex *int, cfg *configapi.VFLinkConfig) error {
+// SnapshotVFAttributes reads the current values of the VF attribute groups that
+// cfg would change. Callers persist the snapshot before any host mutation and
+// pass it to ResetVF at unprepare time.
+func (h *Host) SnapshotVFAttributes(pfName string, vfIndex *int, cfg *configapi.VFLinkConfig) (*configapi.VFLinkConfig, error) {
 	if cfg == nil {
+		return nil, nil
+	}
+	resolvedVFIndex, err := validateVFConfigInput("snapshot", pfName, vfIndex)
+	if err != nil {
+		return nil, err
+	}
+	return h.snapshotVFAttributes(pfName, resolvedVFIndex, cfg)
+}
+
+func (h *Host) snapshotVFAttributes(pfName string, vfIndex int, cfg *configapi.VFLinkConfig) (*configapi.VFLinkConfig, error) {
+	current, err := h.netlinkProvider.GetVfLinkConfig(pfName, vfIndex)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read current attributes of VF %d of %s: %w", vfIndex, pfName, err)
+	}
+	return ownedVFAttributes(cfg, current), nil
+}
+
+// ownedVFAttributes picks from current the attribute groups that cfg changes.
+// VLAN/QoS/proto and min/max rate are whole groups because netlink programs each
+// group with a single message.
+func ownedVFAttributes(cfg, current *configapi.VFLinkConfig) *configapi.VFLinkConfig {
+	owned := &configapi.VFLinkConfig{}
+	if cfg.VLAN != nil || cfg.Qos != nil || cfg.VlanProto != nil {
+		owned.VLAN = current.VLAN
+		owned.Qos = current.Qos
+		owned.VlanProto = current.VlanProto
+	}
+	if cfg.SpoofChk != nil {
+		owned.SpoofChk = current.SpoofChk
+	}
+	if cfg.Trust != nil {
+		owned.Trust = current.Trust
+	}
+	if cfg.MinTxRate != nil || cfg.MaxTxRate != nil {
+		owned.MinTxRate = current.MinTxRate
+		owned.MaxTxRate = current.MaxTxRate
+	}
+	if cfg.LinkState != nil {
+		owned.LinkState = current.LinkState
+	}
+	return owned
+}
+
+// ResetVF restores the native VF attributes captured by ConfigureVF. Only
+// non-nil fields of restore are written back. Errors are aggregated and returned
+// so callers can report a device that is stuck in a modified state.
+func (h *Host) ResetVF(pfName string, vfIndex *int, restore *configapi.VFLinkConfig) error {
+	if restore == nil {
 		return nil
 	}
 	resolvedVFIndex, err := validateVFConfigInput("reset", pfName, vfIndex)
 	if err != nil {
 		return err
 	}
-	if err := validateVFAttributeGroups(cfg); err != nil {
+	if err := validateVFAttributeGroups(restore); err != nil {
 		return err
 	}
 
 	var errs []error
-	if cfg.VLAN != nil || cfg.Qos != nil || cfg.VlanProto != nil {
-		if err := h.setVFVlan(pfName, resolvedVFIndex, 0, 0, ""); err != nil {
+	if restore.VLAN != nil {
+		if err := h.setVFVlan(pfName, resolvedVFIndex, *restore.VLAN, *restore.Qos, *restore.VlanProto); err != nil {
 			errs = append(errs, fmt.Errorf("reset vlan: %w", err))
 		}
 	}
-	if cfg.SpoofChk != nil {
-		if err := h.setVFSpoofChk(pfName, resolvedVFIndex, true); err != nil {
+	if restore.SpoofChk != nil {
+		if err := h.setVFSpoofChk(pfName, resolvedVFIndex, *restore.SpoofChk); err != nil {
 			errs = append(errs, fmt.Errorf("reset spoofchk: %w", err))
 		}
 	}
-	if cfg.Trust != nil {
-		if err := h.setVFTrust(pfName, resolvedVFIndex, false); err != nil {
+	if restore.Trust != nil {
+		if err := h.setVFTrust(pfName, resolvedVFIndex, *restore.Trust); err != nil {
 			errs = append(errs, fmt.Errorf("reset trust: %w", err))
 		}
 	}
-	if cfg.MinTxRate != nil || cfg.MaxTxRate != nil {
-		if err := h.setVFRate(pfName, resolvedVFIndex, 0, 0); err != nil {
+	if restore.MinTxRate != nil {
+		if err := h.setVFRate(pfName, resolvedVFIndex, *restore.MinTxRate, *restore.MaxTxRate); err != nil {
 			errs = append(errs, fmt.Errorf("reset rate: %w", err))
 		}
 	}
-	if cfg.LinkState != nil {
-		if err := h.setVFLinkState(pfName, resolvedVFIndex, configapi.LinkStateAuto); err != nil {
+	if restore.LinkState != nil {
+		if err := h.setVFLinkState(pfName, resolvedVFIndex, *restore.LinkState); err != nil {
 			errs = append(errs, fmt.Errorf("reset link state: %w", err))
 		}
 	}

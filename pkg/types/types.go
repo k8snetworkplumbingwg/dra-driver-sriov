@@ -156,6 +156,10 @@ type PreparedDevice struct {
 	// NativeVFAttributesOwned records that this prepared device owns native VF
 	// attributes, independent of the configuration mode used after a restart.
 	NativeVFAttributesOwned bool `json:"nativeVFAttributesOwned,omitempty"`
+	// OriginalVFConfig holds the native VF attributes read before prepare changed
+	// them. Unprepare writes these values back. Defaults such as spoofchk differ
+	// per driver, so the driver restores the observed state and assumes nothing.
+	OriginalVFConfig *configapi.VFLinkConfig `json:"originalVFConfig,omitempty"`
 	// OriginalDriverKnown distinguishes an empty original driver from missing
 	// cleanup metadata in a pending prepare transaction.
 	OriginalDriverKnown bool `json:"originalDriverKnown,omitempty"`

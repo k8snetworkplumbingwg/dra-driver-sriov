@@ -236,6 +236,7 @@ var _ = Describe("Manager", Serial, func() {
 									VF:               &configapi.VFLinkConfig{Trust: ptr.To(true)},
 								},
 								NativeVFAttributesOwned: true,
+								OriginalVFConfig:        &configapi.VFLinkConfig{Trust: ptr.To(false)},
 								OriginalDriver:          "ixgbevf",
 								OriginalDriverKnown:     true,
 							},
@@ -334,6 +335,7 @@ var _ = Describe("Manager", Serial, func() {
 					Config: &configapi.VfConfig{
 						VF: &configapi.VFLinkConfig{Trust: ptr.To(true)},
 					},
+					OriginalVFConfig: &configapi.VFLinkConfig{Trust: ptr.To(false)},
 					DeviceAttributes: map[string]resourceapi.DeviceAttribute{
 						consts.AttributePfPciAddress: {StringValue: ptr.To("0000:01:00.0")},
 						consts.AttributeVFID:         {IntValue: ptr.To(int64(3))},
@@ -342,7 +344,7 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			mockHost.EXPECT().TryGetPFInterfaceName("0000:01:00.0").Return("eth0")
-			mockHost.EXPECT().ResetVF("eth0", ptr.To(3), &configapi.VFLinkConfig{Trust: ptr.To(true)}).Return(nil)
+			mockHost.EXPECT().ResetVF("eth0", ptr.To(3), &configapi.VFLinkConfig{Trust: ptr.To(false)}).Return(nil)
 
 			m := &Manager{}
 			err := m.unprepareDevices(preparedDevices)
@@ -356,6 +358,7 @@ var _ = Describe("Manager", Serial, func() {
 					Config: &configapi.VfConfig{
 						VF: &configapi.VFLinkConfig{Trust: ptr.To(true)},
 					},
+					OriginalVFConfig: &configapi.VFLinkConfig{Trust: ptr.To(false)},
 					DeviceAttributes: map[string]resourceapi.DeviceAttribute{
 						consts.AttributePfPciAddress: {StringValue: ptr.To("0000:01:00.0")},
 						consts.AttributeVFID:         {IntValue: ptr.To(int64(3))},
@@ -364,7 +367,7 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			mockHost.EXPECT().TryGetPFInterfaceName("0000:01:00.0").Return("eth0")
-			mockHost.EXPECT().ResetVF("eth0", ptr.To(3), &configapi.VFLinkConfig{Trust: ptr.To(true)}).Return(fmt.Errorf("netlink failed"))
+			mockHost.EXPECT().ResetVF("eth0", ptr.To(3), &configapi.VFLinkConfig{Trust: ptr.To(false)}).Return(fmt.Errorf("netlink failed"))
 
 			m := &Manager{}
 			err := m.unprepareDevices(preparedDevices)
@@ -1224,12 +1227,13 @@ var _ = Describe("Manager", Serial, func() {
 
 			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", config).Return("", nil)
 			mockHost.EXPECT().TryGetPFInterfaceName("0000:01:00.0").Return("eth0")
-			mockHost.EXPECT().ConfigureVF("eth0", ptr.To(3), vfLink).Return(nil)
+			mockHost.EXPECT().ConfigureVF("eth0", ptr.To(3), vfLink).Return(&configapi.VFLinkConfig{Trust: ptr.To(false)}, nil)
 
 			ifNameIndex := 0
 			preparedDevice, err := m.applyConfigOnDevice(context.Background(), &ifNameIndex, claim, config, result)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(preparedDevice).NotTo(BeNil())
+			Expect(preparedDevice.OriginalVFConfig).To(Equal(&configapi.VFLinkConfig{Trust: ptr.To(false)}))
 		})
 
 		It("prevents CNI from overwriting DRA-owned VF attributes", func() {
@@ -1281,7 +1285,7 @@ var _ = Describe("Manager", Serial, func() {
 
 			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", config).Return("", nil)
 			mockHost.EXPECT().TryGetPFInterfaceName("0000:01:00.0").Return("eth0")
-			mockHost.EXPECT().ConfigureVF("eth0", ptr.To(3), vfLink).Return(nil)
+			mockHost.EXPECT().ConfigureVF("eth0", ptr.To(3), vfLink).Return(&configapi.VFLinkConfig{}, nil)
 
 			ifNameIndex := 0
 			preparedDevice, err := m.applyConfigOnDevice(context.Background(), &ifNameIndex, claim, config, result)
@@ -1336,18 +1340,20 @@ var _ = Describe("Manager", Serial, func() {
 			result := &resourceapi.DeviceRequestAllocationResult{Device: "device1", Request: "req1", Pool: "pool1"}
 
 			mockHost.EXPECT().TryGetPFInterfaceName("0000:01:00.0").Return("eth0")
+			mockHost.EXPECT().SnapshotVFAttributes("eth0", ptr.To(3), config.VF).Return(&configapi.VFLinkConfig{Trust: ptr.To(false)}, nil)
 			mockHost.EXPECT().GetDriverByBusAndDevice("0000:01:00.1").Return("ixgbevf", nil)
 			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", config).DoAndReturn(func(string, *configapi.VfConfig) (string, error) {
 				Expect(store.PendingPrepares()).To(HaveKey(k8stypes.UID("claim-uid")))
 				return "ixgbevf", nil
 			})
-			mockHost.EXPECT().ConfigureVF("eth0", ptr.To(3), config.VF).Return(nil)
+			mockHost.EXPECT().ConfigureVF("eth0", ptr.To(3), config.VF).Return(&configapi.VFLinkConfig{Trust: ptr.To(false)}, nil)
 			mockHost.EXPECT().GetVFIODeviceFile("0000:01:00.1").Return("/dev/vfio/1", "/dev/vfio/1", nil)
 
 			ifNameIndex := 0
 			preparedDevice, err := m.applyConfigOnDevice(context.Background(), &ifNameIndex, claim, config, result)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(preparedDevice.NativeVFAttributesOwned).To(BeTrue())
+			Expect(preparedDevice.OriginalVFConfig).To(Equal(&configapi.VFLinkConfig{Trust: ptr.To(false)}))
 			Expect(store.PendingPrepares()).To(HaveKey(k8stypes.UID("claim-uid")))
 		})
 
@@ -1383,9 +1389,10 @@ var _ = Describe("Manager", Serial, func() {
 
 			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", config).Return("ixgbevf", nil)
 			mockHost.EXPECT().TryGetPFInterfaceName("0000:01:00.0").Return("eth0")
-			mockHost.EXPECT().ConfigureVF("eth0", ptr.To(3), vfLink).Return(nil)
+			originalVF := &configapi.VFLinkConfig{Trust: ptr.To(false)}
+			mockHost.EXPECT().ConfigureVF("eth0", ptr.To(3), vfLink).Return(originalVF, nil)
 			mockHost.EXPECT().GetVFIODeviceFile("0000:01:00.1").Return("", "", fmt.Errorf("vfio lookup failed"))
-			mockHost.EXPECT().ResetVF("eth0", ptr.To(3), vfLink).Return(nil)
+			mockHost.EXPECT().ResetVF("eth0", ptr.To(3), originalVF).Return(nil)
 			mockHost.EXPECT().RestoreDeviceDriver("0000:01:00.1", "ixgbevf").Return(nil)
 
 			ifNameIndex := 0
@@ -1457,7 +1464,7 @@ var _ = Describe("Manager", Serial, func() {
 
 			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", config).Return("ixgbevf", nil)
 			mockHost.EXPECT().TryGetPFInterfaceName("0000:01:00.0").Return("eth0")
-			mockHost.EXPECT().ConfigureVF("eth0", ptr.To(3), vfLink).Return(fmt.Errorf("netlink failed"))
+			mockHost.EXPECT().ConfigureVF("eth0", ptr.To(3), vfLink).Return(nil, fmt.Errorf("netlink failed"))
 			mockHost.EXPECT().RestoreDeviceDriver("0000:01:00.1", "ixgbevf").Return(nil)
 
 			ifNameIndex := 0
