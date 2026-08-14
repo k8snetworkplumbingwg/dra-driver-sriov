@@ -7,6 +7,8 @@ import (
 	"path"
 
 	"k8s.io/klog/v2"
+
+	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 )
 
 // NewHostForTest creates a Host with injectable providers, for use in unit tests.
@@ -49,6 +51,12 @@ type FakeNetlinkProvider struct {
 	TrustErr    error
 	RateErr     error
 	StateErr    error
+
+	// CurrentVfLinkConfig is returned by GetVfLinkConfig. When nil a neutral
+	// default snapshot is returned instead.
+	CurrentVfLinkConfig *configapi.VFLinkConfig
+	// GetVfLinkConfigErr, when non-nil, is returned by GetVfLinkConfig.
+	GetVfLinkConfigErr error
 }
 
 // VlanCall records a SetVfVlanQosProto invocation.
@@ -116,6 +124,33 @@ func (f *FakeNetlinkProvider) SetVfRate(pfName string, vf, minRate, maxRate int)
 func (f *FakeNetlinkProvider) SetVfState(pfName string, vf int, state string) error {
 	f.StateCalls = append(f.StateCalls, StateCall{PF: pfName, VF: vf, State: state})
 	return f.StateErr
+}
+
+func (f *FakeNetlinkProvider) GetVfLinkConfig(_ string, _ int) (*configapi.VFLinkConfig, error) {
+	if f.GetVfLinkConfigErr != nil {
+		return nil, f.GetVfLinkConfigErr
+	}
+	if f.CurrentVfLinkConfig != nil {
+		return f.CurrentVfLinkConfig, nil
+	}
+	zero := 0
+	spoofChk := true
+	trust := false
+	proto := configapi.VlanProto8021q
+	state := configapi.LinkStateAuto
+	minRate := 0
+	maxRate := 0
+	qos := 0
+	return &configapi.VFLinkConfig{
+		VLAN:      &zero,
+		Qos:       &qos,
+		VlanProto: &proto,
+		SpoofChk:  &spoofChk,
+		Trust:     &trust,
+		MinTxRate: &minRate,
+		MaxTxRate: &maxRate,
+		LinkState: &state,
+	}, nil
 }
 
 // FakeSriovnetProvider is a configurable SriovnetProvider for use in unit tests.

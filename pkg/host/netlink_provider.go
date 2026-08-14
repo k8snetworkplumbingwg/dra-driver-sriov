@@ -25,6 +25,9 @@ type NetlinkProvider interface {
 	SetVfRate(pfName string, vf, minRate, maxRate int) error
 	// SetVfState sets the administrative link state ("auto"/"enable"/"disable") of a VF.
 	SetVfState(pfName string, vf int, state string) error
+	// GetVfLinkConfig reads the current native link attributes of a VF. Every
+	// field of the returned config is populated.
+	GetVfLinkConfig(pfName string, vf int) (*configapi.VFLinkConfig, error)
 }
 
 type defaultNetlinkProvider struct{}
@@ -87,6 +90,44 @@ func (defaultNetlinkProvider) SetVfState(pfName string, vf int, state string) er
 	return netlink.LinkSetVfState(link, vf, nlState)
 }
 
+func (defaultNetlinkProvider) GetVfLinkConfig(pfName string, vf int) (*configapi.VFLinkConfig, error) {
+	link, err := netlink.LinkByName(pfName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get PF link %q: %w", pfName, err)
+	}
+	for i := range link.Attrs().Vfs {
+		info := link.Attrs().Vfs[i]
+		if info.ID != vf {
+			continue
+		}
+		proto, err := netlinkToVlanProto(info.VlanProto)
+		if err != nil {
+			return nil, fmt.Errorf("VF %d of %s: %w", vf, pfName, err)
+		}
+		state, err := netlinkToLinkState(info.LinkState)
+		if err != nil {
+			return nil, fmt.Errorf("VF %d of %s: %w", vf, pfName, err)
+		}
+		vlan := info.Vlan
+		qos := info.Qos
+		spoofChk := info.Spoofchk
+		trust := info.Trust != 0
+		minTxRate := int(info.MinTxRate)
+		maxTxRate := int(info.MaxTxRate)
+		return &configapi.VFLinkConfig{
+			VLAN:      &vlan,
+			Qos:       &qos,
+			VlanProto: &proto,
+			SpoofChk:  &spoofChk,
+			Trust:     &trust,
+			MinTxRate: &minTxRate,
+			MaxTxRate: &maxTxRate,
+			LinkState: &state,
+		}, nil
+	}
+	return nil, fmt.Errorf("VF %d not found on PF %s", vf, pfName)
+}
+
 // vlanProtoToNetlink maps a VLAN protocol string to its netlink constant.
 // An empty string defaults to 802.1q.
 func vlanProtoToNetlink(proto string) (int, error) {
@@ -97,6 +138,33 @@ func vlanProtoToNetlink(proto string) (int, error) {
 		return int(netlink.VLAN_PROTOCOL_8021AD), nil
 	default:
 		return 0, fmt.Errorf("unsupported vlan protocol %q", proto)
+	}
+}
+
+// netlinkToVlanProto maps a netlink VLAN protocol constant back to its string.
+// An unknown protocol maps to 802.1q, which is the kernel default.
+func netlinkToVlanProto(proto int) (string, error) {
+	switch netlink.VlanProtocol(proto) {
+	case netlink.VLAN_PROTOCOL_UNKNOWN, netlink.VLAN_PROTOCOL_8021Q:
+		return configapi.VlanProto8021q, nil
+	case netlink.VLAN_PROTOCOL_8021AD:
+		return configapi.VlanProto8021ad, nil
+	default:
+		return "", fmt.Errorf("unsupported vlan protocol %d reported by the kernel", proto)
+	}
+}
+
+// netlinkToLinkState maps a netlink VF link state constant back to its string.
+func netlinkToLinkState(state uint32) (string, error) {
+	switch state {
+	case netlink.VF_LINK_STATE_AUTO:
+		return configapi.LinkStateAuto, nil
+	case netlink.VF_LINK_STATE_ENABLE:
+		return configapi.LinkStateEnable, nil
+	case netlink.VF_LINK_STATE_DISABLE:
+		return configapi.LinkStateDisable, nil
+	default:
+		return "", fmt.Errorf("unsupported vf link state %d reported by the kernel", state)
 	}
 }
 

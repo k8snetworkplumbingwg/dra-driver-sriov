@@ -309,20 +309,20 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 
 	var configuredVFPFName string
 	var configuredVFIndex *int
-	var configuredVFCfg *configapi.VFLinkConfig
+	var originalVFConfig *configapi.VFLinkConfig
 	rollbackOnError := func(cause error) error {
 		var cleanupErrs []error
-		if configuredVFCfg != nil || pendingDevice != nil {
-			vfCfg := configuredVFCfg
+		if originalVFConfig != nil || pendingDevice != nil {
+			restore := originalVFConfig
 			pfName := configuredVFPFName
 			vfIndex := configuredVFIndex
-			if vfCfg == nil && pendingDevice != nil && pendingDevice.NativeVFAttributesOwned {
-				vfCfg = pendingDevice.Config.VF
+			if restore == nil && pendingDevice != nil && pendingDevice.NativeVFAttributesOwned {
+				restore = pendingDevice.OriginalVFConfig
 				pfName = pendingPFName
 				vfIndex = pendingVFIndex
 			}
-			if vfCfg != nil {
-				if resetErr := resetVFAttributesAtTarget(logger, pciAddress, pfName, vfIndex, vfCfg); resetErr != nil {
+			if restore != nil {
+				if resetErr := resetVFAttributesAtTarget(logger, pciAddress, pfName, vfIndex, restore); resetErr != nil {
 					cleanupErrs = append(cleanupErrs, fmt.Errorf("failed to reset native VF attributes: %w", resetErr))
 				}
 			}
@@ -377,12 +377,19 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 			}
 		}
 		logger.V(2).Info("Configuring native VF attributes", "pf", pfName, "vf", *vfIndex)
-		if err := host.GetHelpers().ConfigureVF(pfName, vfIndex, config.VF); err != nil {
-			return nil, rollbackOnError(fmt.Errorf("failed to configure VF attributes on %s vf %d: %w", pfName, *vfIndex, err))
-		}
 		configuredVFPFName = pfName
 		configuredVFIndex = vfIndex
-		configuredVFCfg = config.VF
+		original, err := host.GetHelpers().ConfigureVF(pfName, vfIndex, config.VF)
+		if err != nil {
+			return nil, rollbackOnError(fmt.Errorf("failed to configure VF attributes on %s vf %d: %w", pfName, *vfIndex, err))
+		}
+		// The pending transaction holds the snapshot taken before the mutation.
+		// Prefer it, and fall back to the snapshot ConfigureVF took itself when no
+		// prepare store is configured.
+		originalVFConfig = original
+		if pendingDevice != nil && pendingDevice.OriginalVFConfig != nil {
+			originalVFConfig = pendingDevice.OriginalVFConfig
+		}
 	}
 
 	// create environment variables
@@ -482,6 +489,7 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 		Config:                  config,
 		OriginalDriver:          originalDriver,
 		NativeVFAttributesOwned: s.isStandaloneMode() && config.VF != nil,
+		OriginalVFConfig:        originalVFConfig,
 		OriginalDriverKnown:     config.Driver != "",
 	}
 
@@ -532,6 +540,14 @@ func (s *Manager) beginPendingPrepare(
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("cannot persist VF cleanup metadata: %w", err)
 		}
+		// Read the attributes before any host mutation so unprepare restores the
+		// values the node really had. Driver defaults differ, for example spoofchk
+		// is on for i40e and off for mlx5.
+		original, err := host.GetHelpers().SnapshotVFAttributes(pfName, vfIndex, config.VF)
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("cannot persist VF cleanup metadata: %w", err)
+		}
+		pendingDevice.OriginalVFConfig = original
 	}
 
 	if config.Driver != "" {
@@ -564,9 +580,8 @@ func (s *Manager) abortPendingPrepareDevice(claimID k8stypes.UID, pciAddress str
 
 // ReconcilePendingPrepares rolls back durable prepare transactions left by a
 // process crash. Pending metadata is retained when cleanup is incomplete so a
-// later restart can retry it. VF cleanup deliberately uses the existing
-// field-scoped neutral reset because netlink exposes no portable getter for
-// the prior per-field values.
+// later restart can retry it. VF cleanup replays the attribute snapshot taken
+// before the mutation, so it restores the exact prior per-field values.
 func (s *Manager) ReconcilePendingPrepares() error {
 	if s.prepareStore == nil {
 		return nil
@@ -611,6 +626,9 @@ func (s *Manager) reconcilePendingDevices(preparedDevices drasriovtypes.Prepared
 			if !vfFound || vfAttr.IntValue == nil {
 				return fmt.Errorf("pending prepared device %s has incomplete VF target metadata: missing VF ID", preparedDevice.PciAddress)
 			}
+			if preparedDevice.OriginalVFConfig == nil {
+				return fmt.Errorf("pending prepared device %s has no original VF attribute snapshot", preparedDevice.PciAddress)
+			}
 		}
 	}
 	var errs []error
@@ -626,18 +644,21 @@ func (s *Manager) reconcilePendingDevices(preparedDevices drasriovtypes.Prepared
 	return nil
 }
 
-// resetVFAttributes reverts native VF attributes applied at prepare time back to
-// their defaults and returns errors so unprepare can report stuck devices.
+// resetVFAttributes writes back the native VF attribute snapshot taken before
+// prepare and returns errors so unprepare can report stuck devices.
 func resetVFAttributes(logger klog.Logger, preparedDevice *drasriovtypes.PreparedDevice) error {
+	if preparedDevice.OriginalVFConfig == nil {
+		return fmt.Errorf("cannot reset native VF attributes for %s: missing original attribute snapshot", preparedDevice.PciAddress)
+	}
 	pfName, vfIndex, err := resolveVFTargetFromString(preparedDevice.DeviceAttributes)
 	if err != nil {
 		return fmt.Errorf("cannot reset native VF attributes for %s: %w", preparedDevice.PciAddress, err)
 	}
-	return resetVFAttributesAtTarget(logger, preparedDevice.PciAddress, pfName, vfIndex, preparedDevice.Config.VF)
+	return resetVFAttributesAtTarget(logger, preparedDevice.PciAddress, pfName, vfIndex, preparedDevice.OriginalVFConfig)
 }
 
-func resetVFAttributesAtTarget(logger klog.Logger, pciAddress, pfName string, vfIndex *int, vfCfg *configapi.VFLinkConfig) error {
-	if err := host.GetHelpers().ResetVF(pfName, vfIndex, vfCfg); err != nil {
+func resetVFAttributesAtTarget(logger klog.Logger, pciAddress, pfName string, vfIndex *int, restore *configapi.VFLinkConfig) error {
+	if err := host.GetHelpers().ResetVF(pfName, vfIndex, restore); err != nil {
 		return fmt.Errorf("failed to reset native VF attributes for %s on %s vf %d: %w", pciAddress, pfName, *vfIndex, err)
 	}
 	logger.V(2).Info("Reset native VF attributes", "device", pciAddress, "pf", pfName, "vf", *vfIndex)
