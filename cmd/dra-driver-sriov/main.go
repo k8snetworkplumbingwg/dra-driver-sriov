@@ -15,6 +15,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cdi"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cni"
@@ -76,6 +77,13 @@ func newApp() *cli.App {
 			Value:       -1,
 			Destination: &flagsOptions.HealthcheckPort,
 			EnvVars:     []string{"HEALTHCHECK_PORT"},
+		},
+		&cli.StringFlag{
+			Name:        "metrics-bind-address",
+			Usage:       "Address on which to serve controller metrics. Set to 0 to disable the metrics server.",
+			Value:       "0",
+			Destination: &flagsOptions.MetricsBindAddress,
+			EnvVars:     []string{"METRICS_BIND_ADDRESS"},
 		},
 		&cli.StringFlag{
 			Name:        "default-interface-prefix",
@@ -219,6 +227,9 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 		Scheme: flags.Scheme,
 		Logger: logger,
 		Cache:  cacheOpts,
+		Metrics: metricsserver.Options{
+			BindAddress: config.Flags.MetricsBindAddress,
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create controller manager: %w", err)
