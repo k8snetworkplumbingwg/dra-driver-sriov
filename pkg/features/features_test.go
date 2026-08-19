@@ -22,6 +22,19 @@ import (
 	logsapi "k8s.io/component-base/logs/api/v1"
 )
 
+func TestDRAListTypeAttributes(t *testing.T) {
+	featureGate := NewFeatureGate()
+	if featureGate.Enabled(DRAListTypeAttributes) {
+		t.Fatal("DRAListTypeAttributes must default to disabled")
+	}
+	if err := featureGate.Set("DRAListTypeAttributes=true"); err != nil {
+		t.Fatalf("enable DRAListTypeAttributes: %v", err)
+	}
+	if !featureGate.Enabled(DRAListTypeAttributes) {
+		t.Fatal("DRAListTypeAttributes was not enabled")
+	}
+}
+
 func TestDependencyFeatureGates(t *testing.T) {
 	featureGate := NewFeatureGate()
 	if !featureGate.Enabled(logsapi.ContextualLogging) {
