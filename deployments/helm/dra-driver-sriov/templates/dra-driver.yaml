@@ -105,6 +105,10 @@ spec:
           value: {{ .Values.kubeletPlugin.configurationMode | quote }}
         - name: ENABLE_DEVICE_METADATA
           value: {{ .Values.kubeletPlugin.enableDeviceMetadata | quote }}
+        {{- with .Values.kubeletPlugin.featureGates }}
+        - name: FEATURE_GATES
+          value: {{ include "dra-driver-sriov.featureGates" . | quote }}
+        {{- end }}
         - name: NODE_NAME
           valueFrom:
             fieldRef:

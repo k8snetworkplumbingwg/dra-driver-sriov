@@ -60,6 +60,8 @@ kubeletPlugin:
   defaultInterfacePrefix: vfnet
   configurationMode: STANDALONE
   enableDeviceMetadata: false
+  featureGates:
+    DRAListTypeAttributes: false
   containers:
     init:
       securityContext: {}

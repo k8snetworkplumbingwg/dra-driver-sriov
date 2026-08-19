@@ -93,7 +93,7 @@ type Interface interface {
 	GetLinkType(pciAddr string) (string, error)
 
 	// Topology functions
-	GetNumaNode(pciAddress string) (string, error)
+	GetNUMANodeAttribute(pciAddress string, attributeForm deviceattribute.AttributeForm) (deviceattribute.DeviceAttribute, error)
 	GetPCIeRoot(pciAddress string) (string, error)
 
 	// Driver binding operations
@@ -333,21 +333,20 @@ func (h *Host) GetLinkType(pciAddr string) (string, error) {
 	}
 }
 
-// GetNumaNode returns the NUMA node for a given PCI device.
-// On success, error is nil and the string value represent the NUMA node affinity. Note that -1 means "no affinity".
-// On failure, error is not nil and the string value must be ignored
-func (h *Host) GetNumaNode(pciAddress string) (string, error) {
-	numaNodePath := buildSysBusPciPath(pciAddress, "numa_node")
-	content, err := os.ReadFile(numaNodePath) /* #nosec G304 */
-	if err != nil {
-		// If numa_node file doesn't exist, return "-1" to represent "no affinity" as the kernel would
-		if os.IsNotExist(err) {
-			return "-1", nil
-		}
-		return "", fmt.Errorf("failed to read numa_node for %s: %v", pciAddress, err)
+// GetNUMANodeAttribute returns the standardized NUMA topology attribute for a
+// PCI device. The upstream helper omits devices without NUMA affinity by
+// returning an error for the kernel's numa_node=-1 value.
+func (h *Host) GetNUMANodeAttribute(pciAddress string, attributeForm deviceattribute.AttributeForm) (deviceattribute.DeviceAttribute, error) {
+	var modifiers []deviceattribute.MachineModifier
+	if RootDir != "" {
+		modifiers = append(modifiers, deviceattribute.WithFSFromRoot(filepath.Join(RootDir, "sys")))
 	}
 
-	return strings.TrimSpace(string(content)), nil
+	attribute, err := deviceattribute.GetNUMANodeAttributeByPCIBusID(pciAddress, attributeForm, modifiers...)
+	if err != nil {
+		return deviceattribute.DeviceAttribute{}, fmt.Errorf("failed to get NUMA node attribute for %s: %w", pciAddress, err)
+	}
+	return attribute, nil
 }
 
 // GetPCIeRoot returns the PCIe Root Complex for a given PCI device using the upstream Kubernetes implementation.

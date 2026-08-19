@@ -61,7 +61,11 @@ func NewManager(config *drasriovtypes.Config, cdi *cdi.Handler, deviceInfoStore 
 		return nil, err
 	}
 
-	allocatable, err := DiscoverSriovDevices()
+	discoveryOptions := []DiscoveryOption{}
+	if config.Flags.EnableNUMAListAttributes {
+		discoveryOptions = append(discoveryOptions, WithListNUMAAttributes())
+	}
+	allocatable, err := DiscoverSriovDevices(discoveryOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("error enumerating all possible devices: %v", err)
 	}

@@ -247,3 +247,12 @@ func (d *Driver) HandleError(ctx context.Context, err error, msg string) {
 		d.cancelCtx(fmt.Errorf("fatal background error: %w", err))
 	}
 }
+
+// WatchHealthStatus implements the Kubernetes 1.37 DRAPlugin contract.
+// Device health reporting is disabled in buildPluginOptions until the driver
+// has a source of per-device health information. This method is therefore not
+// called during normal operation, but returning ErrHealthNotSupported is the
+// correct response if it is invoked.
+func (d *Driver) WatchHealthStatus(context.Context, chan<- kubeletplugin.DeviceHealthReport) error {
+	return kubeletplugin.ErrHealthNotSupported
+}
