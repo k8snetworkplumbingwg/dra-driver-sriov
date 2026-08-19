@@ -7,8 +7,6 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
 
-	logsapi "k8s.io/component-base/logs/api/v1"
-
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/features"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
 )
@@ -117,7 +115,7 @@ var _ = Describe("Flags", func() {
 	})
 
 	Context("FeatureGateFlags", func() {
-		It("exposes component feature gates independently from logging", func() {
+		It("exposes driver feature gates independently from logging", func() {
 			featureGate := features.NewFeatureGate()
 			cliFlags := flags.FeatureGateFlags(featureGate)
 
@@ -136,11 +134,11 @@ var _ = Describe("Flags", func() {
 				Name:  "test",
 				Flags: cliFlags,
 			}
-			Expect(os.Setenv("FEATURE_GATES", "ContextualLogging=false")).To(Succeed())
+			Expect(os.Setenv("FEATURE_GATES", "DRAListTypeAttributes=true")).To(Succeed())
 			defer os.Unsetenv("FEATURE_GATES")
 			err := app.Run([]string{"test"})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(featureGate.Enabled(logsapi.ContextualLogging)).To(BeFalse())
+			Expect(featureGate.Enabled(features.DRAListTypeAttributes)).To(BeTrue())
 		})
 	})
 
