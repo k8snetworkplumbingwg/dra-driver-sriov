@@ -25,9 +25,11 @@ import (
 	"time"
 
 	resourceapi "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	coreclientset "k8s.io/client-go/kubernetes"
 	metadatav1alpha1 "k8s.io/dynamic-resource-allocation/api/metadata/v1alpha1"
+	metadatav1beta1 "k8s.io/dynamic-resource-allocation/api/metadata/v1beta1"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/klog/v2"
@@ -44,7 +46,6 @@ import (
 var (
 	enableDeviceMetadataOption = kubeletplugin.EnableDeviceMetadata
 	cdiDirectoryOption         = kubeletplugin.CDIDirectory
-	metadataVersionsOption     = kubeletplugin.MetadataVersions
 )
 
 type Driver struct {
@@ -65,13 +66,19 @@ func buildPluginOptions(config *sriovdratype.Config) []kubeletplugin.Option {
 		kubeletplugin.DriverName(consts.DriverName),
 		kubeletplugin.RegistrarDirectoryPath(config.Flags.KubeletRegistrarDirectoryPath),
 		kubeletplugin.PluginDataDirectoryPath(config.DriverPluginPath()),
+		// The SDK's device-health service is distinct from this driver's gRPC
+		// liveness endpoint. Keep it disabled until the driver can report actual
+		// per-device health changes.
+		kubeletplugin.HealthService(false),
 	}
 	if config.Flags.EnableDeviceMetadata {
 		pluginOpts = append(
 			pluginOpts,
-			enableDeviceMetadataOption(true),
+			enableDeviceMetadataOption(true, []schema.GroupVersion{
+				metadatav1beta1.SchemeGroupVersion,
+				metadatav1alpha1.SchemeGroupVersion,
+			}),
 			cdiDirectoryOption(config.Flags.CdiRoot),
-			metadataVersionsOption(metadatav1alpha1.SchemeGroupVersion),
 		)
 	}
 	return pluginOpts
