@@ -20,6 +20,7 @@ type Flags struct {
 	DefaultInterfacePrefix        string
 	ConfigurationMode             string
 	EnableDeviceMetadata          bool
+	CniBinPath                    string
 }
 
 type Config struct {

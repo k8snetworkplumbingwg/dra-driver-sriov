@@ -105,6 +105,13 @@ func newApp() *cli.App {
 			Destination: &flagsOptions.ConfigurationMode,
 			EnvVars:     []string{"CONFIGURATION_MODE"},
 		},
+		&cli.StringFlag{
+			Name:        "cni-bin-path",
+			Usage:       "Absolute path to the directory where CNI binaries are located.",
+			Value:       "/opt/cni/bin",
+			Destination: &flagsOptions.CniBinPath,
+			EnvVars:     []string{"CNI_BIN_PATH"},
+		},
 	}
 	cliFlags = append(cliFlags, flagsOptions.KubeClientConfig.Flags()...)
 	cliFlags = append(cliFlags, flagsOptions.LoggingConfig.Flags()...)
@@ -249,7 +256,7 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 	logger.Info("Cache synced")
 
 	// create cni runtime
-	cniRuntime := cni.New(consts.DriverName, []string{"/opt/cni/bin"})
+	cniRuntime := cni.New(consts.DriverName, []string{config.Flags.CniBinPath})
 
 	// register to NRI unless MULTUS mode is set
 	var nriPlugin *nri.Plugin

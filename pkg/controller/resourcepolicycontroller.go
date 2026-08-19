@@ -40,6 +40,7 @@ import (
 	sriovdrav1alpha1 "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/sriovdra/v1alpha1"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/devicestate"
+	drasriovtypes "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
 const (
@@ -122,13 +123,28 @@ func (r *SriovResourcePolicyReconciler) getPolicyDeviceMap(
 	allDeviceAttrs []sriovdrav1alpha1.DeviceAttributes,
 ) map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
 	policyDevices := make(map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute)
+	selectedPfPciAddresses := make(map[string]struct{})
+	selectedVFsByPfAddress := make(map[string]map[string]struct{})
+	var baseCandidates drasriovtypes.AllocatableDevices
+	var pciCandidates drasriovtypes.AllocatableDevices
+
+	candidatesFor := func(includePci bool) drasriovtypes.AllocatableDevices {
+		if includePci {
+			if pciCandidates == nil {
+				pciCandidates = r.deviceStateManager.GetPolicyCandidateDevices(true)
+			}
+			return pciCandidates
+		}
+		if baseCandidates == nil {
+			baseCandidates = r.deviceStateManager.GetPolicyCandidateDevices(false)
+		}
+		return baseCandidates
+	}
 
 	if len(policies) == 0 {
 		r.log.Info("No matching SriovResourcePolicy found for node", "nodeName", r.nodeName)
 		return policyDevices
 	}
-
-	allocatableDevices := r.deviceStateManager.GetAllocatableDevices()
 
 	sort.Slice(policies, func(i, j int) bool {
 		return policies[i].Name < policies[j].Name
@@ -136,18 +152,18 @@ func (r *SriovResourcePolicyReconciler) getPolicyDeviceMap(
 	for _, policy := range policies {
 		r.log.V(2).Info("Processing policy",
 			"policyName", policy.Name,
-			"configCount", len(policy.Spec.Configs),
-			"totalDevices", len(allocatableDevices))
+			"configCount", len(policy.Spec.Configs))
 
 		for _, config := range policy.Spec.Configs {
 			resolvedAttrs := r.resolveDeviceAttributes(config.DeviceAttributesSelector, allDeviceAttrs)
 
-			for deviceName, device := range allocatableDevices {
-				if _, exists := policyDevices[deviceName]; exists {
-					continue
-				}
-
-				if r.deviceMatchesFilters(device, config.ResourceFilters) {
+			// If no resource filters are specified, all virtual function devices are candidates
+			if len(config.ResourceFilters) == 0 {
+				candidateDevices := candidatesFor(false)
+				for deviceName := range candidateDevices {
+					if _, exists := policyDevices[deviceName]; exists {
+						continue
+					}
 					attrs := make(map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, len(resolvedAttrs))
 					for k, v := range resolvedAttrs {
 						attrs[k] = v
@@ -156,19 +172,101 @@ func (r *SriovResourcePolicyReconciler) getPolicyDeviceMap(
 					r.log.V(2).Info("Device matches config filter",
 						"deviceName", deviceName,
 						"policyName", policy.Name,
-						"device", device,
 						"attributes", attrs)
+				}
+				continue
+			}
+
+			for _, filter := range config.ResourceFilters {
+				candidateDevices := candidatesFor(filterRequestsPciAddresses(filter))
+				for deviceName, device := range candidateDevices {
+					if _, exists := policyDevices[deviceName]; exists {
+						continue
+					}
+
+					if r.deviceMatchesFilter(device, filter) {
+						devicePciAddress, _ := deviceAttributeString(device, consts.AttributePciAddress)
+						interfaceType := getDeviceInterfaceType(device)
+						parentPfAddress, hasParentPfAddress := deviceAttributeString(device, consts.AttributePfPciAddress)
+
+						if interfaceType == consts.InterfaceTypeVirtualFunction && hasParentPfAddress {
+							if _, pfSelected := selectedPfPciAddresses[parentPfAddress]; pfSelected {
+								r.log.Info("Skipping VF because its parent PF is already selected by pciAddresses",
+									"deviceName", deviceName,
+									"parentPfPciAddress", parentPfAddress)
+								continue
+							}
+						}
+
+						attrs := make(map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, len(resolvedAttrs))
+						for k, v := range resolvedAttrs {
+							attrs[k] = v
+						}
+						policyDevices[deviceName] = attrs
+						if interfaceType == consts.InterfaceTypeVirtualFunction && hasParentPfAddress {
+							if _, exists := selectedVFsByPfAddress[parentPfAddress]; !exists {
+								selectedVFsByPfAddress[parentPfAddress] = make(map[string]struct{})
+							}
+							selectedVFsByPfAddress[parentPfAddress][deviceName] = struct{}{}
+						}
+						if filterRequestsPciAddresses(filter) && interfaceType == consts.InterfaceTypeRegular && devicePciAddress != "" {
+							selectedPfPciAddresses[devicePciAddress] = struct{}{}
+							if vfDeviceNames, exists := selectedVFsByPfAddress[devicePciAddress]; exists {
+								for vfDeviceName := range vfDeviceNames {
+									delete(policyDevices, vfDeviceName)
+									r.log.Info("Removing VF because parent PF is selected by pciAddresses",
+										"vfDeviceName", vfDeviceName,
+										"parentPfPciAddress", devicePciAddress,
+										"selectedPfDeviceName", deviceName)
+								}
+								delete(selectedVFsByPfAddress, devicePciAddress)
+							}
+						}
+
+						r.log.V(2).Info("Device matches config filter",
+							"deviceName", deviceName,
+							"policyName", policy.Name,
+							"device", device,
+							"attributes", attrs)
+					}
 				}
 			}
 		}
 	}
 
 	r.log.Info("Policy devices resolved",
-		"matchingDevices", len(policyDevices),
-		"totalDevices", len(allocatableDevices))
+		"matchingDevices", len(policyDevices))
 	r.log.V(2).Info("Policy devices details", "policyDevices", policyDevices)
 
 	return policyDevices
+}
+
+// filterRequestsPciAddresses reports whether a filter explicitly selects by PCI address.
+func filterRequestsPciAddresses(filter sriovdrav1alpha1.ResourceFilter) bool {
+	return len(filter.PciAddresses) > 0
+}
+
+// getDeviceInterfaceType returns the interface type attribute with fallback inference.
+func getDeviceInterfaceType(device resourceapi.Device) string {
+	if interfaceType, exists := deviceAttributeString(device, consts.AttributeInterfaceType); exists {
+		return interfaceType
+	}
+	if _, hasParentPf := deviceAttributeString(device, consts.AttributePfPciAddress); hasParentPf {
+		return consts.InterfaceTypeVirtualFunction
+	}
+	return consts.InterfaceTypeRegular
+}
+
+// deviceAttributeString reads a string-valued device attribute by qualified name.
+func deviceAttributeString(device resourceapi.Device, name resourceapi.QualifiedName) (string, bool) {
+	if device.Attributes == nil {
+		return "", false
+	}
+	attr, exists := device.Attributes[name]
+	if !exists || attr.StringValue == nil {
+		return "", false
+	}
+	return *attr.StringValue, true
 }
 
 // resolveDeviceAttributes finds all DeviceAttributes objects matching the
@@ -243,22 +341,6 @@ func nodeSelectorTermToLabelSelector(term corev1.NodeSelectorTerm) *metav1.Label
 		})
 	}
 	return &metav1.LabelSelector{MatchExpressions: exprs}
-}
-
-// deviceMatchesFilters checks if a device matches any of the provided resource filters.
-// Empty filters list matches all devices.
-func (r *SriovResourcePolicyReconciler) deviceMatchesFilters(device resourceapi.Device, filters []sriovdrav1alpha1.ResourceFilter) bool {
-	if len(filters) == 0 {
-		return true
-	}
-
-	for _, filter := range filters {
-		if r.deviceMatchesFilter(device, filter) {
-			return true
-		}
-	}
-
-	return false
 }
 
 // deviceMatchesFilter checks if a device matches a specific resource filter
