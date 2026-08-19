@@ -313,6 +313,190 @@ var _ = Describe("Host", func() {
 				Expect(linkType).To(BeEmpty())
 			})
 		})
+
+		Context("GetVdpaType", func() {
+			It("should return 'vhost' when the vdpa device is bound to vhost_vdpa", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.1",
+					"sys/bus/pci/devices/0000:01:00.1/vdpa0",
+				}
+				fs.Symlinks = map[string]string{
+					"sys/bus/pci/devices/0000:01:00.1/vdpa0/driver": "../../../../../bus/vdpa/drivers/vhost_vdpa",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetVdpaType("0000:01:00.1")).To(Equal(consts.VdpaTypeVhost))
+			})
+
+			It("should return 'virtio' when the vdpa device is bound to virtio_vdpa", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.1",
+					"sys/bus/pci/devices/0000:01:00.1/vdpa0",
+				}
+				fs.Symlinks = map[string]string{
+					"sys/bus/pci/devices/0000:01:00.1/vdpa0/driver": "../../../../../bus/vdpa/drivers/virtio_vdpa",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetVdpaType("0000:01:00.1")).To(Equal(consts.VdpaTypeVirtio))
+			})
+
+			It("should return empty string when the vdpa device has no bound driver", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.1",
+					"sys/bus/pci/devices/0000:01:00.1/vdpa0",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetVdpaType("0000:01:00.1")).To(BeEmpty())
+			})
+
+			It("should return empty string when the bound driver is unknown", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.1",
+					"sys/bus/pci/devices/0000:01:00.1/vdpa0",
+				}
+				fs.Symlinks = map[string]string{
+					"sys/bus/pci/devices/0000:01:00.1/vdpa0/driver": "../../../../../bus/vdpa/drivers/some_other_vdpa",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetVdpaType("0000:01:00.1")).To(BeEmpty())
+			})
+
+			It("should return empty string when the VF exposes no vdpa device", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.1",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetVdpaType("0000:01:00.1")).To(BeEmpty())
+			})
+
+			It("should return empty string when the PCI device directory does not exist", func() {
+				tearDown = fs.Use()
+
+				Expect(h.GetVdpaType("0000:01:00.1")).To(BeEmpty())
+			})
+		})
+
+		Context("GetIBPKey", func() {
+			It("should return the pkey read from the VF netdev", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:02:00.1/net",
+					"sys/bus/pci/devices/0000:02:00.1/net/ib0",
+					"sys/class/net/ib0",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/net/ib0/pkey": []byte("0x7fff\n"),
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetIBPKey("0000:02:00.1")).To(Equal("0x7fff"))
+			})
+
+			It("should return empty string when the netdev has no pkey file", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:02:00.1/net",
+					"sys/bus/pci/devices/0000:02:00.1/net/eth0",
+					"sys/class/net/eth0",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetIBPKey("0000:02:00.1")).To(BeEmpty())
+			})
+
+			It("should return empty string when the VF has no netdev", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:02:00.1/net",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetIBPKey("0000:02:00.1")).To(BeEmpty())
+			})
+
+			It("should return empty string when the net directory does not exist", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:02:00.1",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetIBPKey("0000:02:00.1")).To(BeEmpty())
+			})
+		})
+
+		Context("GetVFRepresentor", func() {
+			It("should return the representor and its phys_port_name", func() {
+				hRep := host.NewHostForTest(nil, &host.FakeSriovnetProvider{
+					UplinkName:      "enp3s0f0",
+					RepresentorName: "enp3s0f0_0",
+				})
+				fs.Dirs = []string{"sys/class/net/enp3s0f0_0"}
+				fs.Files = map[string][]byte{
+					"sys/class/net/enp3s0f0_0/phys_port_name": []byte("pf0vf0\n"),
+				}
+				tearDown = fs.Use()
+
+				rep, ppn, err := hRep.GetVFRepresentor("0000:03:00.0", 0)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(rep).To(Equal("enp3s0f0_0"))
+				Expect(ppn).To(Equal("pf0vf0"))
+			})
+
+			It("should return the representor with empty phys_port_name when the file is missing", func() {
+				hRep := host.NewHostForTest(nil, &host.FakeSriovnetProvider{
+					UplinkName:      "enp3s0f0",
+					RepresentorName: "enp3s0f0_1",
+				})
+				fs.Dirs = []string{"sys/class/net/enp3s0f0_1"}
+				tearDown = fs.Use()
+
+				rep, ppn, err := hRep.GetVFRepresentor("0000:03:00.0", 1)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(rep).To(Equal("enp3s0f0_1"))
+				Expect(ppn).To(BeEmpty())
+			})
+
+			It("should return an error when the uplink netdev cannot be determined", func() {
+				hRep := host.NewHostForTest(nil, &host.FakeSriovnetProvider{
+					UplinkError: fmt.Errorf("invalid PCI address"),
+				})
+				tearDown = fs.Use()
+
+				rep, ppn, err := hRep.GetVFRepresentor("0000:03:00.0", 0)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("unable to determine PF uplink netdev"))
+				Expect(rep).To(BeEmpty())
+				Expect(ppn).To(BeEmpty())
+			})
+
+			It("should return an error when the representor lookup fails", func() {
+				hRep := host.NewHostForTest(nil, &host.FakeSriovnetProvider{
+					UplinkName:       "enp3s0f0",
+					RepresentorError: sriovnet.ErrRepresentorNotFound,
+				})
+				tearDown = fs.Use()
+
+				rep, ppn, err := hRep.GetVFRepresentor("0000:03:00.0", 0)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("failed to get VF representor"))
+				Expect(rep).To(BeEmpty())
+				Expect(ppn).To(BeEmpty())
+			})
+
+			It("should return empty values without error when the representor is empty", func() {
+				hRep := host.NewHostForTest(nil, &host.FakeSriovnetProvider{
+					UplinkName:      "enp3s0f0",
+					RepresentorName: "",
+				})
+				tearDown = fs.Use()
+
+				rep, ppn, err := hRep.GetVFRepresentor("0000:03:00.0", 0)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(rep).To(BeEmpty())
+				Expect(ppn).To(BeEmpty())
+			})
+		})
 	})
 
 	Describe("Topology Functions", func() {
