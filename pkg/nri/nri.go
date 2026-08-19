@@ -8,11 +8,8 @@ import (
 	"github.com/containerd/nri/pkg/api"
 	"github.com/containerd/nri/pkg/stub"
 	resourceapi "k8s.io/api/resource/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8stypes "k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -243,6 +240,10 @@ type networkClaimKey struct {
 	name      string
 }
 
+// claimStatusDeviceKey indexes status.devices by driver, pool and device. It
+// omits ShareID because this driver never populates it, so those three identify
+// a device today. If consumable-capacity ShareIDs are ever written, this must
+// include ShareID to stay 1:1 with the merge key in pkg/types (keyOf).
 type claimStatusDeviceKey struct {
 	driver string
 	pool   string
@@ -428,37 +429,18 @@ func (p *Plugin) buildRequestMetadataUpdates(
 	return updates
 }
 
-// updateClaimNetworkDataWithRetry updates the network device data for a claim with retries.
+// updateClaimNetworkDataWithRetry updates the network device data for a claim,
+// retrying on conflict and preserving device status entries owned by other
+// drivers. It shares the retry with the prepare path in pkg/driver.
 func (p *Plugin) updateClaimNetworkDataWithRetry(ctx context.Context, claim *resourceapi.ResourceClaim) error {
 	logger := klog.FromContext(ctx).WithName("updateClaimNetworkDataWithRetry")
-	originalDevices := claim.Status.Devices
-	err := wait.ExponentialBackoffWithContext(ctx, consts.Backoff, func(ctx context.Context) (bool, error) {
-		_, updateErr := p.k8sClient.ResourceV1().ResourceClaims(claim.Namespace).UpdateStatus(ctx, claim, metav1.UpdateOptions{})
-		if updateErr != nil {
-			// If this is a conflict error, fetch fresh claim and copy over devices list
-			if apierrors.IsConflict(updateErr) {
-				logger.V(2).Info("Conflict detected, refreshing claim", "claim", claim.UID)
-
-				freshClaim, fetchErr := p.k8sClient.ResourceV1().ResourceClaims(claim.Namespace).Get(ctx, claim.Name, metav1.GetOptions{})
-				if fetchErr != nil {
-					logger.V(2).Info("Failed to fetch fresh claim", "claim", claim.UID, "error", fetchErr.Error())
-					return false, nil // Continue retrying
-				}
-
-				// Copy original devices list to fresh claim
-				freshClaim.Status.Devices = originalDevices
-				claim = freshClaim // Use fresh claim for next retry
-
-				logger.V(2).Info("Refreshed claim, retrying status update", "claim", claim.UID)
-			} else {
-				logger.V(2).Info("Retrying claim status update", "claim", claim.UID, "error", updateErr.Error())
-			}
-			return false, nil // Return false to continue retrying, nil to not fail immediately
-		}
-		return true, nil // Success
-	})
-
-	if err != nil {
+	if err := types.UpdateClaimStatusWithRetry(
+		ctx,
+		p.k8sClient.ResourceV1().ResourceClaims(claim.Namespace),
+		claim,
+		consts.DriverName,
+		consts.Backoff,
+	); err != nil {
 		logger.Error(err, "Failed to update claim status after retries", "claim", claim.UID)
 		return err
 	}

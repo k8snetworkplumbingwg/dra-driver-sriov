@@ -196,8 +196,11 @@ func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 			logger.Error(err, "error marshaling config", "config", config)
 			rawConfig = []byte("{}")
 		}
-		// Add applied config to device
-		claim.Status.Devices = append(claim.Status.Devices, resourceapi.AllocatedDeviceStatus{
+		// Record the applied config as this device's status. Upsert instead of
+		// append: a claim reused by another pod, or re-prepared after a restart,
+		// can already carry this device, and a duplicate (driver, pool, device,
+		// share ID) key makes the whole status update fail validation.
+		claim.Status.Devices = drasriovtypes.UpsertDeviceStatus(claim.Status.Devices, resourceapi.AllocatedDeviceStatus{
 			Device: result.Device,
 			Pool:   result.Pool,
 			Driver: result.Driver,
