@@ -1,7 +1,9 @@
 package host_test
 
 import (
+	"errors"
 	"fmt"
+	iofs "io/fs"
 	"os"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -364,6 +366,8 @@ var _ = Describe("Host", func() {
 				_, err := h.GetNUMANodeAttribute("0000:01:00.0", deviceattribute.ScalarAttribute)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("no NUMA affinity"))
+				var pathErr *iofs.PathError
+				Expect(errors.As(err, &pathErr)).To(BeFalse())
 			})
 
 			It("should return an error when the NUMA node file does not exist", func() {
@@ -372,6 +376,8 @@ var _ = Describe("Host", func() {
 				_, err := h.GetNUMANodeAttribute("0000:01:00.0", deviceattribute.ScalarAttribute)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to read NUMA node"))
+				var pathErr *iofs.PathError
+				Expect(errors.As(err, &pathErr)).To(BeTrue())
 			})
 		})
 

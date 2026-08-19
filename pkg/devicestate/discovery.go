@@ -1,7 +1,9 @@
 package devicestate
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"strconv"
 	"strings"
 
@@ -157,7 +159,11 @@ func DiscoverSriovDevices(options ...DiscoveryOption) (types.AllocatableDevices,
 			numaNodeIntPtr := new(int64(-1))
 			numaAttribute, numaErr := host.GetHelpers().GetNUMANodeAttribute(vfInfo.PciAddress, discoveryConfig.numaAttributeForm)
 			if numaErr != nil {
-				logger.V(2).Info("Not publishing standardized NUMA attribute", "address", vfInfo.PciAddress, "error", numaErr)
+				if isNUMATopologyReadFailure(numaErr) {
+					logger.Error(numaErr, "Failed to read NUMA topology", "address", vfInfo.PciAddress)
+				} else {
+					logger.V(2).Info("Device has no NUMA affinity", "address", vfInfo.PciAddress, "error", numaErr)
+				}
 			} else if physicalNode, ok := physicalNUMANode(numaAttribute.Value); ok {
 				*numaNodeIntPtr = physicalNode
 			} else {
@@ -236,6 +242,11 @@ func DiscoverSriovDevices(options ...DiscoveryOption) (types.AllocatableDevices,
 
 	logger.Info("SR-IOV device discovery completed", "totalDevices", len(resourceList))
 	return resourceList, nil
+}
+
+func isNUMATopologyReadFailure(err error) bool {
+	var pathErr *fs.PathError
+	return errors.As(err, &pathErr)
 }
 
 // physicalNUMANode recovers the physical NUMA node from either representation
