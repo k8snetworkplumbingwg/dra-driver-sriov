@@ -39,10 +39,12 @@ spec:
       serviceAccountName: {{ include "dra-driver-sriov.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.kubeletPlugin.podSecurityContext | nindent 8 }}
+      {{- if .Values.kubeletPlugin.sriovCniInit.enabled }}
       initContainers:
       - args:
         - --no-sleep
-        image: ghcr.io/k8snetworkplumbingwg/sriov-cni:v2.10.0
+        - --cni-bin-dir=/host{{ .Values.kubeletPlugin.cniBinHostPath }}
+        image: {{ .Values.kubeletPlugin.sriovCniInit.image | quote }}
         imagePullPolicy: IfNotPresent
         name: sriov-cni
         resources:
@@ -54,11 +56,12 @@ spec:
         terminationMessagePath: /dev/termination-log
         terminationMessagePolicy: File
         volumeMounts:
-        - mountPath: /host/opt/cni/bin
+        - mountPath: /host{{ .Values.kubeletPlugin.cniBinHostPath }}
           name: cni-bin
         - mountPath: /host/etc/os-release
           name: os-release
           readOnly: true
+      {{- end }}
       containers:
       - name: plugin
         securityContext:
@@ -185,12 +188,14 @@ spec:
           type: DirectoryOrCreate
       {{- end }}
       - hostPath:
-          path: /opt/cni/bin
+          path: {{ .Values.kubeletPlugin.cniBinHostPath | quote }}
         name: cni-bin
+      {{- if .Values.kubeletPlugin.sriovCniInit.enabled }}
       - hostPath:
           path: /etc/os-release
           type: File
         name: os-release
+      {{- end }}
       {{- with .Values.kubeletPlugin.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -60,6 +60,13 @@ kubeletPlugin:
   defaultInterfacePrefix: vfnet
   configurationMode: STANDALONE
   enableDeviceMetadata: false
+  # Host path for CNI plugin binaries. Could also be /var/lib/cni/bin.
+  cniBinHostPath: /opt/cni/bin
+  sriovCniInit:
+    # Install upstream sriov-cni via init container. Disable on OpenShift when the
+    # SR-IOV Network Operator already provides the sriov-cni binary.
+    enabled: true
+    image: ghcr.io/k8snetworkplumbingwg/sriov-cni:v2.10.0
   containers:
     init:
       securityContext: {}
