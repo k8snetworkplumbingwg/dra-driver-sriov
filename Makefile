@@ -105,15 +105,24 @@ vet:
 	go vet $(MODULE)/...
 
 COVERAGE_FILE := coverage.out
+# Exclude generated mocks and cluster-only e2e helpers from unit-test coverage.
+COVERAGE_EXCLUDE := '_mock\.go|test/e2e/'
+
+define filter-coverage
+	grep -vE $(COVERAGE_EXCLUDE) $(COVERAGE_FILE) > $(COVERAGE_FILE).filtered
+	mv $(COVERAGE_FILE).filtered $(COVERAGE_FILE)
+endef
+
 test:
 	KUBEBUILDER_ASSETS=$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir=$(ENVTEST_ASSETS_DIR) -p path) go test -v -coverprofile=$(COVERAGE_FILE) $(MODULE)/...
+	$(filter-coverage)
 
 test-coverage:
 	KUBEBUILDER_ASSETS=$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir=$(ENVTEST_ASSETS_DIR) -p path) go test -v -covermode=atomic -coverprofile=$(COVERAGE_FILE) $(MODULE)/...
+	$(filter-coverage)
 
 coverage: test
-	cat $(COVERAGE_FILE) | grep -v "_mock.go" > $(COVERAGE_FILE).no-mocks
-	go tool cover -func=$(COVERAGE_FILE).no-mocks
+	go tool cover -func=$(COVERAGE_FILE)
 
 generate: generate-deepcopy generate-crds mock-generate
 
@@ -234,22 +243,27 @@ chart-push: ## Push chart (pass VERSION=v1.0.0 or VERSION=sha)
 
 .PHONY: deploy-virtual-k8s-cluster
 deploy-virtual-k8s-cluster:
-	SKIP_DELETE=TRUE ./hack/deploy-virtual-k8s-cluster.sh
+	./hack/deploy-virtual-k8s-cluster.sh
 
-.PHONY: deploy-single-node-virtual-cluster
-deploy-single-node-virtual-cluster:
-	SKIP_DELETE=TRUE ./hack/ci-deploy-single-node-virtual-cluster.sh
+.PHONY: deploy-single-node-virtual-cluster-standalone
+deploy-single-node-virtual-cluster-standalone:
+	DRA_DRIVER_MODE=STANDALONE ./hack/ci-deploy-single-node-virtual-cluster.sh
 
-.PHONY: ci-single-node-e2e
-ci-single-node-e2e:
-	./hack/ci-deploy-single-node-virtual-cluster.sh
+.PHONY: deploy-single-node-virtual-cluster-multus
+deploy-single-node-virtual-cluster-multus:
+	DRA_DRIVER_MODE=MULTUS ./hack/ci-deploy-single-node-virtual-cluster.sh
 
-.PHONY: undeploy-virtual-k8s-cluster
+.PHONY: delete-virtual-k8s-cluster
 delete-virtual-k8s-cluster:
-	./hack/delete-virtual-k8s-cluster.sh
+	./hack/deploy-virtual-k8s-cluster.sh --cleanup
+	./hack/ci-deploy-single-node-virtual-cluster.sh --cleanup
 
 redeploy-dra-driver-virtual-cluster:
 	./hack/virtual-cluster-redeploy.sh
 
-e2e-tests:
-	./hack/deploy-virtual-k8s-cluster.sh
+# Workload e2e against an already-deployed cluster (requires KUBECONFIG).
+# Optional: E2E_LABEL_FILTER='!Multus && !Alignment' to skip Multus/alignment demos.
+E2E_LABEL_FILTER ?=
+.PHONY: e2e-workloads
+e2e-workloads:
+	go test -tags=e2e -timeout=60m -v ./test/e2e/ -ginkgo.v $(if $(E2E_LABEL_FILTER),-ginkgo.label-filter="$(E2E_LABEL_FILTER)",)

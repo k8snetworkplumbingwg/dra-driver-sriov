@@ -8,7 +8,26 @@ total_number_of_nodes=$((1 + NUM_OF_WORKERS))
 
 ## Global configuration
 export OPERATOR_EXEC=kubectl
-export MULTUS_NAMESPACE="kube-system"
+
+cleanup_only=false
+for arg in "$@"; do
+  case "$arg" in
+    --cleanup)
+      cleanup_only=true
+      ;;
+    -h|--help)
+      echo "Usage: $0 [--cleanup]"
+      echo "  (default)  Tear down any existing cluster, then deploy a new one."
+      echo "  --cleanup  Tear down the cluster and exit."
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $arg" >&2
+      echo "Usage: $0 [--cleanup]" >&2
+      exit 1
+      ;;
+  esac
+done
 
 check_requirements() {
   for cmd in kcli virsh virt-edit podman make go; do
@@ -20,21 +39,34 @@ check_requirements() {
   return 0
 }
 
-echo "## checking requirements"
-check_requirements
-echo "## delete existing cluster name $cluster_name"
-kcli delete cluster $cluster_name -y
-kcli delete network $cluster_name -y
-
-function cleanup {
-  kcli delete cluster $cluster_name -y
-  kcli delete network $cluster_name -y
-  sudo rm -f /etc/containers/registries.conf.d/003-${cluster_name}.conf
+# kcli delete wrapper; ignore failure only if output confirms the resource is absent.
+kcli_delete() {
+  local out rc=0
+  out=$(kcli delete "$@" -y 2>&1) || rc=$?
+  [[ -n "$out" ]] && printf '%s\n' "$out"
+  if [[ $rc -ne 0 ]] && ! grep -qi 'not found' <<<"$out"; then
+    return "$rc"
+  fi
+  return 0
 }
 
-if [ -z $SKIP_DELETE ]; then
-  trap cleanup EXIT
+cleanup() {
+  echo "## cleaning up cluster $cluster_name"
+  kcli_delete cluster "$cluster_name"
+  kcli_delete network "$cluster_name"
+  kcli_delete network "${network_name}"
+  sudo rm -f "/etc/containers/registries.conf.d/003-${cluster_name}.conf"
+}
+
+echo "## checking requirements"
+check_requirements
+
+if [ "$cleanup_only" = true ]; then
+  cleanup
+  exit 0
 fi
+
+cleanup
 
 kcli create network -c 192.168.120.0/24 ${network_name}
 kcli create network -c 192.168.${virtual_router_id}.0/24 --nodhcp -i $cluster_name
@@ -227,6 +259,23 @@ grubby --update-kernel=DEFAULT --args=pci=realloc
 grubby --update-kernel=DEFAULT --args=iommu=pt
 grubby --update-kernel=DEFAULT --args=intel_iommu=on
 
+echo '[Unit]
+Description=load VFIO modules for DRA VFIO demos
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash -c "modprobe vfio && modprobe vfio_iommu_type1 && modprobe vfio-pci"
+RemainAfterExit=yes
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target' > /etc/systemd/system/load-vfio.service
+
+systemctl daemon-reload
+systemctl enable --now load-vfio
+
 EOF
 }
 
@@ -249,10 +298,6 @@ if ! kubectl wait --for=condition=ready node --all --timeout=10m; then
   done
   exit 1
 fi
-
-# remove the patch after multus bug is fixed
-# https://github.com/k8snetworkplumbingwg/multus-cni/issues/1221
-kubectl patch  -n ${MULTUS_NAMESPACE} ds/kube-multus-ds --type=json -p='[{"op": "replace", "path": "/spec/template/spec/initContainers/0/command", "value":["cp", "-f","/usr/src/multus-cni/bin/multus-shim", "/host/opt/cni/bin/multus-shim"]}]'
 
 ## Deploy internal registry
 kubectl create namespace container-registry
@@ -340,20 +385,22 @@ CONTAINER_TOOL=podman IMAGE_NAME=${SRIOV_DRIVER_IMAGE} make -C deployments/conta
 podman push --tls-verify=false "${SRIOV_DRIVER_IMAGE}"
 podman rmi -fi ${SRIOV_DRIVER_IMAGE}
 
-# remove the crio bridge and let flannel to recreate
-kcli ssh $cluster_name-ctlplane-0 << EOF
+# remove the crio bridge and let flannel to recreate (cni0 may already be gone after reboot)
+kcli ssh "${cluster_name}-ctlplane-0" << EOF
 sudo su
-if [ $(ip a | grep 10.85.0 | wc -l) -eq 0 ]; then ip link del cni0; fi
+if [ \$(ip a | grep 10.85.0 | wc -l) -eq 0 ]; then ip link del cni0 2>/dev/null || true; fi
 EOF
 
-kubectl -n ${MULTUS_NAMESPACE} delete po -l name=multus --ignore-not-found=true
 kubectl -n kube-system delete po -l k8s-app=kube-dns --ignore-not-found=true
 
 TIMEOUT=400
 echo "## wait for coredns"
 kubectl -n kube-system wait --for=condition=available deploy/coredns --timeout=${TIMEOUT}s
 echo "## wait for multus"
-kubectl -n ${MULTUS_NAMESPACE} wait --for=condition=ready -l name=multus pod --timeout=${TIMEOUT}s
+# Force a new DaemonSet revision so rollout status waits for fresh Multus pods
+# instead of returning immediately on the previous completed revision.
+kubectl -n ${MULTUS_NAMESPACE} rollout restart daemonset/kube-multus-ds
+kubectl -n ${MULTUS_NAMESPACE} rollout status daemonset/kube-multus-ds --timeout=${TIMEOUT}s
 
 echo "## deploy cert manager"
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.12.0/cert-manager.yaml
@@ -389,7 +436,7 @@ echo "## Waiting for daemonset to be ready..."
 while true; do
     DESIRED=$(kubectl -n dra-driver-sriov get ds/dra-driver-sriov-dra-driver-sriov-chart-kubeletplugin -o jsonpath='{.status.desiredNumberScheduled}' 2>/dev/null || echo "0")
     READY=$(kubectl -n dra-driver-sriov get ds/dra-driver-sriov-dra-driver-sriov-chart-kubeletplugin -o jsonpath='{.status.numberReady}' 2>/dev/null || echo "0")
-    
+
     if [ "$DESIRED" != "" ] && [ "$DESIRED" != "0" ] && [ "$DESIRED" = "$READY" ]; then
         echo "## Daemonset is ready ($READY/$DESIRED)"
         break

@@ -9,6 +9,26 @@ total_number_of_nodes=1
 
 export OPERATOR_EXEC=kubectl
 
+cleanup_only=false
+for arg in "$@"; do
+  case "$arg" in
+    --cleanup)
+      cleanup_only=true
+      ;;
+    -h|--help)
+      echo "Usage: $0 [--cleanup]"
+      echo "  (default)  Tear down any existing cluster, then deploy a new one."
+      echo "  --cleanup  Tear down the cluster and exit."
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $arg" >&2
+      echo "Usage: $0 [--cleanup]" >&2
+      exit 1
+      ;;
+  esac
+done
+
 check_requirements() {
   for cmd in kcli virsh podman make go; do
     if ! command -v "$cmd" &> /dev/null; then
@@ -19,23 +39,34 @@ check_requirements() {
   return 0
 }
 
-echo "## checking requirements"
-check_requirements
-echo "## delete existing cluster name $cluster_name"
-kcli delete cluster $cluster_name -y || true
-kcli delete network ${cluster_name}-sriov -y || true
-kcli delete network ${network_name} -y || true
-
-function cleanup {
-  kcli delete cluster $cluster_name -y || true
-  kcli delete network ${cluster_name}-sriov -y || true
-  kcli delete network ${network_name} -y || true
-  sudo rm -f /etc/containers/registries.conf.d/003-${cluster_name}.conf
+# kcli delete wrapper; ignore failure only if output confirms the resource is absent.
+kcli_delete() {
+  local out rc=0
+  out=$(kcli delete "$@" -y 2>&1) || rc=$?
+  [[ -n "$out" ]] && printf '%s\n' "$out"
+  if [[ $rc -ne 0 ]] && ! grep -qi 'not found' <<<"$out"; then
+    return "$rc"
+  fi
+  return 0
 }
 
-if [ -z "$SKIP_DELETE" ]; then
-  trap cleanup EXIT
+cleanup() {
+  echo "## cleaning up cluster $cluster_name"
+  kcli_delete cluster "$cluster_name"
+  kcli_delete network "${cluster_name}-sriov"
+  kcli_delete network "${network_name}"
+  sudo rm -f "/etc/containers/registries.conf.d/003-${cluster_name}.conf"
+}
+
+echo "## checking requirements"
+check_requirements
+
+if [ "$cleanup_only" = true ]; then
+  cleanup
+  exit 0
 fi
+
+cleanup
 
 kcli create network -c 192.168.120.0/24 ${network_name}
 kcli create network -c 192.168.${virtual_router_id}.0/24 --nodhcp -i ${cluster_name}-sriov
@@ -193,13 +224,38 @@ WantedBy=default.target' > /etc/systemd/system/load-br-netfilter.service
 systemctl daemon-reload
 systemctl enable --now load-br-netfilter
 
+cat > /usr/local/bin/create-sriov-vfs.sh << 'VFSCRIPT'
+#!/usr/bin/bash
+set -euo pipefail
+created=0
+for driver_link in /sys/bus/pci/devices/*/driver; do
+  [[ -e "\$driver_link" ]] || continue
+  readlink -f "\$driver_link" | grep -q '/igb\$' || continue
+  pf="\$(dirname "\$driver_link")"
+  addr="\$(basename "\$pf")"
+  [[ -w "\$pf/sriov_numvfs" ]] || continue
+  [[ -r "\$pf/sriov_totalvfs" ]] || continue
+  totalvfs="\$(cat "\$pf/sriov_totalvfs")"
+  [[ "\$totalvfs" -ge 5 ]] || continue
+  echo 0 > "\$pf/sriov_numvfs" || true
+  echo 5 > "\$pf/sriov_numvfs"
+  echo "Created VFs on \$addr"
+  created=\$((created + 1))
+done
+if [[ "\$created" -eq 0 ]]; then
+  echo "error: no igb PF with writable sriov_numvfs and sriov_totalvfs >= 5" >&2
+  exit 1
+fi
+VFSCRIPT
+chmod +x /usr/local/bin/create-sriov-vfs.sh
+
 echo '[Unit]
 Description=create sriov vfs
 Before=network-pre.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/bash -ec "for pf in \$(ls -d /sys/bus/pci/devices/*/driver 2>/dev/null | while read d; do readlink -f \$d | grep -q /igb\$ && dirname \$d; done); do addr=\$(basename \$pf); echo 0 > \$pf/sriov_numvfs || true; echo 5 > \$pf/sriov_numvfs; echo Created VFs on \$addr; done"
+ExecStart=/usr/local/bin/create-sriov-vfs.sh
 StandardOutput=journal+console
 StandardError=journal+console
 
@@ -214,6 +270,23 @@ systemctl restart NetworkManager
 grubby --update-kernel=DEFAULT --args=pci=realloc
 grubby --update-kernel=DEFAULT --args=iommu=pt
 grubby --update-kernel=DEFAULT --args=intel_iommu=on
+
+echo '[Unit]
+Description=load VFIO modules for DRA VFIO demos
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash -c "modprobe vfio && modprobe vfio_iommu_type1 && modprobe vfio-pci"
+RemainAfterExit=yes
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target' > /etc/systemd/system/load-vfio.service
+
+systemctl daemon-reload
+systemctl enable --now load-vfio
 
 EOF
 }
@@ -251,6 +324,23 @@ if ! $ready; then
   kubectl describe node "${cluster_name}-ctlplane-0.${domain_name}" || true
   exit 1
 fi
+
+# remove the crio bridge and let flannel recreate (cni0 may already be gone after reboot)
+kcli ssh "${cluster_name}-ctlplane-0" << EOF
+sudo su
+if [ \$(ip a | grep 10.85.0 | wc -l) -eq 0 ]; then ip link del cni0 2>/dev/null || true; fi
+EOF
+
+kubectl -n kube-system delete po -l k8s-app=kube-dns --ignore-not-found=true
+
+TIMEOUT=400
+echo "## wait for coredns"
+kubectl -n kube-system wait --for=condition=available deploy/coredns --timeout=${TIMEOUT}s
+echo "## wait for multus"
+# Force a new DaemonSet revision so rollout status waits for fresh Multus pods
+# instead of returning immediately on the previous completed revision.
+kubectl -n ${MULTUS_NAMESPACE} rollout restart daemonset/kube-multus-ds
+kubectl -n ${MULTUS_NAMESPACE} rollout status daemonset/kube-multus-ds --timeout=${TIMEOUT}s
 
 ## Deploy internal registry
 kubectl create namespace container-registry --dry-run=client -o yaml | kubectl apply -f -
@@ -373,18 +463,6 @@ if [ $DS_ATTEMPTS -ge $DS_MAX_ATTEMPTS ]; then
     exit 1
 fi
 
-echo "## apply SriovResourcePolicy to advertise all SR-IOV devices"
-cat <<EOF | kubectl apply -f -
-apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
-kind: SriovResourcePolicy
-metadata:
-  name: all-devices
-  namespace: dra-driver-sriov
-spec:
-  configs:
-  - {}
-EOF
-
 echo "## verify VFs were created after reboot"
 kcli ssh $cluster_name-ctlplane-0 << 'VERIFY_EOF'
 echo "=== PCI ethernet devices ==="
@@ -419,20 +497,6 @@ kubectl -n dra-driver-sriov delete pod -l app.kubernetes.io/name=dra-driver-srio
 echo "## wait for DRA driver pod to be ready again"
 sleep 10
 kubectl -n dra-driver-sriov wait --for=condition=ready pod -l app.kubernetes.io/name=dra-driver-sriov-chart --timeout=120s
-
-echo "## wait for ResourceSlices to be populated with devices"
-ATTEMPTS=0
-MAX_ATTEMPTS=30
-while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
-    DEVICE_COUNT=$(kubectl get resourceslices -o jsonpath='{.items[0].spec.devices}' 2>/dev/null | grep -co '"name"' || true)
-    if [ -n "$DEVICE_COUNT" ] && [ "$DEVICE_COUNT" -gt "0" ] 2>/dev/null; then
-        echo "## ResourceSlices have $DEVICE_COUNT devices published"
-        break
-    fi
-    echo "## Waiting for devices in ResourceSlices (attempt $ATTEMPTS)..."
-    sleep 5
-    ATTEMPTS=$((ATTEMPTS+1))
-done
 
 echo "## Single-node virtual cluster deployed successfully"
 echo "## KUBECONFIG=${KUBECONFIG}"
