@@ -75,6 +75,8 @@ const (
 var (
 	// AttributePCIeRoot identifies the PCIe root complex of the device
 	AttributePCIeRoot resourceapi.QualifiedName = deviceattribute.StandardDeviceAttributePCIeRoot
+	// AttributeStandardNUMANode identifies the device's standardized NUMA topology.
+	AttributeStandardNUMANode resourceapi.QualifiedName = deviceattribute.StandardDeviceAttributeNUMANode
 )
 
 // ReservedAttributes is the set of attribute keys populated by driver discovery
@@ -90,6 +92,7 @@ var ReservedAttributes = map[resourceapi.QualifiedName]bool{
 	AttributeEswitchMode:        true,
 	AttributeVFID:               true,
 	AttributePCIeRoot:           true,
+	AttributeStandardNUMANode:   true,
 	AttributePfPciAddress:       true,
 	AttributeStandardPciAddress: true,
 	AttributeLinkType:           true,

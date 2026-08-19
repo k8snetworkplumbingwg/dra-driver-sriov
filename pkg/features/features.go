@@ -22,12 +22,25 @@ import (
 	logsapi "k8s.io/component-base/logs/api/v1"
 )
 
+const (
+	// DRAListTypeAttributes enables list-valued standardized NUMA attributes.
+	// It must only be enabled after the same feature gate is enabled on the
+	// kube-apiserver and kube-scheduler.
+	DRAListTypeAttributes featuregate.Feature = "DRAListTypeAttributes"
+)
+
 // NewFeatureGate returns the component's feature-gate registry. It contains
-// gates owned by the component and its dependencies. A new registry is
-// returned for each application instance to keep flag parsing isolated in
-// tests.
+// both driver-owned gates and gates required by component dependencies. A new
+// registry is returned for each application instance to keep flag parsing
+// isolated in tests.
 func NewFeatureGate() featuregate.MutableVersionedFeatureGate {
 	featureGate := featuregate.NewFeatureGate()
+	utilruntime.Must(featureGate.Add(map[featuregate.Feature]featuregate.FeatureSpec{
+		DRAListTypeAttributes: {
+			Default:    false,
+			PreRelease: featuregate.Alpha,
+		},
+	}))
 	utilruntime.Must(logsapi.AddFeatureGates(featureGate))
 	utilruntime.Must(featureGate.SetFromMap(map[string]bool{string(logsapi.ContextualLogging): true}))
 	return featureGate

@@ -126,6 +126,7 @@ func newApp() *cli.App {
 		},
 		Action: func(c *cli.Context) error {
 			ctx := c.Context
+			flagsOptions.EnableNUMAListAttributes = featureGate.Enabled(features.DRAListTypeAttributes)
 			clientSets, err := flagsOptions.KubeClientConfig.NewClientSets()
 			if err != nil {
 				return fmt.Errorf("create client: %v", err)
