@@ -85,6 +85,21 @@ func (mr *MockInterfaceMockRecorder) BindDriverByBusAndDevice(device, driver any
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BindDriverByBusAndDevice", reflect.TypeOf((*MockInterface)(nil).BindDriverByBusAndDevice), device, driver)
 }
 
+// ConfigureVF mocks base method.
+func (m *MockInterface) ConfigureVF(pfName string, vfIndex *int, cfg *v1alpha1.VFLinkConfig) (*v1alpha1.VFLinkConfig, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ConfigureVF", pfName, vfIndex, cfg)
+	ret0, _ := ret[0].(*v1alpha1.VFLinkConfig)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ConfigureVF indicates an expected call of ConfigureVF.
+func (mr *MockInterfaceMockRecorder) ConfigureVF(pfName, vfIndex, cfg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ConfigureVF", reflect.TypeOf((*MockInterface)(nil).ConfigureVF), pfName, vfIndex, cfg)
+}
+
 // EnsureDpdkModuleLoaded mocks base method.
 func (m *MockInterface) EnsureDpdkModuleLoaded(driver string) error {
 	m.ctrl.T.Helper()
@@ -332,6 +347,20 @@ func (mr *MockInterfaceMockRecorder) PCI() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PCI", reflect.TypeOf((*MockInterface)(nil).PCI))
 }
 
+// ResetVF mocks base method.
+func (m *MockInterface) ResetVF(pfName string, vfIndex *int, restore *v1alpha1.VFLinkConfig) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResetVF", pfName, vfIndex, restore)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ResetVF indicates an expected call of ResetVF.
+func (mr *MockInterfaceMockRecorder) ResetVF(pfName, vfIndex, restore any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetVF", reflect.TypeOf((*MockInterface)(nil).ResetVF), pfName, vfIndex, restore)
+}
+
 // RestoreDeviceDriver mocks base method.
 func (m *MockInterface) RestoreDeviceDriver(pciAddress, originalDriver string) error {
 	m.ctrl.T.Helper()
@@ -344,6 +373,21 @@ func (m *MockInterface) RestoreDeviceDriver(pciAddress, originalDriver string) e
 func (mr *MockInterfaceMockRecorder) RestoreDeviceDriver(pciAddress, originalDriver any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RestoreDeviceDriver", reflect.TypeOf((*MockInterface)(nil).RestoreDeviceDriver), pciAddress, originalDriver)
+}
+
+// SnapshotVFAttributes mocks base method.
+func (m *MockInterface) SnapshotVFAttributes(pfName string, vfIndex *int, cfg *v1alpha1.VFLinkConfig) (*v1alpha1.VFLinkConfig, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SnapshotVFAttributes", pfName, vfIndex, cfg)
+	ret0, _ := ret[0].(*v1alpha1.VFLinkConfig)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SnapshotVFAttributes indicates an expected call of SnapshotVFAttributes.
+func (mr *MockInterfaceMockRecorder) SnapshotVFAttributes(pfName, vfIndex, cfg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SnapshotVFAttributes", reflect.TypeOf((*MockInterface)(nil).SnapshotVFAttributes), pfName, vfIndex, cfg)
 }
 
 // TryGetPFInterfaceName mocks base method.
