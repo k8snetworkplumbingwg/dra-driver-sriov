@@ -72,6 +72,8 @@ kubeletPlugin:
     enabled: false
     # The host-network port used when metrics are enabled.
     port: 8080
+  featureGates:
+    DRAListTypeAttributes: false
   containers:
     init:
       securityContext: {}
