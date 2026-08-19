@@ -117,6 +117,12 @@ spec:
         - name: HEALTHCHECK_PORT
           value: {{ .Values.kubeletPlugin.containers.plugin.healthcheckPort | quote }}
         {{- end }}
+        - name: METRICS_BIND_ADDRESS
+          {{- if .Values.kubeletPlugin.metrics.enabled }}
+          value: {{ printf ":%d" (int .Values.kubeletPlugin.metrics.port) | quote }}
+          {{- else }}
+          value: "0"
+          {{- end }}
         # Logging configuration
         {{- if .Values.logging.level }}
         - name: V

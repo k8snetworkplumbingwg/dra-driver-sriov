@@ -60,6 +60,11 @@ kubeletPlugin:
   defaultInterfacePrefix: vfnet
   configurationMode: STANDALONE
   enableDeviceMetadata: false
+  metrics:
+    # Enable the controller-runtime Prometheus metrics endpoint.
+    enabled: false
+    # The host-network port used when metrics are enabled.
+    port: 8080
   containers:
     init:
       securityContext: {}
