@@ -2,6 +2,7 @@ package devicestate
 
 import (
 	"fmt"
+	"io/fs"
 
 	"github.com/jaypipes/ghw/pkg/pci"
 	"github.com/jaypipes/pcidb"
@@ -38,6 +39,24 @@ func expectListNUMAAttribute(mockHost *mock_host.MockInterface, pciAddress strin
 			},
 		}, nil)
 }
+
+var _ = Describe("NUMA topology error classification", func() {
+	DescribeTable("classifies filesystem failures separately from semantic errors",
+		func(numaErr error, expectedReadFailure bool) {
+			Expect(isNUMATopologyReadFailure(numaErr)).To(Equal(expectedReadFailure))
+		},
+		Entry("wrapped sysfs path error",
+			fmt.Errorf("failed to get NUMA node attribute: %w", &fs.PathError{
+				Op:   "open",
+				Path: "/sys/bus/pci/devices/0000:01:00.1/numa_node",
+				Err:  fs.ErrNotExist,
+			}),
+			true,
+		),
+		Entry("device without NUMA affinity", fmt.Errorf("device has no NUMA affinity"), false),
+		Entry("invalid PCI address", fmt.Errorf("invalid PCI address"), false),
+	)
+})
 
 var _ = Describe("DiscoverSriovDevices", func() {
 	var (
