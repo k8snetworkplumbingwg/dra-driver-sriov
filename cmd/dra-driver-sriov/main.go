@@ -23,6 +23,7 @@ import (
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/controller"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/devicestate"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/driver"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/features"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/nri"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/podmanager"
@@ -39,6 +40,7 @@ func main() {
 }
 
 func newApp() *cli.App {
+	featureGate := features.NewFeatureGate()
 	flagsOptions := &types.Flags{
 		LoggingConfig: flags.NewLoggingConfig(),
 	}
@@ -115,6 +117,7 @@ func newApp() *cli.App {
 		},
 	}
 	cliFlags = append(cliFlags, flagsOptions.KubeClientConfig.Flags()...)
+	cliFlags = append(cliFlags, flags.FeatureGateFlags(featureGate)...)
 	cliFlags = append(cliFlags, flagsOptions.LoggingConfig.Flags()...)
 
 	app := &cli.App{
@@ -127,7 +130,7 @@ func newApp() *cli.App {
 			if c.Args().Len() > 0 {
 				return fmt.Errorf("arguments not supported: %v", c.Args().Slice())
 			}
-			return flagsOptions.LoggingConfig.Apply()
+			return flagsOptions.LoggingConfig.Apply(featureGate)
 		},
 		Action: func(c *cli.Context) error {
 			ctx := c.Context

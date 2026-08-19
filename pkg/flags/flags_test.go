@@ -7,6 +7,9 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
 
+	logsapi "k8s.io/component-base/logs/api/v1"
+
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/features"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
 )
 
@@ -110,6 +113,44 @@ var _ = Describe("Flags", func() {
 			Expect(kubeClientConfig.KubeConfig).To(Equal("/env/kubeconfig"))
 			Expect(kubeClientConfig.KubeAPIQPS).To(Equal(15.5))
 			Expect(kubeClientConfig.KubeAPIBurst).To(Equal(25))
+		})
+	})
+
+	Context("FeatureGateFlags", func() {
+		It("exposes component feature gates independently from logging", func() {
+			featureGate := features.NewFeatureGate()
+			cliFlags := flags.FeatureGateFlags(featureGate)
+
+			var featureGatesFlag cli.Flag
+			for _, flag := range cliFlags {
+				if flag.Names()[0] == "feature-gates" {
+					featureGatesFlag = flag
+					break
+				}
+			}
+			Expect(featureGatesFlag).NotTo(BeNil())
+			Expect(featureGatesFlag.(*cli.GenericFlag).Category).To(Equal("Features:"))
+			Expect(featureGatesFlag.(*cli.GenericFlag).EnvVars).To(ContainElement("FEATURE_GATES"))
+
+			app := &cli.App{
+				Name:  "test",
+				Flags: cliFlags,
+			}
+			Expect(os.Setenv("FEATURE_GATES", "ContextualLogging=false")).To(Succeed())
+			defer os.Unsetenv("FEATURE_GATES")
+			err := app.Run([]string{"test"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(featureGate.Enabled(logsapi.ContextualLogging)).To(BeFalse())
+		})
+	})
+
+	Context("LoggingConfig", func() {
+		It("only exposes logging flags", func() {
+			loggingConfig := flags.NewLoggingConfig()
+			for _, flag := range loggingConfig.Flags() {
+				Expect(flag.Names()).NotTo(ContainElement("feature-gates"))
+				Expect(flag.(*cli.GenericFlag).Category).To(Equal("Logging:"))
+			}
 		})
 	})
 
