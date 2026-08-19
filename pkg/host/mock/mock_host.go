@@ -128,6 +128,20 @@ func (mr *MockInterfaceMockRecorder) GetDriverByBusAndDevice(device any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDriverByBusAndDevice", reflect.TypeOf((*MockInterface)(nil).GetDriverByBusAndDevice), device)
 }
 
+// GetIBPKey mocks base method.
+func (m *MockInterface) GetIBPKey(pciAddr string) string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetIBPKey", pciAddr)
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// GetIBPKey indicates an expected call of GetIBPKey.
+func (mr *MockInterfaceMockRecorder) GetIBPKey(pciAddr any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetIBPKey", reflect.TypeOf((*MockInterface)(nil).GetIBPKey), pciAddr)
+}
+
 // GetLinkType mocks base method.
 func (m *MockInterface) GetLinkType(pciAddr string) (string, error) {
 	m.ctrl.T.Helper()
@@ -245,6 +259,20 @@ func (m *MockInterface) GetVFList(pfPciAddress string) ([]host.VFInfo, error) {
 func (mr *MockInterfaceMockRecorder) GetVFList(pfPciAddress any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetVFList", reflect.TypeOf((*MockInterface)(nil).GetVFList), pfPciAddress)
+}
+
+// GetVdpaType mocks base method.
+func (m *MockInterface) GetVdpaType(pciAddr string) string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetVdpaType", pciAddr)
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// GetVdpaType indicates an expected call of GetVdpaType.
+func (mr *MockInterfaceMockRecorder) GetVdpaType(pciAddr any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetVdpaType", reflect.TypeOf((*MockInterface)(nil).GetVdpaType), pciAddr)
 }
 
 // IsDpdkDriver mocks base method.
