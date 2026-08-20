@@ -386,8 +386,8 @@ func (s *Manager) handleRDMADevice(ctx context.Context, deviceInfo resourceapi.D
 	rdmaDevices := host.GetHelpers().GetRDMADevicesForPCI(pciAddress)
 
 	if len(rdmaDevices) == 0 {
-		logger.V(2).Info("No RDMA devices found for PCI address", "device", pciAddress)
-		return nil, nil, fmt.Errorf("no RDMA devices found for PCI address %s", pciAddress)
+		logger.V(2).Info("No RDMA devices found for PCI address (device may be bound to vfio-pci)", "device", pciAddress)
+		return nil, nil, nil
 	}
 
 	if len(rdmaDevices) > 1 {

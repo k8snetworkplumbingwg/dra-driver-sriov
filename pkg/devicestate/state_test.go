@@ -1319,7 +1319,7 @@ var _ = Describe("Manager", Serial, func() {
 			Expect(envs).To(BeEmpty())
 		})
 
-		It("should return error when no RDMA devices found", func() {
+		It("should return nil when no RDMA devices found", func() {
 			pciAddress := "0000:08:00.1"
 			deviceName := "device-1"
 
@@ -1333,8 +1333,7 @@ var _ = Describe("Manager", Serial, func() {
 
 			deviceNodes, envs, err := manager.handleRDMADevice(context.Background(), deviceInfo, pciAddress, deviceName)
 
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("no RDMA devices found"))
+			Expect(err).NotTo(HaveOccurred())
 			Expect(deviceNodes).To(BeNil())
 			Expect(envs).To(BeNil())
 		})
