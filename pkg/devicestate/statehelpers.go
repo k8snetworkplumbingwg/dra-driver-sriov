@@ -70,7 +70,12 @@ func getMapOfOpaqueDeviceConfigForDevice(
 		if !ok {
 			return nil, fmt.Errorf("decoded config is not a VfConfig")
 		}
-		for _, request := range config.Requests {
+		requests := config.Requests
+		if len(requests) == 0 {
+			// Empty Requests means the config applies to all requests in the claim.
+			requests = []string{""}
+		}
+		for _, request := range requests {
 			resultConfig, found := resultConfigs[request]
 			if !found {
 				resultConfig = configapi.DefaultVfConfig()

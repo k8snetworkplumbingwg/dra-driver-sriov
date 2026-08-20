@@ -541,7 +541,7 @@ var _ = Describe("getMapOfOpaqueDeviceConfigForDevice", func() {
 			Expect(result).To(BeEmpty())
 		})
 
-		It("should handle config with empty requests list", func() {
+		It("should apply config to all requests when requests list is empty", func() {
 			vfConfig := &configapi.VfConfig{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: "sriovnetwork.k8snetworkplumbingwg.io/v1alpha1",
@@ -570,7 +570,8 @@ var _ = Describe("getMapOfOpaqueDeviceConfigForDevice", func() {
 
 			result, err := getMapOfOpaqueDeviceConfigForDevice(decoder, configs)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(BeEmpty())
+			Expect(result).To(HaveKey(""))
+			Expect(result[""].Driver).To(Equal("vfio-pci"))
 		})
 
 		It("should handle multiple class and claim configs with different requests", func() {
