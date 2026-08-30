@@ -182,6 +182,21 @@ var _ = Describe("Types", func() {
 			Expect(plugins[0]).To(Equal(map[string]interface{}{"type": "bridge", "vlan": float64(200)}))
 			Expect(plugins[1]).To(Equal(map[string]interface{}{"type": "sriov", "vlan": float64(200)}))
 		})
+
+		It("leaves attributes on a non-sriov root plugin", func() {
+			vlan := 100
+			originalConfig := `{"type":"bridge","vlan":200,"name":"test-net"}`
+
+			result, err := draTypes.RemoveOwnedVFAttributesFromNetConf(originalConfig, &configapi.VFLinkConfig{
+				VLAN: &vlan,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			var config map[string]interface{}
+			Expect(json.Unmarshal([]byte(result), &config)).To(Succeed())
+			Expect(config).To(HaveKeyWithValue("type", "bridge"))
+			Expect(config).To(HaveKeyWithValue("vlan", BeNumerically("==", 200)))
+		})
 	})
 
 	Context("Checkpoint operations", func() {

@@ -185,6 +185,8 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 	if err != nil {
 		return err
 	}
+	// Reconcile durable host mutations before publishing devices. Continuing
+	// after an incomplete rollback could expose a device with stale state.
 	if err := deviceStateManager.ReconcilePendingPrepares(); err != nil {
 		return fmt.Errorf("unable to reconcile pending prepares: %w", err)
 	}

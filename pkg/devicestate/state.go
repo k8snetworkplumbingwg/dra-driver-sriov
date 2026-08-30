@@ -824,14 +824,14 @@ func (s *Manager) Unprepare(claimUID string, preparedDevices drasriovtypes.Prepa
 
 // unprepareDevices reverts the driver configuration for the prepared devices
 func (s *Manager) unprepareDevices(preparedDevices drasriovtypes.PreparedDevices) error {
-	return s.unprepareDevicesWithOwnership(preparedDevices, false)
+	return s.unprepareDevicesWithOwnership(preparedDevices)
 }
 
 func (s *Manager) unpreparePendingDevices(preparedDevices drasriovtypes.PreparedDevices) error {
-	return s.unprepareDevicesWithOwnership(preparedDevices, true)
+	return s.unprepareDevicesWithOwnership(preparedDevices)
 }
 
-func (s *Manager) unprepareDevicesWithOwnership(preparedDevices drasriovtypes.PreparedDevices, pending bool) error {
+func (s *Manager) unprepareDevicesWithOwnership(preparedDevices drasriovtypes.PreparedDevices) error {
 	logger := klog.FromContext(context.Background()).WithName("unprepareDevices")
 	var errs []error
 	for _, preparedDevice := range preparedDevices {
@@ -843,16 +843,15 @@ func (s *Manager) unprepareDevicesWithOwnership(preparedDevices drasriovtypes.Pr
 			logger.V(2).Info("Skipping prepared device with nil config during unprepare", "device", preparedDevice.PciAddress)
 			continue
 		}
-		// In STANDALONE mode we own VF link attributes and must reset them.
-		// In MULTUS mode sriov-cni owns VF configuration, so we skip resetting
-		// to avoid conflicting with CNI lifecycle.
-		if preparedDevice.NativeVFAttributesOwned || (!pending && s.isStandaloneMode() && preparedDevice.Config.VF != nil) {
+		// Ownership is recorded when the VF attributes are applied. Do not infer it
+		// from the current mode, which may have changed since prepare.
+		if preparedDevice.NativeVFAttributesOwned {
 			if err := resetVFAttributes(logger, preparedDevice); err != nil {
 				logger.Error(err, "Failed to reset native VF attributes", "device", preparedDevice.PciAddress)
 				errs = append(errs, err)
 			}
 		} else if preparedDevice.Config.VF != nil {
-			logger.V(2).Info("Skipping VF attribute reset in MULTUS mode", "device", preparedDevice.PciAddress)
+			logger.V(2).Info("Skipping VF attribute reset because native attributes are not owned", "device", preparedDevice.PciAddress)
 		}
 		// Restore original driver if a driver change was made
 		if preparedDevice.Config.Driver != "" {

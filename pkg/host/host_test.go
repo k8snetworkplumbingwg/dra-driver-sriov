@@ -1162,6 +1162,8 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 				}
 				err := hTest.ResetVF("eth0", testPtr(0), restore)
 				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("reset vlan"))
+				Expect(err.Error()).To(ContainSubstring("reset link state"))
 			})
 		})
 	})

@@ -453,24 +453,45 @@ var _ = Describe("VfConfig", func() {
 			})
 
 			It("should reject an out-of-range vlan", func() {
-				config := &VfConfig{Driver: "netdevice", NetAttachDefName: "net", VF: &VFLinkConfig{VLAN: testPtr(5000)}}
+				config := &VfConfig{
+					Driver:           "netdevice",
+					NetAttachDefName: "net",
+					VF: &VFLinkConfig{
+						VLAN:      testPtr(5000),
+						Qos:       testPtr(0),
+						VlanProto: testPtr(VlanProto8021q),
+					},
+				}
 				err := config.Validate()
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("vlan"))
+				Expect(err).To(MatchError("vlan 5000 out of range [0-4094]"))
 			})
 
 			It("should reject an out-of-range qos", func() {
-				config := &VfConfig{Driver: "netdevice", NetAttachDefName: "net", VF: &VFLinkConfig{Qos: testPtr(9)}}
+				config := &VfConfig{
+					Driver:           "netdevice",
+					NetAttachDefName: "net",
+					VF: &VFLinkConfig{
+						VLAN:      testPtr(100),
+						Qos:       testPtr(9),
+						VlanProto: testPtr(VlanProto8021q),
+					},
+				}
 				err := config.Validate()
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("qos"))
+				Expect(err).To(MatchError("qos 9 out of range [0-7]"))
 			})
 
 			It("should reject an invalid vlanProto", func() {
-				config := &VfConfig{Driver: "netdevice", NetAttachDefName: "net", VF: &VFLinkConfig{VlanProto: testPtr("802.1x")}}
+				config := &VfConfig{
+					Driver:           "netdevice",
+					NetAttachDefName: "net",
+					VF: &VFLinkConfig{
+						VLAN:      testPtr(100),
+						Qos:       testPtr(0),
+						VlanProto: testPtr("802.1x"),
+					},
+				}
 				err := config.Validate()
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("vlanProto"))
+				Expect(err).To(MatchError(`invalid vlanProto "802.1x", expected "802.1q" or "802.1ad"`))
 			})
 
 			It("should reject an invalid linkState", func() {
@@ -488,10 +509,16 @@ var _ = Describe("VfConfig", func() {
 			})
 
 			It("should reject a negative txRate", func() {
-				config := &VfConfig{Driver: "netdevice", NetAttachDefName: "net", VF: &VFLinkConfig{MaxTxRate: testPtr(-1)}}
+				config := &VfConfig{
+					Driver:           "netdevice",
+					NetAttachDefName: "net",
+					VF: &VFLinkConfig{
+						MinTxRate: testPtr(0),
+						MaxTxRate: testPtr(-1),
+					},
+				}
 				err := config.Validate()
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("maxTxRate"))
+				Expect(err).To(MatchError("maxTxRate -1 must not be negative"))
 			})
 		})
 

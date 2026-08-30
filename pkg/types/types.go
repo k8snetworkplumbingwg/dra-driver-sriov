@@ -16,6 +16,8 @@ import (
 	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 )
 
+const sriovPluginType = "sriov"
+
 // AllocatableDevices is a map of device pci address to dra device objects
 type AllocatableDevices map[string]resourceapi.Device
 
@@ -74,7 +76,9 @@ func RemoveOwnedVFAttributesFromNetConf(originalConfig string, vfConfig *configa
 		return "", fmt.Errorf("failed to unmarshal existing config: %w", err)
 	}
 
-	deleteOwnedVFNetConfKeys(rawConfig, keys)
+	if pluginType, ok := rawConfig["type"].(string); ok && pluginType == sriovPluginType {
+		deleteOwnedVFNetConfKeys(rawConfig, keys)
+	}
 	removeOwnedVFAttributesFromPlugins(rawConfig["plugins"], keys)
 	removeOwnedVFAttributesFromPlugins(rawConfig["delegate"], keys)
 
@@ -115,7 +119,7 @@ func removeOwnedVFAttributesFromPlugins(value interface{}, keys map[string]struc
 			removeOwnedVFAttributesFromPlugins(item, keys)
 		}
 	case map[string]interface{}:
-		if pluginType, ok := typed["type"].(string); ok && pluginType == "sriov" {
+		if pluginType, ok := typed["type"].(string); ok && pluginType == sriovPluginType {
 			deleteOwnedVFNetConfKeys(typed, keys)
 		}
 		removeOwnedVFAttributesFromPlugins(typed["plugins"], keys)

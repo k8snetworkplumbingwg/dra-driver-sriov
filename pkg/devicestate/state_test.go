@@ -335,7 +335,8 @@ var _ = Describe("Manager", Serial, func() {
 					Config: &configapi.VfConfig{
 						VF: &configapi.VFLinkConfig{Trust: ptr.To(true)},
 					},
-					OriginalVFConfig: &configapi.VFLinkConfig{Trust: ptr.To(false)},
+					NativeVFAttributesOwned: true,
+					OriginalVFConfig:        &configapi.VFLinkConfig{Trust: ptr.To(false)},
 					DeviceAttributes: map[string]resourceapi.DeviceAttribute{
 						consts.AttributePfPciAddress: {StringValue: ptr.To("0000:01:00.0")},
 						consts.AttributeVFID:         {IntValue: ptr.To(int64(3))},
@@ -358,7 +359,8 @@ var _ = Describe("Manager", Serial, func() {
 					Config: &configapi.VfConfig{
 						VF: &configapi.VFLinkConfig{Trust: ptr.To(true)},
 					},
-					OriginalVFConfig: &configapi.VFLinkConfig{Trust: ptr.To(false)},
+					NativeVFAttributesOwned: true,
+					OriginalVFConfig:        &configapi.VFLinkConfig{Trust: ptr.To(false)},
 					DeviceAttributes: map[string]resourceapi.DeviceAttribute{
 						consts.AttributePfPciAddress: {StringValue: ptr.To("0000:01:00.0")},
 						consts.AttributeVFID:         {IntValue: ptr.To(int64(3))},
@@ -390,6 +392,21 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			m := &Manager{configurationMode: string(consts.ConfigurationModeMultus)}
+			err := m.unprepareDevices(preparedDevices)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should not infer VF ownership from the current STANDALONE mode", func() {
+			preparedDevices := drasriovtypes.PreparedDevices{
+				&drasriovtypes.PreparedDevice{
+					PciAddress: "0000:01:00.1",
+					Config: &configapi.VfConfig{
+						VF: &configapi.VFLinkConfig{Trust: ptr.To(true)},
+					},
+				},
+			}
+
+			m := &Manager{configurationMode: string(consts.ConfigurationModeStandalone)}
 			err := m.unprepareDevices(preparedDevices)
 			Expect(err).NotTo(HaveOccurred())
 		})
