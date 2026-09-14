@@ -5,6 +5,7 @@ import (
 
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	resourceapi "k8s.io/api/resource/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 
 	drasriovtypes "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
@@ -29,6 +30,17 @@ type DeviceInfoStore interface {
 	CleanDeviceInfoForDP(resourceName, deviceID string) error
 	// SaveDeviceInfoForDP persists device-info for a specific DP resource/device tuple.
 	SaveDeviceInfoForDP(resourceName, deviceID string, devInfo *nettypes.DeviceInfo) error
+}
+
+// PrepareTransactionStore durably tracks cleanup metadata while a claim is
+// being prepared. Implementations must persist BeginPrepare before host
+// mutation and remove it only after rollback or committed prepare state is
+// durable.
+type PrepareTransactionStore interface {
+	BeginPrepare(claimID k8stypes.UID, preparedDevice *drasriovtypes.PreparedDevice) error
+	AbortPendingPrepareDevice(claimID k8stypes.UID, pciAddress string) error
+	AbortPendingPrepare(claimID k8stypes.UID) error
+	PendingPrepares() map[k8stypes.UID]drasriovtypes.PreparedDevices
 }
 
 var _ DeviceState = (*Manager)(nil)
