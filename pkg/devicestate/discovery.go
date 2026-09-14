@@ -151,6 +151,15 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			// Check RDMA capability for this VF
 			rdmaCapable := host.GetHelpers().VerifyRDMACapability(vfInfo.PciAddress)
 
+			// vDPA management type ("vhost"/"virtio"), empty when the VF exposes no vDPA device.
+			vdpaType := host.GetHelpers().GetVdpaType(vfInfo.PciAddress)
+
+			// InfiniBand partition key, only applicable when the PF is an IB link.
+			pKey := ""
+			if pfInfo.LinkType == consts.LinkTypeInfiniband {
+				pKey = host.GetHelpers().GetIBPKey(vfInfo.PciAddress)
+			}
+
 			logger.V(2).Info("Adding VF device to resource list",
 				"deviceName", deviceName,
 				"vfAddress", vfInfo.PciAddress,
@@ -158,7 +167,9 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 				"vfDeviceID", vfInfo.DeviceID,
 				"pfDeviceID", pfInfo.DeviceID,
 				"pf", pfInfo.NetName,
-				"rdmaCapable", rdmaCapable)
+				"rdmaCapable", rdmaCapable,
+				"vdpaType", vdpaType,
+				"pKey", pKey)
 
 			// Build device attributes
 			attributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
@@ -208,6 +219,20 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 				consts.AttributeNUMANode: {
 					IntValue: numaNodeIntPtr,
 				},
+			}
+
+			// Selector-parity attributes: only published when the hardware exposes
+			// the corresponding capability, so CEL selectors can distinguish devices
+			// that have it from those that do not.
+			if vdpaType != "" {
+				attributes[consts.AttributeVdpaType] = resourceapi.DeviceAttribute{
+					StringValue: ptr.To(vdpaType),
+				}
+			}
+			if pKey != "" {
+				attributes[consts.AttributePKey] = resourceapi.DeviceAttribute{
+					StringValue: ptr.To(pKey),
+				}
 			}
 
 			resourceList[deviceName] = resourceapi.Device{
