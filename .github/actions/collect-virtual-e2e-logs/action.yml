@@ -1,0 +1,50 @@
+name: Collect virtual E2E logs
+description: Collect cluster and VM diagnostics after a failed virtual e2e run
+
+inputs:
+  test-report-path:
+    description: Path under the repo root for cluster-info dumps
+    required: true
+  sriov-vms:
+    description: Comma-separated kcli VM names to inspect for SR-IOV setup
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Collect logs on failure
+      shell: bash
+      run: |
+        source hack/common.sh
+        KCONF=/root/.kcli/clusters/dra/auth/kubeconfig
+        TEST_REPORT_PATH="${{ inputs.test-report-path }}"
+        mkdir -p "${root}/${TEST_REPORT_PATH}/cluster-info"
+        sudo kubectl --kubeconfig=$KCONF cluster-info dump \
+          --namespaces "${NAMESPACE},${MULTUS_NAMESPACE}" \
+          --output-directory "${root}/${TEST_REPORT_PATH}/cluster-info" || true
+        echo "=== Node status ==="
+        sudo kubectl --kubeconfig=$KCONF get nodes -o wide || true
+        echo "=== All pods ==="
+        sudo kubectl --kubeconfig=$KCONF get pods -A || true
+        echo "=== DRA driver logs ==="
+        sudo kubectl --kubeconfig=$KCONF -n dra-driver-sriov logs -l app.kubernetes.io/name=dra-driver-sriov-chart --tail=200 || true
+        echo "=== SriovResourcePolicy ==="
+        sudo kubectl --kubeconfig=$KCONF -n dra-driver-sriov get sriovresourcepolicies -o yaml || true
+        echo "=== ResourceSlices ==="
+        sudo kubectl --kubeconfig=$KCONF get resourceslices -o yaml || true
+        echo "=== Events ==="
+        sudo kubectl --kubeconfig=$KCONF get events -A --sort-by=.lastTimestamp || true
+        IFS=',' read -ra vms <<< "${{ inputs.sriov-vms }}"
+        for vm in "${vms[@]}"; do
+          vm="${vm#"${vm%%[![:space:]]*}"}"
+          vm="${vm%"${vm##*[![:space:]]}"}"
+          [[ -n "$vm" ]] || continue
+          echo "=== VF creation service status (${vm}) ==="
+          sudo kcli ssh "${vm}" "systemctl status create-sriov-vfs.service; journalctl -u create-sriov-vfs.service --no-pager" || true
+          echo "=== PCI devices (${vm}) ==="
+          sudo kcli ssh "${vm}" "lspci | grep -i ethernet; ls /sys/bus/pci/devices/*/sriov_numvfs 2>/dev/null | xargs -I{} sh -c 'echo {}:; cat {}'" || true
+        done
+        echo "=== VM list ==="
+        sudo kcli list vm || true
+        echo "=== libvirt domains ==="
+        sudo virsh list --all || true

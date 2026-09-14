@@ -1,0 +1,20 @@
+name: Upload e2e reports
+description: Upload virtual e2e test report artifacts on failure
+
+inputs:
+  artifact-name:
+    description: Artifact name for upload-artifact
+    required: true
+  report-path:
+    description: Path under the repo root to upload
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Upload test reports on failure
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.report-path }}
+        if-no-files-found: ignore

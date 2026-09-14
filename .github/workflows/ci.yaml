@@ -125,15 +125,3 @@ jobs:
         run: |
           cd deployments/container
           make centos9
-
-  functional-tests:
-    name: Functional Tests
-    runs-on: [sriov]
-    needs: [build-container, test, lint, generate-and-format]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-      
-      - name: Create cluster
-        run: |
-          make e2e-tests

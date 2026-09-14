@@ -1,0 +1,59 @@
+name: Virtual E2E (Single Node)
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: virtual-e2e-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.26.x"
+
+jobs:
+  virtual-e2e:
+    name: Virtual E2E (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [standalone, multus]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup virtual E2E host
+        uses: ./.github/actions/setup-virtual-e2e-host
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Deploy single-node virtual cluster and DRA driver
+        uses: ./.github/actions/deploy-virtual-cluster
+        with:
+          driver-mode: ${{ matrix.mode }}
+          single-node: "true"
+
+      - name: Run workload e2e tests
+        uses: ./.github/actions/run-e2e-workloads
+
+      - name: Collect logs on failure
+        if: failure()
+        uses: ./.github/actions/collect-virtual-e2e-logs
+        with:
+          test-report-path: test-reports/${{ matrix.mode }}
+          sriov-vms: dra-ctlplane-0
+
+      - name: Upload test reports on failure
+        if: failure()
+        uses: ./.github/actions/upload-e2e-reports
+        with:
+          artifact-name: test-reports-${{ matrix.mode }}
+          report-path: test-reports/${{ matrix.mode }}/

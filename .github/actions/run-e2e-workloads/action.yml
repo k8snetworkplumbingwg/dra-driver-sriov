@@ -1,0 +1,22 @@
+name: Run e2e workloads
+description: Run the workload e2e test suite against the deployed virtual cluster
+
+inputs:
+  e2e-label-filter:
+    description: Optional Ginkgo label filter passed to make e2e-workloads
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Run workload e2e tests
+      shell: bash
+      run: |
+        KCONF=/root/.kcli/clusters/dra/auth/kubeconfig
+        make_args=(e2e-workloads)
+        if [[ -n "${{ inputs.e2e-label-filter }}" ]]; then
+          make_args+=(E2E_LABEL_FILTER='${{ inputs.e2e-label-filter }}')
+        fi
+        sudo -E env "PATH=$PATH" "HOME=/root" "KUBECONFIG=$KCONF" \
+          make "${make_args[@]}"

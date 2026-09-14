@@ -13,7 +13,7 @@ This scenario demonstrates:
 
 ### 1. SriovResourcePolicy
 The `SriovResourcePolicy` resource defines which SR-IOV devices should be advertised as allocatable resources:
-- **nodeSelector**: Targets specific nodes (`dra-ctlplane-0.dra.lab` in this example)
+- **nodeSelector**: Targets SR-IOV-capable nodes (`feature.node.kubernetes.io/network-sriov.capable=true`)
 - **configs**: Defines multiple resource configurations:
   - `eth0_resource`: Filters devices connected to eth0 Physical Function
   - `eth1_resource`: Filters devices connected to eth1 Physical Function
@@ -39,14 +39,22 @@ The `SriovResourcePolicy` resource defines which SR-IOV devices should be advert
 
 ## Usage
 
-1. Apply the resource policy to advertise SR-IOV resources:
+1. Remove any catch-all policy that would otherwise claim the same VFs first.
+   Policy evaluation is first-match (policies sorted by name), so something like
+   `all-devices` prevents `eth0_resource` / `eth1_resource` attributes from being stamped:
+
+   ```bash
+   kubectl -n dra-driver-sriov delete sriovresourcepolicy all-devices --ignore-not-found
+   ```
+
+2. Apply the resource policy to advertise SR-IOV resources:
    ```bash
    kubectl apply -f resource-policy.yaml
    ```
 
-2. The DRA driver will discover SR-IOV devices and advertise only those matching the policy criteria
-3. Pods can then claim resources using the advertised resource names
-4. The pod will be scheduled on nodes where matching resources are available
+3. The DRA driver will discover SR-IOV devices and advertise only those matching the policy criteria
+4. Pods can then claim resources using the advertised resource names
+5. The pod will be scheduled on nodes where matching resources are available
 
 **Note**: Without a matching `SriovResourcePolicy`, no devices will be advertised (opt-in model).
 

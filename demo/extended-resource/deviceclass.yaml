@@ -32,24 +32,19 @@ metadata:
   namespace: dra-driver-sriov
 spec:
   configs:
+  # Filter by PF netdev name so the demo works across PCI layouts (e.g. kcli VMs).
   - deviceAttributesSelector:
       matchLabels:
         pool: port1-vfs
     resourceFilters:
-    - pciAddresses:
-      - "0000:08:00.2"
-      - "0000:08:00.3"
-      - "0000:08:00.4"
-      - "0000:08:00.5"
+    - vendors: ["8086"]
+      pfNames: ["eth0"]
   - deviceAttributesSelector:
       matchLabels:
         pool: port2-vfs
     resourceFilters:
-    - pciAddresses:
-      - "0000:08:02.2"
-      - "0000:08:02.3"
-      - "0000:08:02.4"
-      - "0000:08:02.5"
+    - vendors: ["8086"]
+      pfNames: ["eth1"]
 ---
 # DeviceClass for port 1 — extended resource: example.com/sriov-port1
 apiVersion: resource.k8s.io/v1

@@ -1,0 +1,86 @@
+name: Setup virtual E2E host
+description: Prepare a GitHub Actions runner for kcli-based virtual cluster e2e tests
+
+inputs:
+  go-version:
+    description: Go version to install
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Free disk space
+      shell: bash
+      run: |
+        echo "## Disk space before cleanup"
+        df -h /
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache
+        sudo rm -rf /usr/local/share/boost
+        sudo docker image prune --all --force
+        echo "## Disk space after cleanup"
+        df -h /
+
+    - name: Enable KVM
+      shell: bash
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+        ls -la /dev/kvm
+
+    - name: Install virtualization stack
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          qemu-kvm qemu-system-x86 qemu-utils \
+          libvirt-daemon-system libvirt-clients \
+          virtinst bridge-utils \
+          libguestfs-tools genisoimage \
+          dnsmasq-base \
+          python3-pip
+        sudo usermod -aG kvm,libvirt $USER
+        sudo systemctl enable --now libvirtd
+        sudo systemctl start virtlogd
+        # Create default libvirt storage pool
+        sudo mkdir -p /var/lib/libvirt/images
+        sudo virsh pool-define-as default dir --target /var/lib/libvirt/images
+        sudo virsh pool-build default
+        sudo virsh pool-start default
+        sudo virsh pool-autostart default
+        # Generate SSH key pair for kcli VM access (kcli requires ~/.ssh/id_rsa)
+        sudo mkdir -p /root/.ssh
+        sudo ssh-keygen -t rsa -b 2048 -f /root/.ssh/id_rsa -N ""
+        sudo chmod 700 /root/.ssh
+        sudo chmod 600 /root/.ssh/id_rsa
+        sudo ls -la /root/.ssh/
+
+    - name: Install kcli
+      shell: bash
+      run: |
+        sudo pip3 install "kcli>=99.0,<100"
+        kcli version
+
+    - name: Install podman
+      shell: bash
+      run: |
+        sudo apt-get install -y podman
+        podman version
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version: ${{ inputs.go-version }}
+
+    - name: Cache Go modules
+      uses: actions/cache@v6
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-

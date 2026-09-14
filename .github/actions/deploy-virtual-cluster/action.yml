@@ -1,0 +1,25 @@
+name: Deploy virtual cluster
+description: Deploy a kcli virtual Kubernetes cluster with the DRA SR-IOV driver
+
+inputs:
+  driver-mode:
+    description: DRA driver mode (standalone or multus)
+    required: true
+  single-node:
+    description: Deploy a single-node cluster when true
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Deploy virtual cluster and DRA driver
+      shell: bash
+      run: |
+        deploy_args=()
+        if [[ "${{ inputs.single-node }}" == "true" ]]; then
+          deploy_args+=(--single-node)
+        fi
+        sudo -E env "PATH=$PATH" "HOME=/root" \
+          "DRA_DRIVER_MODE=$(echo '${{ inputs.driver-mode }}' | tr '[:lower:]' '[:upper:]')" \
+          bash hack/deploy-virtual-k8s-cluster.sh "${deploy_args[@]}"

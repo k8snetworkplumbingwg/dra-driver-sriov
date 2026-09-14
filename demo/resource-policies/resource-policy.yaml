@@ -30,15 +30,15 @@ metadata:
   name: example-resource-policy
   namespace: dra-driver-sriov
 spec:
-  # NodeSelector to match specific nodes (uses v1.NodeSelector)
-  # Omit or leave empty to match all nodes
+  # NodeSelector to match SR-IOV-capable nodes (uses v1.NodeSelector).
+  # Omit or leave empty to match all nodes.
   nodeSelector:
     nodeSelectorTerms:
     - matchExpressions:
-      - key: kubernetes.io/hostname
+      - key: feature.node.kubernetes.io/network-sriov.capable
         operator: In
         values:
-        - dra-ctlplane-0.dra.lab
+        - "true"
   # Configs define multiple resource configurations
   configs:
   - # First config for eth0 device
