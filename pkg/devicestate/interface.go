@@ -14,8 +14,11 @@ import (
 
 // DeviceState defines the minimal interface used by the controller for device state operations.
 type DeviceState interface {
-	// GetAllocatableDevices returns the full discovered device set.
+	// GetAllocatableDevices returns PF->VF discovered allocatable devices.
 	GetAllocatableDevices() drasriovtypes.AllocatableDevices
+	// GetPolicyCandidateDevices returns the candidate device set for policy matching.
+	// When includePciAddressInventory is true, devices from the one-time PCI inventory are included.
+	GetPolicyCandidateDevices(includePciAddressInventory bool) drasriovtypes.AllocatableDevices
 	// UpdatePolicyDevices updates the set of advertised devices and their policy-applied attributes.
 	// Keys in policyDevices are device names matched by policies (these will be advertised).
 	// Values are additional attributes from resolved DeviceAttributes objects.

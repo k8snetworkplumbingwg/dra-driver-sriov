@@ -53,6 +53,9 @@ spec:
             memory: 10Mi
         securityContext:
           privileged: true
+        env:
+        - name: CNI_BIN_DIR
+          value: {{ printf "/host%s" .Values.cniBinPath | quote }}
         terminationMessagePath: /dev/termination-log
         terminationMessagePolicy: File
         volumeMounts:
@@ -108,6 +111,8 @@ spec:
           value: {{ .Values.kubeletPlugin.configurationMode | quote }}
         - name: ENABLE_DEVICE_METADATA
           value: {{ .Values.kubeletPlugin.enableDeviceMetadata | quote }}
+        - name: CNI_BIN_PATH
+          value: {{ .Values.cniBinPath | quote }}
         - name: NODE_NAME
           valueFrom:
             fieldRef:
@@ -164,14 +169,16 @@ spec:
         - name: cni-results
           mountPath: /var/lib/cni/
         - name: cni-bin
-          mountPath: /opt/cni/bin
+          mountPath: {{ .Values.cniBinPath | quote }}
       volumes:
       - name: cni-results
         hostPath:
           path: /var/lib/cni/
+          type: DirectoryOrCreate
       - name: netns
         hostPath:
           path: /var/run/netns
+          type: DirectoryOrCreate
       {{- if ne .Values.kubeletPlugin.configurationMode "MULTUS" }}
       - name: cri-socket
         hostPath:
@@ -181,12 +188,15 @@ spec:
       - name: plugins-registry
         hostPath:
           path: {{ .Values.kubeletPlugin.kubeletRegistrarDirectoryPath | quote }}
+          type: DirectoryOrCreate
       - name: plugins
         hostPath:
           path: {{ .Values.kubeletPlugin.kubeletPluginsDirectoryPath | quote }}
+          type: DirectoryOrCreate
       - name: cdi
         hostPath:
           path: /var/run/cdi
+          type: DirectoryOrCreate
       {{- if eq .Values.kubeletPlugin.configurationMode "MULTUS" }}
       - name: cni-devinfo
         hostPath:
