@@ -2,7 +2,10 @@ package nri
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,6 +37,41 @@ import (
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/podmanager"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
+
+// checkpointRefuses wraps the pod manager and refuses to record the devices its
+// predicate names, as a checkpoint write that failed for them would.
+type checkpointRefuses struct {
+	deviceStore
+	refuse func(*types.PreparedDevice) bool
+}
+
+func (s checkpointRefuses) UpdatePreparedDeviceNetworkData(device *types.PreparedDevice, networkData *resourceapi.NetworkDeviceData, seq uint64) error {
+	if s.refuse(device) {
+		return errors.New("checkpoint write failed")
+	}
+	return s.deviceStore.UpdatePreparedDeviceNetworkData(device, networkData, seq)
+}
+
+// deviceNamed refuses one device by name.
+func deviceNamed(name string) func(*types.PreparedDevice) bool {
+	return func(device *types.PreparedDevice) bool { return device.Device.DeviceName == name }
+}
+
+// cancelsOnFirstWrite wraps the pod manager and cancels while recording the
+// first device, as a shutdown arriving mid-write would.
+type cancelsOnFirstWrite struct {
+	deviceStore
+	cancel context.CancelFunc
+	writes *int
+}
+
+func (s cancelsOnFirstWrite) UpdatePreparedDeviceNetworkData(device *types.PreparedDevice, networkData *resourceapi.NetworkDeviceData, seq uint64) error {
+	*s.writes++
+	if *s.writes == 1 {
+		s.cancel()
+	}
+	return s.deviceStore.UpdatePreparedDeviceNetworkData(device, networkData, seq)
+}
 
 type fakeMetadataUpdater struct {
 	callCount   int
@@ -570,8 +608,8 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 			statusBackoff:               twoStepBackoff,
 			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
 		}
-		older := types.NetworkDataChanStructList{{PreparedDevice: prepared[0], NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.10/24"}}}}
-		newer := types.NetworkDataChanStructList{{PreparedDevice: prepared[0], NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.11/24"}}}}
+		older := types.NetworkDataChanStructList{{PreparedDevice: prepared[0], NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.10/24"}}, Seq: 1}}
+		newer := types.NetworkDataChanStructList{{PreparedDevice: prepared[0], NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.11/24"}}, Seq: 2}}
 		plugin.networkDeviceDataUpdateChan <- older
 		plugin.networkDeviceDataUpdateChan <- newer
 		plugin.startRunner(context.Background())
@@ -585,6 +623,359 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 		stored, found := pm.Get(podUID, claimUID)
 		Expect(found).To(BeTrue())
 		Expect(stored[0].NetworkDeviceData.IPs).To(Equal([]string{"10.10.0.11/24"}))
+	})
+
+	It("keeps the newer CNI result when a requeued update carries the same network data", func() {
+		// Two observations of one device can report the same interface, address
+		// and MAC while their CNI results differ, in the DNS servers or the
+		// routes for instance. The network data alone cannot tell them apart, so
+		// an older update must not be able to put its result back on the claim.
+		sameData := func() *resourceapi.NetworkDeviceData {
+			return &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.10/24"}}
+		}
+		fake := k8sfake.NewSimpleClientset(newClaim())
+		var updateCalls atomic.Int32
+		failingUpdates(fake, 2, &updateCalls)
+		plugin := &Plugin{
+			podManager:                  pm,
+			k8sClient:                   flags.ClientSets{Interface: fake},
+			statusBackoff:               twoStepBackoff,
+			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
+		}
+		dnsOf := func() string {
+			got, err := plugin.k8sClient.ResourceV1().ResourceClaims("default").Get(context.Background(), "claim-a", metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			if got.Status.Devices[0].Data == nil {
+				return ""
+			}
+			var payload struct {
+				CNIResult map[string]any `json:"cniResult"`
+			}
+			Expect(json.Unmarshal(got.Status.Devices[0].Data.Raw, &payload)).To(Succeed())
+			dns, _ := payload.CNIResult["dns"].(string)
+			return dns
+		}
+
+		older := types.NetworkDataChanStructList{{PreparedDevice: prepared[0], NetworkDeviceData: sameData(), CNIResult: map[string]any{"dns": "192.0.2.53"}, Seq: 1}}
+		newer := types.NetworkDataChanStructList{{PreparedDevice: prepared[0], NetworkDeviceData: sameData(), CNIResult: map[string]any{"dns": "192.0.2.54"}, Seq: 2}}
+		plugin.networkDeviceDataUpdateChan <- older
+		plugin.networkDeviceDataUpdateChan <- newer
+		plugin.startRunner(context.Background())
+		defer plugin.stopRunner()
+
+		Eventually(dnsOf, 5*time.Second).Should(Equal("192.0.2.54"))
+		Eventually(plugin.networkDeviceDataUpdateChan, time.Second).Should(BeEmpty())
+		Consistently(dnsOf, 300*time.Millisecond).Should(Equal("192.0.2.54"), "the requeued update must not put the older CNI result back")
+	})
+
+	It("applies a requeued update whose checkpoint had failed", func() {
+		// A checkpoint write that fails leaves the device on its previous network
+		// data, because the pod manager rolls its change back, while the update
+		// travels on with the rest of its claim when a sibling's status write
+		// fails. The store then differs from what the update asks for without any
+		// later observation of the device, and the update is still owed.
+		fake := k8sfake.NewSimpleClientset(newClaim())
+		plugin := &Plugin{
+			podManager:                  pm,
+			k8sClient:                   flags.ClientSets{Interface: fake},
+			statusBackoff:               twoStepBackoff,
+			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
+		}
+		Expect(prepared[0].NetworkDeviceData).To(BeNil(), "the rolled back device keeps the network data it had")
+
+		requeued := types.NetworkDataChanStructList{{
+			PreparedDevice:    prepared[0],
+			NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.10/24"}},
+			Seq:               7,
+			Requeues:          1,
+		}}
+		plugin.updateNetworkDeviceData(context.Background(), requeued)
+
+		Expect(ipsOf(plugin)).To(Equal([]string{"10.10.0.10/24"}), "a requeued update must not be dropped as superseded when nothing newer was recorded")
+	})
+
+	It("makes every concurrent stop wait for the runner to return", func() {
+		// Stop is exported and documented as doing nothing after the first call,
+		// so a second caller must not be told the runner is done while it is
+		// still writing an update.
+		fake := k8sfake.NewSimpleClientset(newClaim())
+		started := make(chan struct{})
+		var once sync.Once
+		fake.PrependReactor("update", "resourceclaims", func(action k8stesting.Action) (bool, runtime.Object, error) {
+			if action.GetSubresource() != "status" {
+				return false, nil, nil
+			}
+			once.Do(func() { close(started) })
+			time.Sleep(150 * time.Millisecond)
+			return false, nil, nil
+		})
+		plugin := &Plugin{
+			podManager:                  pm,
+			k8sClient:                   flags.ClientSets{Interface: fake},
+			statusBackoff:               twoStepBackoff,
+			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
+		}
+		plugin.networkDeviceDataUpdateChan <- types.NetworkDataChanStructList{{
+			PreparedDevice:    prepared[0],
+			NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.10/24"}},
+			Seq:               1,
+		}}
+		plugin.startRunner(context.Background())
+		plugin.runnerMu.Lock()
+		done := plugin.runnerDone
+		plugin.runnerMu.Unlock()
+		Eventually(started, time.Second).Should(BeClosed())
+
+		stopped := make(chan bool, 2)
+		var wg sync.WaitGroup
+		for range 2 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer GinkgoRecover()
+				plugin.stopRunner()
+				select {
+				case <-done:
+					stopped <- true
+				default:
+					stopped <- false
+				}
+			}()
+		}
+		wg.Wait()
+
+		Expect(<-stopped).To(BeTrue(), "stopRunner returned before the runner had stopped")
+		Expect(<-stopped).To(BeTrue(), "stopRunner returned before the runner had stopped")
+	})
+
+	It("requeues the updates of a claim whose checkpoint could not be written", func() {
+		// Nothing was recorded, so there is no claim status to send either. The
+		// data is still owed, and ending the round here is the only path that
+		// loses it outright.
+		fake := k8sfake.NewSimpleClientset(newClaim())
+		var updateCalls atomic.Int32
+		fake.PrependReactor("update", "resourceclaims", func(action k8stesting.Action) (bool, runtime.Object, error) {
+			if action.GetSubresource() == "status" {
+				updateCalls.Add(1)
+			}
+			return false, nil, nil
+		})
+		plugin := &Plugin{
+			podManager:                  checkpointRefuses{deviceStore: pm, refuse: deviceNamed("dev-a")},
+			k8sClient:                   flags.ClientSets{Interface: fake},
+			statusBackoff:               twoStepBackoff,
+			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
+		}
+
+		update := types.NetworkDataChanStructList{{
+			PreparedDevice:    prepared[0],
+			NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.10/24"}},
+			Seq:               1,
+		}}
+		plugin.updateNetworkDeviceData(context.Background(), update)
+
+		Expect(updateCalls.Load()).To(BeZero(), "there is nothing to put on the claim when nothing was recorded")
+		Expect(update[0].Requeues).To(Equal(1), "an update that was never recorded is still owed")
+		Expect(plugin.networkDeviceDataUpdateChan).To(Receive(Equal(update)), "the update must go back on the queue")
+	})
+
+	It("requeues the update the checkpoint refused while the rest of the claim goes out", func() {
+		// One device's data failing to reach the checkpoint says nothing about
+		// the others in the claim, whose status write still goes out. The one
+		// left out of it is owed a retry all the same.
+		claim := newClaim()
+		claim.Status.Allocation.Devices.Results = append(claim.Status.Allocation.Devices.Results,
+			resourceapi.DeviceRequestAllocationResult{Request: "req-b", Driver: consts.DriverName, Pool: "pool-a", Device: "dev-b"})
+		fake := k8sfake.NewSimpleClientset(claim)
+		plugin := &Plugin{
+			podManager:                  checkpointRefuses{deviceStore: pm, refuse: deviceNamed("dev-a")},
+			k8sClient:                   flags.ClientSets{Interface: fake},
+			statusBackoff:               twoStepBackoff,
+			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
+		}
+		deviceB := &types.PreparedDevice{
+			ClaimNamespacedName: prepared[0].ClaimNamespacedName,
+			Device:              drapbv1.Device{PoolName: "pool-a", DeviceName: "dev-b"},
+			PodUID:              string(podUID),
+		}
+		Expect(pm.Set(podUID, claimUID, types.PreparedDevices{prepared[0], deviceB})).To(Succeed())
+		refused := &types.NetworkDataChanStruct{
+			PreparedDevice:    prepared[0],
+			NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.10/24"}},
+			Seq:               1,
+		}
+		recorded := &types.NetworkDataChanStruct{
+			PreparedDevice:    deviceB,
+			NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net2", IPs: []string{"10.10.0.11/24"}},
+			Seq:               2,
+		}
+		plugin.updateNetworkDeviceData(context.Background(), types.NetworkDataChanStructList{refused, recorded})
+
+		got, err := fake.ResourceV1().ResourceClaims("default").Get(context.Background(), "claim-a", metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.Status.Devices).To(HaveLen(2), "the device that was recorded reaches the claim")
+		stored, found := pm.Get(podUID, claimUID)
+		Expect(found).To(BeTrue())
+		Expect(stored[1].NetworkDeviceData).NotTo(BeNil(), "the recorded device is in the store as well as on the claim")
+		Expect(stored[0].NetworkDeviceData).To(BeNil(), "the refused device is not")
+		Expect(refused.Requeues).To(Equal(1), "the device the checkpoint refused is still owed")
+		Expect(recorded.Requeues).To(BeZero(), "the device already on the claim must not be sent again")
+		Expect(plugin.networkDeviceDataUpdateChan).To(Receive(Equal(types.NetworkDataChanStructList{refused})))
+	})
+
+	It("does not write the checkpoint again when only the claim update is retried", func() {
+		// The first round records the device and the status write fails. By the
+		// retry the API is back but the disk is not, and repeating a write that
+		// already happened must not stop the update reaching the API.
+		fake := k8sfake.NewSimpleClientset(newClaim())
+		var updateCalls atomic.Int32
+		failingUpdates(fake, 2, &updateCalls)
+		diskDown := false
+		plugin := &Plugin{
+			podManager:                  checkpointRefuses{deviceStore: pm, refuse: func(*types.PreparedDevice) bool { return diskDown }},
+			k8sClient:                   flags.ClientSets{Interface: fake},
+			statusBackoff:               twoStepBackoff,
+			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
+		}
+		update := types.NetworkDataChanStructList{{
+			PreparedDevice:    prepared[0],
+			NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.10/24"}},
+			Seq:               1,
+		}}
+		plugin.updateNetworkDeviceData(context.Background(), update)
+		Expect(update[0].Requeues).To(Equal(1), "the status write fails, so the update comes back")
+		Expect(plugin.networkDeviceDataUpdateChan).To(Receive())
+
+		diskDown = true
+		plugin.updateNetworkDeviceData(context.Background(), update)
+		Expect(ipsOf(plugin)).To(Equal([]string{"10.10.0.10/24"}), "the device was already recorded, so the retry only owes the claim update")
+	})
+
+	It("keeps a device's own checkpoint owed when another device's claim update fails for good", func() {
+		// A rejected status write says nothing about the data a sibling still
+		// has to get onto the disk.
+		claim := newClaim()
+		claim.Status.Allocation.Devices.Results = append(claim.Status.Allocation.Devices.Results,
+			resourceapi.DeviceRequestAllocationResult{Request: "req-b", Driver: consts.DriverName, Pool: "pool-a", Device: "dev-b"})
+		fake := k8sfake.NewSimpleClientset(claim)
+		fake.PrependReactor("update", "resourceclaims", func(action k8stesting.Action) (bool, runtime.Object, error) {
+			if action.GetSubresource() != "status" {
+				return false, nil, nil
+			}
+			return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: "resource.k8s.io", Resource: "resourceclaims"}, "claim-a", errors.New("nope"))
+		})
+		deviceB := &types.PreparedDevice{
+			ClaimNamespacedName: prepared[0].ClaimNamespacedName,
+			Device:              drapbv1.Device{PoolName: "pool-a", DeviceName: "dev-b"},
+			PodUID:              string(podUID),
+		}
+		Expect(pm.Set(podUID, claimUID, types.PreparedDevices{prepared[0], deviceB})).To(Succeed())
+		plugin := &Plugin{
+			podManager:                  checkpointRefuses{deviceStore: pm, refuse: deviceNamed("dev-a")},
+			k8sClient:                   flags.ClientSets{Interface: fake},
+			statusBackoff:               twoStepBackoff,
+			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
+		}
+		refused := &types.NetworkDataChanStruct{
+			PreparedDevice:    prepared[0],
+			NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.10/24"}},
+			Seq:               1,
+		}
+		recorded := &types.NetworkDataChanStruct{
+			PreparedDevice:    deviceB,
+			NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net2", IPs: []string{"10.10.0.11/24"}},
+			Seq:               2,
+		}
+		plugin.updateNetworkDeviceData(context.Background(), types.NetworkDataChanStructList{refused, recorded})
+
+		Expect(refused.Requeues).To(Equal(1), "the claim rejecting the write does not settle what the disk still owes")
+		Expect(plugin.networkDeviceDataUpdateChan).To(Receive(Equal(types.NetworkDataChanStructList{refused})))
+	})
+
+	It("stops before the next device of a claim once the context is done", func() {
+		// Cancelling while one device is being recorded must not start the next.
+		ctx, cancel := context.WithCancel(context.Background())
+		DeferCleanup(cancel)
+		writes := 0
+		deviceB := &types.PreparedDevice{
+			ClaimNamespacedName: prepared[0].ClaimNamespacedName,
+			Device:              drapbv1.Device{PoolName: "pool-a", DeviceName: "dev-b"},
+			PodUID:              string(podUID),
+		}
+		Expect(pm.Set(podUID, claimUID, types.PreparedDevices{prepared[0], deviceB})).To(Succeed())
+		plugin := &Plugin{
+			podManager:                  cancelsOnFirstWrite{deviceStore: pm, cancel: cancel, writes: &writes},
+			k8sClient:                   flags.ClientSets{Interface: k8sfake.NewSimpleClientset(newClaim())},
+			statusBackoff:               twoStepBackoff,
+			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
+		}
+		plugin.updateNetworkDeviceData(ctx, types.NetworkDataChanStructList{
+			{PreparedDevice: prepared[0], NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1"}, Seq: 1},
+			{PreparedDevice: deviceB, NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net2"}, Seq: 2},
+		})
+
+		Expect(writes).To(Equal(1), "the second device must not be recorded after the cancel")
+	})
+
+	It("retries a device whose real checkpoint write was refused", func() {
+		// A store double cannot show what a failing syncToCheckpoint leaves
+		// behind. A directory where the checkpoint file goes is refused for any
+		// user, which removing write permissions is not.
+		cfg := &types.Config{Flags: &types.Flags{KubeletPluginsDirectoryPath: GinkgoT().TempDir()}}
+		store, err := podmanager.NewPodManager(cfg)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(store.Set(podUID, claimUID, prepared)).To(Succeed())
+		plugin := &Plugin{
+			podManager:                  store,
+			k8sClient:                   flags.ClientSets{Interface: k8sfake.NewSimpleClientset(newClaim())},
+			statusBackoff:               twoStepBackoff,
+			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
+		}
+		checkpoint := filepath.Join(cfg.DriverPluginPath(), consts.DriverPluginCheckpointFile)
+		Expect(os.Remove(checkpoint)).To(Succeed())
+		Expect(os.Mkdir(checkpoint, 0o700)).To(Succeed())
+
+		update := types.NetworkDataChanStructList{{
+			PreparedDevice:    prepared[0],
+			NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.10/24"}},
+			Seq:               1,
+		}}
+		plugin.updateNetworkDeviceData(context.Background(), update)
+		Expect(update[0].Checkpointed).To(BeFalse())
+		Expect(update[0].Requeues).To(Equal(1))
+		Expect(ipsOf(plugin)).To(BeNil(), "nothing reaches the claim while the disk refuses the data")
+
+		stored, found := store.Get(podUID, claimUID)
+		Expect(found).To(BeTrue())
+		Expect(stored[0].NetworkDeviceData).To(BeNil(), "the rollback leaves the device on the data the checkpoint holds")
+		Expect(stored[0].NetworkDataSeq).To(BeZero(), "and on the sequence that describes it")
+
+		Expect(os.Remove(checkpoint)).To(Succeed())
+		plugin.updateNetworkDeviceData(context.Background(), update)
+		Expect(ipsOf(plugin)).To(Equal([]string{"10.10.0.10/24"}), "the update completes once the disk takes it")
+	})
+
+	It("skips an update the device has passed, on a first delivery as well", func() {
+		// The number is taken before the update is queued, so a first delivery
+		// can still reach the runner behind a later observation.
+		fake := k8sfake.NewSimpleClientset(newClaim())
+		plugin := &Plugin{
+			podManager:                  pm,
+			k8sClient:                   flags.ClientSets{Interface: fake},
+			statusBackoff:               twoStepBackoff,
+			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
+		}
+		deviceData := func(ip string) *resourceapi.NetworkDeviceData {
+			return &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{ip}}
+		}
+		plugin.updateNetworkDeviceData(context.Background(), types.NetworkDataChanStructList{
+			{PreparedDevice: prepared[0], NetworkDeviceData: deviceData("10.10.0.11/24"), Seq: 2},
+		})
+		plugin.updateNetworkDeviceData(context.Background(), types.NetworkDataChanStructList{
+			{PreparedDevice: prepared[0], NetworkDeviceData: deviceData("10.10.0.10/24"), Seq: 1},
+		})
+
+		Expect(ipsOf(plugin)).To(Equal([]string{"10.10.0.11/24"}), "the earlier observation must not come back over the later one")
 	})
 
 	It("drops an update after maxRequeues rounds", func() {
