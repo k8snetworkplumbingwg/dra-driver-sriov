@@ -32,6 +32,13 @@ type NetworkDataChanStruct struct {
 	NetworkDeviceData *resourceapi.NetworkDeviceData
 	CNIConfig         map[string]interface{}
 	CNIResult         map[string]interface{}
+	// Seq orders the observations of a device. An update is stale once the
+	// device has recorded a later one.
+	Seq uint64
+	// Checkpointed records that this observation reached the checkpoint. The
+	// sequence says which observation this is, not how far it got, and a
+	// retry of the claim status write alone must not repeat the disk write.
+	Checkpointed bool
 	// Requeues counts how often the update was put back on the queue after
 	// its claim status write failed.
 	Requeues int
@@ -74,9 +81,13 @@ type PreparedDevice struct {
 	MultusResourceName  string
 	DeviceAttributes    map[string]resourceapi.DeviceAttribute
 	NetworkDeviceData   *resourceapi.NetworkDeviceData
-	PodUID              string
-	NetAttachDefConfig  string
-	OriginalDriver      string // Store original driver for restoration during unprepare
+	// NetworkDataSeq orders the observation NetworkDeviceData came from. A
+	// stored one would outrank every update made after a restart, when the
+	// sequence starts over, so it is left out of the checkpoint.
+	NetworkDataSeq     uint64 `json:"-"`
+	PodUID             string
+	NetAttachDefConfig string
+	OriginalDriver     string // Store original driver for restoration during unprepare
 }
 
 func (p *PreparedDevice) ToKubeletPluginDevice(networkData *resourceapi.NetworkDeviceData) kubeletplugin.Device {

@@ -317,6 +317,21 @@ var _ = Describe("UpdateClaimStatusWithRetry", func() {
 		Expect(updateCalls).To(BeZero())
 	})
 
+	It("stops on a mutation error that reads as a conflict", func() {
+		// The conflict retry is for the API's optimistic concurrency. A mutation
+		// is deterministic, so replaying one that failed only fails again.
+		fake := k8sfake.NewSimpleClientset(newClaim())
+
+		mutateCalls := 0
+		mutate := func(_ *resourceapi.ResourceClaim) (bool, error) {
+			mutateCalls++
+			return false, apierrors.NewConflict(gr, claimName, errors.New("mutation raced"))
+		}
+
+		Expect(update(context.Background(), fake, mutate)).NotTo(Succeed())
+		Expect(mutateCalls).To(Equal(1), "a failing mutation must not be replayed by the conflict retry")
+	})
+
 	It("returns the real error rather than the wait timeout when retries are exhausted", func() {
 		fake := k8sfake.NewSimpleClientset(newClaim())
 
