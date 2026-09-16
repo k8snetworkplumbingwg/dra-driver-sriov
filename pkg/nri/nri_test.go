@@ -11,14 +11,19 @@ import (
 
 	"github.com/containerd/nri/pkg/api"
 	resourceapi "k8s.io/api/resource/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1beta1"
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
 	ctrlclientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 	cnimock "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cni/mock"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
@@ -517,21 +522,81 @@ var _ = Describe("NRI metadata updates", func() {
 })
 
 var _ = Describe("NRI updateNetworkDeviceData ordering", func() {
-	It("does not update claim status when checkpoint persistence fails", func() {
-		cfg := &types.Config{
+	const (
+		claimUID = k8stypes.UID("claim-a-uid")
+		podUID   = k8stypes.UID("pod-a-uid")
+	)
+	var (
+		pm       *podmanager.PodManager
+		cfg      *types.Config
+		prepared types.PreparedDevices
+	)
+
+	// newClaim is the claim the devices were prepared for: same UID, dev-a
+	// allocated, still reserved for the pod, with the entry prepare wrote.
+	newClaim := func() *resourceapi.ResourceClaim {
+		return &resourceapi.ResourceClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "claim-a",
+				Namespace: "default",
+				UID:       claimUID,
+			},
+			Status: resourceapi.ResourceClaimStatus{
+				Allocation: &resourceapi.AllocationResult{
+					Devices: resourceapi.DeviceAllocationResult{
+						Results: []resourceapi.DeviceRequestAllocationResult{
+							{Request: "req-a", Driver: consts.DriverName, Pool: "pool-a", Device: "dev-a"},
+							{Request: "req-b", Driver: consts.DriverName, Pool: "pool-a", Device: "dev-b"},
+						},
+					},
+				},
+				ReservedFor: []resourceapi.ResourceClaimConsumerReference{{Resource: "pods", Name: "pod-a", UID: podUID}},
+				Devices: []resourceapi.AllocatedDeviceStatus{
+					{
+						Driver: consts.DriverName,
+						Pool:   "pool-a",
+						Device: "dev-a",
+						Data:   &runtime.RawExtension{Raw: []byte(`{"netAttachDefName":"net-a"}`)},
+					},
+				},
+			},
+		}
+	}
+	newPlugin := func(claim *resourceapi.ResourceClaim) *Plugin {
+		return &Plugin{
+			podManager: pm,
+			k8sClient: flags.ClientSets{
+				Interface: k8sfake.NewSimpleClientset(claim),
+			},
+		}
+	}
+	networkDataList := func(networkData *resourceapi.NetworkDeviceData) types.NetworkDataChanStructList {
+		return types.NetworkDataChanStructList{
+			{
+				PreparedDevice:    prepared[0],
+				NetworkDeviceData: networkData,
+				CNIConfig:         map[string]interface{}{"type": "sriov"},
+				CNIResult:         map[string]interface{}{"result": "ok"},
+			},
+		}
+	}
+	getClaim := func(plugin *Plugin) *resourceapi.ResourceClaim {
+		got, err := plugin.k8sClient.ResourceV1().ResourceClaims("default").Get(context.Background(), "claim-a", metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		return got
+	}
+
+	BeforeEach(func() {
+		cfg = &types.Config{
 			Flags: &types.Flags{
 				KubeletPluginsDirectoryPath: GinkgoT().TempDir(),
 			},
 		}
-		realCM, err := checkpointmanager.NewCheckpointManager(cfg.DriverPluginPath())
-		Expect(err).NotTo(HaveOccurred())
-		cm := &togglableCheckpointManager{delegate: realCM}
-		pm, err := podmanager.NewPodManagerWithCheckpointManager(cm)
+		var err error
+		pm, err = podmanager.NewPodManager(cfg)
 		Expect(err).NotTo(HaveOccurred())
 
-		claimUID := k8stypes.UID("claim-a-uid")
-		podUID := k8stypes.UID("pod-a-uid")
-		prepared := types.PreparedDevices{
+		prepared = types.PreparedDevices{
 			{
 				ClaimNamespacedName: kubeletplugin.NamespacedObject{
 					NamespacedName: k8stypes.NamespacedName{
@@ -544,52 +609,31 @@ var _ = Describe("NRI updateNetworkDeviceData ordering", func() {
 					PoolName:   "pool-a",
 					DeviceName: "dev-a",
 				},
+				PodUID: string(podUID),
+				Config: &configapi.VfConfig{NetAttachDefName: "net-a"},
 			},
 		}
 		Expect(pm.Set(podUID, claimUID, prepared)).To(Succeed())
+	})
 
-		claim := &resourceapi.ResourceClaim{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "claim-a",
-				Namespace: "default",
-				UID:       claimUID,
-			},
-			Status: resourceapi.ResourceClaimStatus{
-				Devices: []resourceapi.AllocatedDeviceStatus{
-					{
-						Driver: consts.DriverName,
-						Pool:   "pool-a",
-						Device: "dev-a",
-					},
-				},
-			},
-		}
+	It("does not update claim status when checkpoint persistence fails", func() {
+		realCM, err := checkpointmanager.NewCheckpointManager(cfg.DriverPluginPath())
+		Expect(err).NotTo(HaveOccurred())
+		cm := &togglableCheckpointManager{delegate: realCM}
+		pm, err = podmanager.NewPodManagerWithCheckpointManager(cm)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pm.Set(podUID, claimUID, prepared)).To(Succeed())
 
-		plugin := &Plugin{
-			podManager: pm,
-			k8sClient: flags.ClientSets{
-				Interface: k8sfake.NewSimpleClientset(claim.DeepCopy()),
-				Client:    ctrlclientfake.NewClientBuilder().WithScheme(flags.Scheme).WithRuntimeObjects(claim.DeepCopy()).Build(),
-			},
-		}
-
-		// Simulate checkpoint sync failure only when updateNetworkDeviceData persists network data, after setup syncs succeeded.
+		plugin := newPlugin(newClaim())
+		// Refuse only the write the update itself makes; the ones above had to land.
 		cm.failCreate = true
 
-		networkDataList := types.NetworkDataChanStructList{
-			{
-				PreparedDevice:    prepared[0],
-				NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1"},
-			},
-		}
+		plugin.updateNetworkDeviceData(context.Background(), networkDataList(&resourceapi.NetworkDeviceData{InterfaceName: "net1"}))
 
-		plugin.updateNetworkDeviceData(context.Background(), networkDataList)
-
-		updatedClaim, err := plugin.k8sClient.ResourceV1().ResourceClaims("default").Get(context.Background(), "claim-a", metav1.GetOptions{})
-		Expect(err).NotTo(HaveOccurred())
+		updatedClaim := getClaim(plugin)
 		Expect(updatedClaim.Status.Devices).To(HaveLen(1))
 		Expect(updatedClaim.Status.Devices[0].NetworkData).To(BeNil())
-		Expect(updatedClaim.Status.Devices[0].Data).To(BeNil())
+		Expect(string(updatedClaim.Status.Devices[0].Data.Raw)).To(Equal(`{"netAttachDefName":"net-a"}`))
 
 		stored, found := pm.Get(podUID, claimUID)
 		Expect(found).To(BeTrue())
@@ -597,155 +641,123 @@ var _ = Describe("NRI updateNetworkDeviceData ordering", func() {
 	})
 
 	It("updates claim status after checkpoint persistence succeeds", func() {
-		cfg := &types.Config{
-			Flags: &types.Flags{
-				KubeletPluginsDirectoryPath: GinkgoT().TempDir(),
-			},
-		}
-		pm, err := podmanager.NewPodManager(cfg)
-		Expect(err).NotTo(HaveOccurred())
+		plugin := newPlugin(newClaim())
+		networkData := &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.10/24"}}
 
-		claimUID := k8stypes.UID("claim-a-uid")
-		podUID := k8stypes.UID("pod-a-uid")
-		prepared := types.PreparedDevices{
-			{
-				ClaimNamespacedName: kubeletplugin.NamespacedObject{
-					NamespacedName: k8stypes.NamespacedName{
-						Namespace: "default",
-						Name:      "claim-a",
-					},
-					UID: claimUID,
-				},
-				Device: drapbv1.Device{
-					PoolName:   "pool-a",
-					DeviceName: "dev-a",
-				},
-			},
-		}
-		Expect(pm.Set(podUID, claimUID, prepared)).To(Succeed())
+		plugin.updateNetworkDeviceData(context.Background(), networkDataList(networkData))
 
-		claim := &resourceapi.ResourceClaim{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "claim-a",
-				Namespace: "default",
-				UID:       claimUID,
-			},
-			Status: resourceapi.ResourceClaimStatus{
-				Devices: []resourceapi.AllocatedDeviceStatus{
-					{
-						Driver: consts.DriverName,
-						Pool:   "pool-a",
-						Device: "dev-a",
-					},
-				},
-			},
-		}
-
-		plugin := &Plugin{
-			podManager: pm,
-			k8sClient: flags.ClientSets{
-				Interface: k8sfake.NewSimpleClientset(claim.DeepCopy()),
-				Client:    ctrlclientfake.NewClientBuilder().WithScheme(flags.Scheme).WithRuntimeObjects(claim.DeepCopy()).Build(),
-			},
-		}
-
-		networkData := &resourceapi.NetworkDeviceData{InterfaceName: "net1"}
-		networkDataList := types.NetworkDataChanStructList{
-			{
-				PreparedDevice:    prepared[0],
-				NetworkDeviceData: networkData,
-				CNIConfig: map[string]interface{}{
-					"type": "sriov",
-				},
-				CNIResult: map[string]interface{}{
-					"result": "ok",
-				},
-			},
-		}
-
-		plugin.updateNetworkDeviceData(context.Background(), networkDataList)
-
-		updatedClaim, err := plugin.k8sClient.ResourceV1().ResourceClaims("default").Get(context.Background(), "claim-a", metav1.GetOptions{})
-		Expect(err).NotTo(HaveOccurred())
+		updatedClaim := getClaim(plugin)
 		Expect(updatedClaim.Status.Devices).To(HaveLen(1))
-		Expect(updatedClaim.Status.Devices[0].NetworkData).NotTo(BeNil())
-		Expect(updatedClaim.Status.Devices[0].NetworkData.InterfaceName).To(Equal("net1"))
+		Expect(updatedClaim.Status.Devices[0].NetworkData).To(Equal(networkData))
 		Expect(updatedClaim.Status.Devices[0].Data).NotTo(BeNil())
+		Expect(string(updatedClaim.Status.Devices[0].Data.Raw)).To(MatchJSON(`{
+			"vfConfig": {"netAttachDefName": "net-a"},
+			"cniConfig": {"type": "sriov"},
+			"cniResult": {"result": "ok"}
+		}`))
 
 		updatedPreparedDevices, found := pm.Get(podUID, claimUID)
 		Expect(found).To(BeTrue())
 		Expect(updatedPreparedDevices).To(HaveLen(1))
-		Expect(updatedPreparedDevices[0].NetworkDeviceData).NotTo(BeNil())
-		Expect(updatedPreparedDevices[0].NetworkDeviceData.InterfaceName).To(Equal("net1"))
+		Expect(updatedPreparedDevices[0].NetworkDeviceData).To(Equal(networkData))
+	})
+
+	It("patches only its own device and keeps the rest of the status", func() {
+		claim := newClaim()
+		foreign := resourceapi.AllocatedDeviceStatus{Driver: "other.example.com", Pool: "pool-a", Device: "dev-a"}
+		other := resourceapi.AllocatedDeviceStatus{Driver: consts.DriverName, Pool: "pool-a", Device: "dev-b", NetworkData: &resourceapi.NetworkDeviceData{InterfaceName: "net9"}}
+		claim.Status.Devices = append(claim.Status.Devices, foreign, other)
+		plugin := newPlugin(claim)
+
+		plugin.updateNetworkDeviceData(context.Background(), networkDataList(&resourceapi.NetworkDeviceData{InterfaceName: "net1"}))
+
+		updatedClaim := getClaim(plugin)
+		Expect(updatedClaim.Status.Devices).To(HaveLen(3))
+		Expect(updatedClaim.Status.Devices[0].NetworkData.InterfaceName).To(Equal("net1"))
+		Expect(updatedClaim.Status.Devices[1]).To(Equal(foreign), "a foreign entry with the same device name must be untouched")
+		Expect(updatedClaim.Status.Devices[2]).To(Equal(other), "this driver's other device must be untouched")
+	})
+
+	It("adds the entry when the status write during prepare was lost", func() {
+		claim := newClaim()
+		claim.Status.Devices = nil
+		plugin := newPlugin(claim)
+
+		plugin.updateNetworkDeviceData(context.Background(), networkDataList(&resourceapi.NetworkDeviceData{InterfaceName: "net1"}))
+
+		updatedClaim := getClaim(plugin)
+		Expect(updatedClaim.Status.Devices).To(HaveLen(1))
+		Expect(updatedClaim.Status.Devices[0].Device).To(Equal("dev-a"))
+		Expect(updatedClaim.Status.Devices[0].NetworkData.InterfaceName).To(Equal("net1"))
+		Expect(string(updatedClaim.Status.Devices[0].Data.Raw)).To(ContainSubstring(`"vfConfig":{"netAttachDefName":"net-a"}`))
 	})
 
 	It("skips a claim that was recreated under the same name", func() {
-		cfg := &types.Config{
-			Flags: &types.Flags{
-				KubeletPluginsDirectoryPath: GinkgoT().TempDir(),
-			},
-		}
-		pm, err := podmanager.NewPodManager(cfg)
-		Expect(err).NotTo(HaveOccurred())
-
-		preparedFor := k8stypes.UID("claim-a-uid")
-		podUID := k8stypes.UID("pod-a-uid")
-		prepared := types.PreparedDevices{
-			{
-				ClaimNamespacedName: kubeletplugin.NamespacedObject{
-					NamespacedName: k8stypes.NamespacedName{
-						Namespace: "default",
-						Name:      "claim-a",
-					},
-					UID: preparedFor,
-				},
-				Device: drapbv1.Device{
-					PoolName:   "pool-a",
-					DeviceName: "dev-a",
-				},
-			},
-		}
-		Expect(pm.Set(podUID, preparedFor, prepared)).To(Succeed())
-
 		// Same name, different object: the claim these devices were prepared for
 		// is gone and this one belongs to whoever recreated it.
-		replacement := &resourceapi.ResourceClaim{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "claim-a",
-				Namespace: "default",
-				UID:       k8stypes.UID("claim-a-uid-2"),
-			},
-			Status: resourceapi.ResourceClaimStatus{
-				Devices: []resourceapi.AllocatedDeviceStatus{
-					{
-						Driver: consts.DriverName,
-						Pool:   "pool-a",
-						Device: "dev-a",
-					},
-				},
-			},
-		}
+		replacement := newClaim()
+		replacement.UID = k8stypes.UID("claim-a-uid-2")
+		plugin := newPlugin(replacement)
 
-		plugin := &Plugin{
-			podManager: pm,
-			k8sClient: flags.ClientSets{
-				Interface: k8sfake.NewSimpleClientset(replacement.DeepCopy()),
-				Client:    ctrlclientfake.NewClientBuilder().WithScheme(flags.Scheme).WithRuntimeObjects(replacement.DeepCopy()).Build(),
-			},
-		}
+		plugin.updateNetworkDeviceData(context.Background(), networkDataList(&resourceapi.NetworkDeviceData{InterfaceName: "net1"}))
 
-		networkDataList := types.NetworkDataChanStructList{
-			{
-				PreparedDevice:    prepared[0],
-				NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1"},
-			},
-		}
-
-		plugin.updateNetworkDeviceData(context.Background(), networkDataList)
-
-		got, err := plugin.k8sClient.ResourceV1().ResourceClaims("default").Get(context.Background(), "claim-a", metav1.GetOptions{})
-		Expect(err).NotTo(HaveOccurred())
+		got := getClaim(plugin)
 		Expect(got.Status.Devices).To(HaveLen(1))
 		Expect(got.Status.Devices[0].NetworkData).To(BeNil(), "the replacement claim must not take the old claim's network data")
+	})
+
+	It("skips a claim the pod no longer holds", func() {
+		// The pod released the claim and another pod took it over: the network
+		// data belongs to an attachment of the first pod, not to the claim now.
+		released := newClaim()
+		released.Status.ReservedFor = []resourceapi.ResourceClaimConsumerReference{{Resource: "pods", Name: "pod-b", UID: "pod-b-uid"}}
+		plugin := newPlugin(released)
+
+		plugin.updateNetworkDeviceData(context.Background(), networkDataList(&resourceapi.NetworkDeviceData{InterfaceName: "net1"}))
+
+		got := getClaim(plugin)
+		Expect(got.Status.Devices).To(HaveLen(1))
+		Expect(got.Status.Devices[0].NetworkData).To(BeNil(), "the claim must not carry network data of a pod that released it")
+	})
+
+	It("skips a claim that is gone", func() {
+		plugin := &Plugin{
+			podManager: pm,
+			k8sClient:  flags.ClientSets{Interface: k8sfake.NewSimpleClientset()},
+		}
+
+		// Nothing to assert on the API; the update must not log an error or
+		// retry to the timeout for a claim that no longer exists.
+		plugin.updateNetworkDeviceData(context.Background(), networkDataList(&resourceapi.NetworkDeviceData{InterfaceName: "net1"}))
+	})
+
+	It("retries on a conflict without reverting a concurrent same-driver write", func() {
+		// While this update was in flight, prepare recorded dev-b on the claim.
+		// Restoring a pre-conflict snapshot dropped it; the patch keeps it.
+		claim := newClaim()
+		plugin := newPlugin(claim)
+		fake := plugin.k8sClient.Interface.(*k8sfake.Clientset)
+		updateCalls := 0
+		fake.PrependReactor("update", "resourceclaims", func(action k8stesting.Action) (bool, runtime.Object, error) {
+			if action.GetSubresource() != "status" {
+				return false, nil, nil
+			}
+			updateCalls++
+			if updateCalls > 1 {
+				return false, nil, nil
+			}
+			concurrent := claim.DeepCopy()
+			concurrent.Status.Devices = append(concurrent.Status.Devices, resourceapi.AllocatedDeviceStatus{Driver: consts.DriverName, Pool: "pool-a", Device: "dev-b"})
+			Expect(fake.Tracker().Update(resourceapi.SchemeGroupVersion.WithResource("resourceclaims"), concurrent, "default")).To(Succeed())
+			return true, nil, apierrors.NewConflict(schema.GroupResource{Group: "resource.k8s.io", Resource: "resourceclaims"}, "claim-a", errors.New("conflict"))
+		})
+
+		plugin.updateNetworkDeviceData(context.Background(), networkDataList(&resourceapi.NetworkDeviceData{InterfaceName: "net1"}))
+
+		Expect(updateCalls).To(Equal(2))
+		got := getClaim(plugin)
+		Expect(got.Status.Devices).To(HaveLen(2))
+		Expect(got.Status.Devices[0].NetworkData.InterfaceName).To(Equal("net1"))
+		Expect(got.Status.Devices[1].Device).To(Equal("dev-b"), "the entry prepare added during the conflict window must survive")
 	})
 })
