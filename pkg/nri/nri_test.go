@@ -3,6 +3,8 @@ package nri
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -10,12 +12,14 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/containerd/nri/pkg/api"
+	"github.com/containerd/nri/pkg/stub"
 	resourceapi "k8s.io/api/resource/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
@@ -387,6 +391,61 @@ var _ = Describe("NRI Plugin Creation", func() {
 })
 
 var _ = Describe("NRI Update Network Device Data Runner", func() {
+	const (
+		claimUID = k8stypes.UID("claim-a-uid")
+		podUID   = k8stypes.UID("pod-a-uid")
+	)
+	var (
+		pm       *podmanager.PodManager
+		prepared types.PreparedDevices
+	)
+
+	newClaim := func() *resourceapi.ResourceClaim {
+		return &resourceapi.ResourceClaim{
+			ObjectMeta: metav1.ObjectMeta{Name: "claim-a", Namespace: "default", UID: claimUID},
+			Status: resourceapi.ResourceClaimStatus{
+				Allocation: &resourceapi.AllocationResult{Devices: resourceapi.DeviceAllocationResult{Results: []resourceapi.DeviceRequestAllocationResult{
+					{Request: "req-a", Driver: consts.DriverName, Pool: "pool-a", Device: "dev-a"},
+				}}},
+				ReservedFor: []resourceapi.ResourceClaimConsumerReference{{Resource: "pods", Name: "pod-a", UID: podUID}},
+				Devices:     []resourceapi.AllocatedDeviceStatus{{Driver: consts.DriverName, Pool: "pool-a", Device: "dev-a"}},
+			},
+		}
+	}
+	event := func() types.NetworkDataChanStructList {
+		return types.NetworkDataChanStructList{{
+			PreparedDevice:    prepared[0],
+			NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1"},
+		}}
+	}
+	// stopWithin fails the test if stopRunner does not return in time.
+	stopWithin := func(plugin *Plugin, timeout time.Duration) {
+		stopped := make(chan struct{})
+		go func() {
+			defer GinkgoRecover()
+			plugin.stopRunner()
+			close(stopped)
+		}()
+		Eventually(stopped, timeout).Should(BeClosed(), "stopRunner should return once the runner is cancelled")
+	}
+
+	BeforeEach(func() {
+		cfg := &types.Config{Flags: &types.Flags{KubeletPluginsDirectoryPath: GinkgoT().TempDir()}}
+		var err error
+		pm, err = podmanager.NewPodManager(cfg)
+		Expect(err).NotTo(HaveOccurred())
+
+		prepared = types.PreparedDevices{{
+			ClaimNamespacedName: kubeletplugin.NamespacedObject{
+				NamespacedName: k8stypes.NamespacedName{Namespace: "default", Name: "claim-a"},
+				UID:            claimUID,
+			},
+			Device: drapbv1.Device{PoolName: "pool-a", DeviceName: "dev-a"},
+			PodUID: string(podUID),
+		}}
+		Expect(pm.Set(podUID, claimUID, prepared)).To(Succeed())
+	})
+
 	It("stops when context is cancelled", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 
@@ -405,6 +464,300 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 
 		// Should exit
 		Eventually(done, time.Second).Should(Receive())
+	})
+
+	It("processes queued updates until stopped", func() {
+		plugin := &Plugin{
+			podManager:                  pm,
+			k8sClient:                   flags.ClientSets{Interface: k8sfake.NewSimpleClientset(newClaim())},
+			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
+		}
+		plugin.startRunner(context.Background())
+		defer plugin.stopRunner()
+
+		plugin.networkDeviceDataUpdateChan <- event()
+
+		Eventually(func() *resourceapi.NetworkDeviceData {
+			got, err := plugin.k8sClient.ResourceV1().ResourceClaims("default").Get(context.Background(), "claim-a", metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			return got.Status.Devices[0].NetworkData
+		}, time.Second).ShouldNot(BeNil())
+	})
+
+	It("Stop cancels an update stuck on the API and waits for the runner", func() {
+		// The API keeps failing, so the runner sits in the retry backoff; Stop
+		// must cut that short rather than wait for the backoff to run out.
+		fake := k8sfake.NewSimpleClientset(newClaim())
+		getCalls := make(chan struct{}, 100)
+		fake.PrependReactor("get", "resourceclaims", func(k8stesting.Action) (bool, runtime.Object, error) {
+			getCalls <- struct{}{}
+			return true, nil, apierrors.NewServerTimeout(schema.GroupResource{Group: "resource.k8s.io", Resource: "resourceclaims"}, "get", 1)
+		})
+		plugin := &Plugin{
+			podManager:                  pm,
+			k8sClient:                   flags.ClientSets{Interface: fake},
+			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
+		}
+		plugin.startRunner(context.Background())
+
+		plugin.networkDeviceDataUpdateChan <- event()
+		Eventually(getCalls, time.Second).Should(Receive(), "the runner should be retrying the fetch")
+
+		stopWithin(plugin, time.Second)
+		// A retry scheduled before Stop may have landed already; none may follow.
+		for len(getCalls) > 0 {
+			<-getCalls
+		}
+		Consistently(getCalls, 300*time.Millisecond).ShouldNot(Receive(), "a stopped runner must not keep retrying")
+	})
+
+	// failingUpdates makes the first n status updates fail with a server
+	// timeout and counts every status update; the runner and the spec read
+	// the count concurrently.
+	failingUpdates := func(fake *k8sfake.Clientset, n int32, updateCalls *atomic.Int32) {
+		fake.PrependReactor("update", "resourceclaims", func(action k8stesting.Action) (bool, runtime.Object, error) {
+			if action.GetSubresource() != "status" {
+				return false, nil, nil
+			}
+			if updateCalls.Add(1) <= n {
+				return true, nil, apierrors.NewServerTimeout(schema.GroupResource{Group: "resource.k8s.io", Resource: "resourceclaims"}, "update", 1)
+			}
+			return false, nil, nil
+		})
+	}
+	// twoStepBackoff makes one round of retries two quick attempts.
+	twoStepBackoff := wait.Backoff{Steps: 2, Duration: time.Millisecond}
+	ipsOf := func(plugin *Plugin) []string {
+		got, err := plugin.k8sClient.ResourceV1().ResourceClaims("default").Get(context.Background(), "claim-a", metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		if got.Status.Devices[0].NetworkData == nil {
+			return nil
+		}
+		return got.Status.Devices[0].NetworkData.IPs
+	}
+
+	It("requeues an update whose write failed and completes it later", func() {
+		fake := k8sfake.NewSimpleClientset(newClaim())
+		var updateCalls atomic.Int32
+		failingUpdates(fake, 2, &updateCalls)
+		plugin := &Plugin{
+			podManager:                  pm,
+			k8sClient:                   flags.ClientSets{Interface: fake},
+			statusBackoff:               twoStepBackoff,
+			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
+		}
+		plugin.startRunner(context.Background())
+		defer plugin.stopRunner()
+
+		update := types.NetworkDataChanStructList{{PreparedDevice: prepared[0], NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.10/24"}}}}
+		plugin.networkDeviceDataUpdateChan <- update
+
+		Eventually(func() []string { return ipsOf(plugin) }, 5*time.Second).Should(Equal([]string{"10.10.0.10/24"}))
+		Expect(updateCalls.Load()).To(Equal(int32(3)), "one failed round of two attempts, then the requeued update")
+		Expect(update[0].Requeues).To(Equal(1))
+	})
+
+	It("skips a requeued update once a later one for the device was recorded", func() {
+		// The first update fails and goes to the back of the queue, behind a
+		// newer one for the same device. Applying the old one afterwards would
+		// put stale addresses on the claim and in the checkpoint.
+		fake := k8sfake.NewSimpleClientset(newClaim())
+		var updateCalls atomic.Int32
+		failingUpdates(fake, 2, &updateCalls)
+		plugin := &Plugin{
+			podManager:                  pm,
+			k8sClient:                   flags.ClientSets{Interface: fake},
+			statusBackoff:               twoStepBackoff,
+			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
+		}
+		older := types.NetworkDataChanStructList{{PreparedDevice: prepared[0], NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.10/24"}}}}
+		newer := types.NetworkDataChanStructList{{PreparedDevice: prepared[0], NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.11/24"}}}}
+		plugin.networkDeviceDataUpdateChan <- older
+		plugin.networkDeviceDataUpdateChan <- newer
+		plugin.startRunner(context.Background())
+		defer plugin.stopRunner()
+
+		Eventually(func() []string { return ipsOf(plugin) }, 5*time.Second).Should(Equal([]string{"10.10.0.11/24"}))
+		Eventually(plugin.networkDeviceDataUpdateChan, time.Second).Should(BeEmpty())
+		Consistently(func() []string { return ipsOf(plugin) }, 300*time.Millisecond).Should(Equal([]string{"10.10.0.11/24"}), "the requeued older update must not overwrite the newer one")
+		Expect(updateCalls.Load()).To(Equal(int32(3)), "the requeued update must be skipped without touching the API")
+		Expect(older[0].Requeues).To(Equal(1))
+		stored, found := pm.Get(podUID, claimUID)
+		Expect(found).To(BeTrue())
+		Expect(stored[0].NetworkDeviceData.IPs).To(Equal([]string{"10.10.0.11/24"}))
+	})
+
+	It("drops an update after maxRequeues rounds", func() {
+		fake := k8sfake.NewSimpleClientset(newClaim())
+		var updateCalls atomic.Int32
+		failingUpdates(fake, 1000, &updateCalls)
+		plugin := &Plugin{
+			podManager:                  pm,
+			k8sClient:                   flags.ClientSets{Interface: fake},
+			statusBackoff:               twoStepBackoff,
+			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
+		}
+		plugin.startRunner(context.Background())
+		defer plugin.stopRunner()
+
+		update := event()
+		plugin.networkDeviceDataUpdateChan <- update
+
+		attempts := int32((1 + maxRequeues) * twoStepBackoff.Steps)
+		Eventually(updateCalls.Load, 5*time.Second).Should(Equal(attempts))
+		Consistently(updateCalls.Load, 300*time.Millisecond).Should(Equal(attempts), "a dropped update must not be retried again")
+		Expect(plugin.networkDeviceDataUpdateChan).To(BeEmpty())
+		Expect(update[0].Requeues).To(Equal(maxRequeues))
+	})
+
+	It("tolerates Stop before Start and a repeated Stop", func() {
+		plugin := &Plugin{networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10)}
+		plugin.stopRunner()
+
+		plugin.startRunner(context.Background())
+		stopWithin(plugin, time.Second)
+		stopWithin(plugin, time.Second)
+	})
+
+	It("keeps the queue open for a hook still in flight after Stop", func() {
+		// The runner is gone, so the update is dropped with the backlog, but
+		// the send must not panic.
+		plugin := &Plugin{networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 1)}
+		plugin.startRunner(context.Background())
+		plugin.stopRunner()
+
+		Expect(func() {
+			select {
+			case plugin.networkDeviceDataUpdateChan <- event():
+			default:
+			}
+			select {
+			case plugin.networkDeviceDataUpdateChan <- event():
+			default:
+			}
+		}).NotTo(Panic())
+	})
+})
+
+// fakeStub stands in for the NRI stub; only Start and Stop are called. Like
+// the real stub, Stop may be called more than once.
+type fakeStub struct {
+	stub.Stub
+	startErr error
+	stopped  chan struct{}
+	stopOnce sync.Once
+}
+
+func (f *fakeStub) Start(context.Context) error { return f.startErr }
+func (f *fakeStub) Stop()                       { f.stopOnce.Do(func() { close(f.stopped) }) }
+
+var _ = Describe("NRI Plugin Start and Stop", func() {
+	newPlugin := func(startErr error) (*Plugin, *fakeStub) {
+		s := &fakeStub{startErr: startErr, stopped: make(chan struct{})}
+		return &Plugin{stub: s, networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10)}, s
+	}
+	runnerRunning := func(plugin *Plugin) bool {
+		plugin.runnerMu.Lock()
+		defer plugin.runnerMu.Unlock()
+		return plugin.runnerDone != nil
+	}
+
+	It("starts the runner after the stub and stops the stub before the runner", func() {
+		plugin, s := newPlugin(nil)
+		Expect(plugin.Start(context.Background())).To(Succeed())
+		Expect(runnerRunning(plugin)).To(BeTrue())
+
+		plugin.Stop()
+		Expect(s.stopped).To(BeClosed())
+		Expect(runnerRunning(plugin)).To(BeFalse())
+	})
+
+	It("does not start the runner when the stub fails to start", func() {
+		plugin, _ := newPlugin(errors.New("no runtime"))
+		Expect(plugin.Start(context.Background())).To(HaveOccurred())
+		Expect(runnerRunning(plugin)).To(BeFalse())
+	})
+
+	It("survives hooks racing Stop", func() {
+		ctrl := gomock.NewController(GinkgoT())
+		defer ctrl.Finish()
+		mockCNI := cnimock.NewMockInterface(ctrl)
+		cfg := &types.Config{Flags: &types.Flags{KubeletPluginsDirectoryPath: GinkgoT().TempDir()}}
+		podManager, err := podmanager.NewPodManager(cfg)
+		Expect(err).NotTo(HaveOccurred())
+		pod := &api.PodSandbox{
+			Id: "sandbox-id", Name: "pod-name", Namespace: "default", Uid: "uid-1",
+			Linux: &api.LinuxPodSandbox{Namespaces: []*api.LinuxNamespace{{Type: "network", Path: "/proc/123/ns/net"}}},
+		}
+		prepared := types.PreparedDevices{{
+			ClaimNamespacedName: kubeletplugin.NamespacedObject{NamespacedName: k8stypes.NamespacedName{Namespace: "default", Name: "claim-1"}, UID: "claim-1-uid"},
+			IfName:              "vfnet0",
+			PciAddress:          "0000:00:00.1",
+			PodUID:              pod.Uid,
+		}}
+		Expect(podManager.Set(k8stypes.UID(pod.Uid), k8stypes.UID("claim-1"), prepared)).To(Succeed())
+		mockCNI.EXPECT().
+			AttachNetwork(gomock.Any(), pod, "/proc/123/ns/net", prepared[0]).
+			Return(&resourceapi.NetworkDeviceData{InterfaceName: "net1"}, map[string]interface{}{}, nil).
+			AnyTimes()
+
+		plugin, _ := newPlugin(nil)
+		plugin.podManager = podManager
+		plugin.cniRuntime = mockCNI
+		// The claim does not exist, so the runner skips every update it gets to.
+		plugin.k8sClient = flags.ClientSets{Interface: k8sfake.NewSimpleClientset()}
+		Expect(plugin.Start(context.Background())).To(Succeed())
+
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Go(func() {
+				defer GinkgoRecover()
+				for range 25 {
+					Expect(plugin.RunPodSandbox(context.Background(), pod)).To(Succeed())
+				}
+			})
+		}
+		wg.Go(plugin.Stop)
+		wg.Wait()
+		plugin.Stop()
+	})
+})
+
+var _ = Describe("NRI RunPodSandbox backpressure", func() {
+	It("does not block the hook when the update queue is full", func() {
+		ctrl := gomock.NewController(GinkgoT())
+		defer ctrl.Finish()
+		mockCNI := cnimock.NewMockInterface(ctrl)
+
+		cfg := &types.Config{Flags: &types.Flags{KubeletPluginsDirectoryPath: GinkgoT().TempDir()}}
+		podManager, err := podmanager.NewPodManager(cfg)
+		Expect(err).NotTo(HaveOccurred())
+
+		pod := &api.PodSandbox{
+			Id: "sandbox-id", Name: "pod-name", Namespace: "default", Uid: "uid-1",
+			Linux: &api.LinuxPodSandbox{Namespaces: []*api.LinuxNamespace{{Type: "network", Path: "/proc/123/ns/net"}}},
+		}
+		prepared := types.PreparedDevices{{IfName: "vfnet0", PciAddress: "0000:00:00.1", PodUID: pod.Uid}}
+		Expect(podManager.Set(k8stypes.UID(pod.Uid), k8stypes.UID("claim-1"), prepared)).To(Succeed())
+		mockCNI.EXPECT().
+			AttachNetwork(gomock.Any(), pod, "/proc/123/ns/net", prepared[0]).
+			Return(&resourceapi.NetworkDeviceData{InterfaceName: "net1"}, map[string]interface{}{}, nil)
+
+		// No runner drains the queue, and it is already full.
+		plugin := &Plugin{
+			podManager:                  podManager,
+			cniRuntime:                  mockCNI,
+			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 1),
+		}
+		plugin.networkDeviceDataUpdateChan <- types.NetworkDataChanStructList{}
+
+		returned := make(chan error, 1)
+		go func() {
+			defer GinkgoRecover()
+			returned <- plugin.RunPodSandbox(context.Background(), pod)
+		}()
+		Eventually(returned, time.Second).Should(Receive(BeNil()), "the sandbox must start even though its update was dropped")
+		Expect(plugin.networkDeviceDataUpdateChan).To(HaveLen(1), "the dropped update must not displace the queued one")
 	})
 })
 

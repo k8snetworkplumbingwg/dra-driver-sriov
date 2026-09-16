@@ -32,6 +32,9 @@ type NetworkDataChanStruct struct {
 	NetworkDeviceData *resourceapi.NetworkDeviceData
 	CNIConfig         map[string]interface{}
 	CNIResult         map[string]interface{}
+	// Requeues counts how often the update was put back on the queue after
+	// its claim status write failed.
+	Requeues int
 }
 type NetworkDataChanStructList []*NetworkDataChanStruct
 
