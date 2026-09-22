@@ -5,6 +5,7 @@ source hack/common.sh
 
 NUM_OF_WORKERS=${NUM_OF_WORKERS:-2}
 export OPERATOR_EXEC=kubectl
+export CNI_PLUGINS_URL="https://github.com/containernetworking/plugins/releases/download/v1.9.1/cni-plugins-linux-amd64-v1.9.1.tgz"
 
 cleanup_only=false
 for arg in "$@"; do
@@ -232,7 +233,20 @@ sudo su
 echo '$insecure_registry' > /etc/containers/registries.conf.d/003-internal.conf
 systemctl restart crio
 
-echo '[connection]
+mkdir -p /opt/cni/bin
+if command -v curl >/dev/null 2>&1; then
+  curl -fL --retry 3 --retry-delay 2 --output /tmp/cni-plugins-linux-amd64-v1.9.1.tgz ${CNI_PLUGINS_URL}
+elif command -v wget >/dev/null 2>&1; then
+  wget -qO /tmp/cni-plugins-linux-amd64-v1.9.1.tgz ${CNI_PLUGINS_URL}
+else
+  echo "Neither curl nor wget is installed on the node" >&2
+  exit 1
+fi
+tar --overwrite -xzf /tmp/cni-plugins-linux-amd64-v1.9.1.tgz -C /opt/cni/bin
+rm -f /tmp/cni-plugins-linux-amd64-v1.9.1.tgz
+
+cat > /etc/NetworkManager/system-connections/multi.nmconnection << 'NMEOF'
+[connection]
 id=multi
 type=ethernet
 [ethernet]
@@ -243,27 +257,31 @@ method=disabled
 [ipv6]
 addr-gen-mode=default
 method=disabled
-[proxy]' > /etc/NetworkManager/system-connections/multi.nmconnection
-
+[proxy]
+NMEOF
 chmod 600 /etc/NetworkManager/system-connections/multi.nmconnection
 
-echo '[Unit]
+cat > /etc/systemd/system/disable-offload.service << 'OFFLOADEOF'
+[Unit]
 Description=disable checksum offload to avoid vf bug
 After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/bash -c "ethtool --offload  eth1  rx off  tx off && ethtool -K eth1 gso off"
+ExecStart=/usr/bin/bash -ec "if command -v ethtool >/dev/null 2>&1; then for nic in eth0 eth1; do [ -d \"/sys/class/net/\$nic\" ] || continue; ethtool --offload \"\$nic\" rx off tx off || true; ethtool -K \"\$nic\" gso off || true; done; fi"
 StandardOutput=journal+console
 StandardError=journal+console
 
 [Install]
-WantedBy=default.target' > /etc/systemd/system/disable-offload.service
+WantedBy=default.target
+OFFLOADEOF
 
 systemctl daemon-reload
-systemctl enable --now disable-offload
+systemctl enable disable-offload.service
+systemctl start disable-offload.service || true
 
-echo '[Unit]
+cat > /etc/systemd/system/load-br-netfilter.service << 'BRNFEOF'
+[Unit]
 Description=load br_netfilter
 After=network.target
 
@@ -274,7 +292,8 @@ StandardOutput=journal+console
 StandardError=journal+console
 
 [Install]
-WantedBy=default.target' > /etc/systemd/system/load-br-netfilter.service
+WantedBy=default.target
+BRNFEOF
 
 systemctl daemon-reload
 systemctl enable --now load-br-netfilter
@@ -304,21 +323,30 @@ fi
 VFSCRIPT
 chmod +x /usr/local/bin/create-sriov-vfs.sh
 
-echo '[Unit]
+cat > /etc/systemd/system/create-sriov-vfs.service << 'SRIOVSVCEOF'
+[Unit]
 Description=create sriov vfs
+After=systemd-udevd.service
 Before=network-pre.target
 
 [Service]
 Type=oneshot
+RemainAfterExit=yes
+# Needed on SELinux enforcing hosts where init_t may be blocked from sysfs writes.
+SELinuxContext=system_u:system_r:unconfined_service_t:s0
 ExecStart=/usr/local/bin/create-sriov-vfs.sh
 StandardOutput=journal+console
 StandardError=journal+console
 
 [Install]
-WantedBy=network-pre.target' > /etc/systemd/system/create-sriov-vfs.service
+WantedBy=network-pre.target
+SRIOVSVCEOF
 
+restorecon /etc/systemd/system/create-sriov-vfs.service || true
+test -s /etc/systemd/system/create-sriov-vfs.service
 systemctl daemon-reload
-systemctl enable --now create-sriov-vfs
+systemctl reenable create-sriov-vfs.service
+systemctl start create-sriov-vfs.service || true
 
 systemctl restart NetworkManager
 
@@ -326,7 +354,8 @@ grubby --update-kernel=DEFAULT --args=pci=realloc
 grubby --update-kernel=DEFAULT --args=iommu=pt
 grubby --update-kernel=DEFAULT --args=intel_iommu=on
 
-echo '[Unit]
+cat > /etc/systemd/system/load-vfio.service << 'VFIOEOF'
+[Unit]
 Description=load VFIO modules for DRA VFIO demos
 After=network.target
 
@@ -338,7 +367,8 @@ StandardOutput=journal+console
 StandardError=journal+console
 
 [Install]
-WantedBy=multi-user.target' > /etc/systemd/system/load-vfio.service
+WantedBy=multi-user.target
+VFIOEOF
 
 systemctl daemon-reload
 systemctl enable --now load-vfio
