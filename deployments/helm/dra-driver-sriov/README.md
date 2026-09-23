@@ -147,6 +147,7 @@ The kubelet plugin runs as a DaemonSet on all nodes where SR-IOV devices should 
 | `kubeletPlugin.configurationMode` | string | `STANDALONE` | Driver networking mode. Supported values: `STANDALONE` (default, with NRI-based interface management) and `MULTUS` (delegates network attachment to Multus). |
 | `kubeletPlugin.metrics.enabled` | bool | `false` | Enable the controller-runtime Prometheus metrics endpoint |
 | `kubeletPlugin.metrics.port` | int | `8080` | Host-network port for the metrics endpoint when enabled |
+| `kubeletPlugin.featureGates.DRAListTypeAttributes` | bool | `false` | Publish `resource.kubernetes.io/numaNode` as a SLIT-derived integer list. Requires the same feature gate on kube-apiserver and kube-scheduler. |
 | `kubeletPlugin.containers.init.securityContext` | object | `{}` | Security context for init container |
 | `kubeletPlugin.containers.init.resources` | object | `{}` | Resource requests/limits for init container |
 | `kubeletPlugin.containers.plugin.securityContext` | object | `{"privileged":true}` | Security context for plugin container (requires privileged) |
@@ -192,6 +193,20 @@ helm install dra-driver-sriov oci://ghcr.io/k8snetworkplumbingwg/dra-driver-srio
   --set logging.format=json
 ```
 
+### Installation with NUMA list attributes
+
+After enabling `DRAListTypeAttributes` on the kube-apiserver and
+kube-scheduler, enable the corresponding driver feature gate:
+
+```bash
+helm install dra-driver-sriov oci://ghcr.io/k8snetworkplumbingwg/dra-driver-sriov-chart \
+  -n dra-driver-sriov --create-namespace \
+  --set kubeletPlugin.featureGates.DRAListTypeAttributes=true
+```
+
+If the control-plane feature gate is disabled, leave this value at its default
+of `false`; otherwise ResourceSlice publication will fail.
+
 ### Installation with Resource Limits
 
 ```bash
@@ -208,4 +223,3 @@ helm install dra-driver-sriov oci://ghcr.io/k8snetworkplumbingwg/dra-driver-srio
 For more information about the DRA Driver for SR-IOV, visit:
 - [Project Repository](https://github.com/k8snetworkplumbingwg/dra-driver-sriov)
 - [Kubernetes DRA Documentation](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/)
-
