@@ -9,7 +9,9 @@ import (
 
 const (
 	DriverNamespace = "dra-driver-sriov"
-	DriverLabel     = "app.kubernetes.io/name=dra-driver-sriov-chart"
+	// DriverName is the DRA driver name the driver writes into status.devices.
+	DriverName  = "sriovnetwork.k8snetworkplumbingwg.io"
+	DriverLabel = "app.kubernetes.io/name=dra-driver-sriov-chart"
 )
 
 // RepoRoot returns the repository root (directory containing go.mod).

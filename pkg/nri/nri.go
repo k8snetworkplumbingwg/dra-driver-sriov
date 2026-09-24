@@ -3,40 +3,73 @@ package nri
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
+	"sync"
+	"sync/atomic"
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/containerd/nri/pkg/stub"
 	resourceapi "k8s.io/api/resource/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cni"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
-	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/podmanager"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
 // Plugin represents a NRI plugin catching RunPodSandbox and StopPodSandbox events to
 // call CNI ADD/DEL based on ResourceClaim attached to pods.
-type Plugin struct {
-	stub       stub.Stub
-	podManager *podmanager.PodManager
-	cniRuntime cni.Interface
-
-	k8sClient                   flags.ClientSets
-	networkDeviceDataUpdateChan chan types.NetworkDataChanStructList
-	interfacePrefix             string
-	enableDeviceMetadata        bool
-	metadataUpdater             types.MetadataUpdater
+// deviceStore is the part of the pod manager the plugin uses: the devices
+// prepared for a pod, and the network data recorded for one of them.
+type deviceStore interface {
+	GetDevicesByPodUID(podUID k8stypes.UID) (types.PreparedDevices, bool)
+	UpdatePreparedDeviceNetworkData(device *types.PreparedDevice, networkData *resourceapi.NetworkDeviceData, seq uint64) error
 }
 
+type Plugin struct {
+	stub       stub.Stub
+	podManager deviceStore
+	cniRuntime cni.Interface
+
+	k8sClient            flags.ClientSets
+	interfacePrefix      string
+	enableDeviceMetadata bool
+	metadataUpdater      types.MetadataUpdater
+	// statusBackoff paces one round of claim status retries. It is a field so
+	// unit tests can shorten it; consts.Backoff when unset.
+	statusBackoff wait.Backoff
+
+	// networkDeviceDataUpdateChan hands each started sandbox's network data to
+	// the runner. It is never closed: a hook may still be sending when the
+	// plugin stops, so the runner is stopped through its context instead.
+	networkDeviceDataUpdateChan chan types.NetworkDataChanStructList
+	// networkDataSeq numbers the observations handed to the runner, so a
+	// requeued update can be told apart from a later one for the same device.
+	networkDataSeq atomic.Uint64
+	runnerMu       sync.Mutex
+	runnerCancel   context.CancelFunc
+	runnerDone     chan struct{}
+}
+
+var (
+	errUpdateQueueFull = errors.New("network data update queue is full")
+	errClaimReleased   = errors.New("claim is no longer reserved for the pod")
+)
+
+// maxRequeues bounds how often a failed claim status update goes back on the
+// queue before it is dropped.
+const maxRequeues = 3
+
 // NewNRIPlugin creates a new NRI plugin.
-func NewNRIPlugin(config *types.Config, podManager *podmanager.PodManager, cniRuntime cni.Interface, metadataUpdater types.MetadataUpdater) (*Plugin, error) {
+func NewNRIPlugin(config *types.Config, podManager deviceStore, cniRuntime cni.Interface, metadataUpdater types.MetadataUpdater) (*Plugin, error) {
 	p := &Plugin{
 		podManager:                  podManager,
 		cniRuntime:                  cniRuntime,
@@ -44,6 +77,7 @@ func NewNRIPlugin(config *types.Config, podManager *podmanager.PodManager, cniRu
 		interfacePrefix:             config.Flags.DefaultInterfacePrefix,
 		enableDeviceMetadata:        config.Flags.EnableDeviceMetadata,
 		metadataUpdater:             metadataUpdater,
+		statusBackoff:               consts.Backoff,
 		networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 100),
 	}
 	var err error
@@ -75,14 +109,45 @@ func (p *Plugin) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start NRI plugin: %w", err)
 	}
 
-	go p.updateNetworkDeviceDataRunner(ctx)
+	p.startRunner(ctx)
 	return nil
 }
 
-// Stop stops the NRI plugin.
+// Stop stops the NRI plugin: the stub first, so no new hooks arrive, then the
+// runner. Updates still queued, or enqueued by a hook in flight, are dropped.
 func (p *Plugin) Stop() {
 	p.stub.Stop()
-	close(p.networkDeviceDataUpdateChan)
+	p.stopRunner()
+}
+
+// startRunner runs updateNetworkDeviceDataRunner until ctx ends or stopRunner
+// is called.
+func (p *Plugin) startRunner(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	p.runnerMu.Lock()
+	p.runnerCancel, p.runnerDone = cancel, done
+	p.runnerMu.Unlock()
+
+	go func() {
+		defer close(done)
+		p.updateNetworkDeviceDataRunner(ctx)
+	}()
+}
+
+// stopRunner cancels the runner, which abandons the update in progress and
+// the backlog, and waits for it to return. Before startRunner it does nothing;
+// a second call returns once the runner has stopped, with nothing left to do.
+func (p *Plugin) stopRunner() {
+	p.runnerMu.Lock()
+	defer p.runnerMu.Unlock()
+	if p.runnerCancel == nil {
+		return
+	}
+	p.runnerCancel()
+	<-p.runnerDone
+	p.runnerCancel, p.runnerDone = nil, nil
+	klog.V(2).Info("NRI network data runner stopped")
 }
 
 // RunPodSandbox runs the CNI ADD operation for each device in the devices list.
@@ -125,6 +190,7 @@ func (p *Plugin) RunPodSandbox(ctx context.Context, pod *api.PodSandbox) error {
 			NetworkDeviceData: networkDeviceData,
 			CNIConfig:         cniConfigMap,
 			CNIResult:         cniResultMap,
+			Seq:               p.networkDataSeq.Add(1),
 		})
 		logger.Info("Attached network", "deviceName", device.Device.DeviceName, "pod.UID", pod.Uid, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace, "networkDeviceData", networkDeviceData)
 	}
@@ -136,9 +202,15 @@ func (p *Plugin) RunPodSandbox(ctx context.Context, pod *api.PodSandbox) error {
 		return fmt.Errorf("failed to update request metadata before pod start: %w", err)
 	}
 
-	// Claim status and checkpoint updates are still done asynchronously to keep
-	// the NRI hook within its timeout budget.
-	p.networkDeviceDataUpdateChan <- networkDevicesData
+	// Claim status and checkpoint updates are done asynchronously to keep the
+	// NRI hook within its timeout budget. A full queue means the runner has
+	// fallen behind, typically on API retries, and waiting here would stall
+	// sandbox creation on that instead, so the update is dropped and logged.
+	select {
+	case p.networkDeviceDataUpdateChan <- networkDevicesData:
+	default:
+		logger.Error(errUpdateQueueFull, "Dropping claim status and checkpoint update", "pod.UID", pod.Uid, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace, "queueSize", cap(p.networkDeviceDataUpdateChan))
+	}
 	return nil
 }
 
@@ -175,17 +247,21 @@ func (p *Plugin) StopPodSandbox(ctx context.Context, pod *api.PodSandbox) error 
 func (p *Plugin) updateNetworkDeviceDataRunner(ctx context.Context) {
 	for {
 		select {
-		case networkDeviceDataList := <-p.networkDeviceDataUpdateChan:
-			p.updateNetworkDeviceData(ctx, networkDeviceDataList)
 		case <-ctx.Done():
 			return
+		case networkDeviceDataList := <-p.networkDeviceDataUpdateChan:
+			// select picks at random when both cases are ready.
+			if ctx.Err() != nil {
+				return
+			}
+			p.updateNetworkDeviceData(ctx, networkDeviceDataList)
 		}
 	}
 }
 
-// updateNetworkDeviceData updates claim status and persisted prepared-device state
-// for each pod in the networkDataChanStructList. This runs asynchronously so CNI
-// ADD/DEL operations are not blocked by API retries.
+// updateNetworkDeviceData persists the network data of each device in the
+// checkpoint and records it on its claim, one claim at a time. This runs
+// asynchronously so CNI ADD/DEL operations are not blocked by API retries.
 func (p *Plugin) updateNetworkDeviceData(ctx context.Context, networkDataChanStructList types.NetworkDataChanStructList) {
 	logger := klog.FromContext(ctx).WithName("updateNetworkDeviceData")
 	logger.Info("Updating network device data", "networkDataChanStructList", networkDataChanStructList)
@@ -193,52 +269,113 @@ func (p *Plugin) updateNetworkDeviceData(ctx context.Context, networkDataChanStr
 	groupedByClaim := p.groupNetworkDataByClaim(networkDataChanStructList)
 	logger.V(2).Info("Grouped network updates by claim", "claimCount", len(groupedByClaim))
 	for claimKey, claimUpdates := range groupedByClaim {
-		claim := &resourceapi.ResourceClaim{}
-		err := p.k8sClient.Client.Get(ctx, client.ObjectKey{
-			Name:      claimKey.name,
-			Namespace: claimKey.namespace,
-		}, claim)
-		if err != nil {
-			logger.Error(err, "Failed to get claim object", "claimName", claimKey.name, "claimNamespace", claimKey.namespace)
-			continue
+		if ctx.Err() != nil {
+			logger.V(2).Info("Dropping remaining claim network data updates on shutdown", "claim", claimKey.uid)
+			return
 		}
-		// The get is by name, so a claim deleted and recreated returns the new one.
-		// Its status has nothing to do with the devices prepared for the old claim.
-		if claimKey.uid != "" && claim.UID != claimKey.uid {
-			logger.V(2).Info("Skipping claim replaced under the same name", "claimName", claimKey.name, "claimNamespace", claimKey.namespace, "preparedFor", claimKey.uid, "found", claim.UID)
-			continue
-		}
-
-		statusDeviceIndex := p.buildClaimStatusDeviceIndex(claim)
-		hasClaimStatusUpdates := false
-		for _, networkDataChanStruct := range claimUpdates {
-			if networkDataChanStruct == nil || networkDataChanStruct.PreparedDevice == nil {
-				logger.V(2).Info("Skipping invalid network update entry", "claimName", claimKey.name, "claimNamespace", claimKey.namespace)
+		updates := make([]types.DeviceNetworkStatus, 0, len(claimUpdates))
+		// Updates whose data never reached the checkpoint are owed whatever the
+		// claim status write goes on to do, and are requeued on their own.
+		var unrecorded types.NetworkDataChanStructList
+		var unrecordedErr error
+		for _, item := range claimUpdates {
+			if ctx.Err() != nil {
+				logger.V(2).Info("Dropping the rest of the claim's network data updates on shutdown", "claim", claimKey.uid)
+				return
+			}
+			// An update is stale once a later observation of the device was
+			// recorded. Comparing data instead would also skip a rollback.
+			if item.PreparedDevice.NetworkDataSeq > item.Seq {
+				logger.V(2).Info("Skipping network data update superseded by a later observation", "claim", claimKey.uid, "deviceName", item.PreparedDevice.Device.DeviceName)
 				continue
 			}
-			if err := p.podManager.UpdatePreparedDeviceNetworkData(
-				networkDataChanStruct.PreparedDevice,
-				networkDataChanStruct.NetworkDeviceData,
-			); err != nil {
-				logger.Error(err, "Failed to persist device network data before claim update", "claim", claim.UID, "deviceName", networkDataChanStruct.PreparedDevice.Device.DeviceName)
-				continue
+			if !item.Checkpointed {
+				if err := p.podManager.UpdatePreparedDeviceNetworkData(item.PreparedDevice, item.NetworkDeviceData, item.Seq); err != nil {
+					logger.Error(err, "Failed to persist device network data before claim update", "claim", claimKey.uid, "deviceName", item.PreparedDevice.Device.DeviceName)
+					unrecorded = append(unrecorded, item)
+					unrecordedErr = err
+					continue
+				}
+				item.Checkpointed = true
 			}
-
-			if p.updateClaimDeviceStatus(claim, statusDeviceIndex, networkDataChanStruct) {
-				hasClaimStatusUpdates = true
-			}
+			updates = append(updates, deviceNetworkStatus(logger, item))
 		}
-
-		if !hasClaimStatusUpdates {
-			logger.V(2).Info("No claim status updates generated for claim", "claim", claim.UID, "claimName", claimKey.name, "claimNamespace", claimKey.namespace)
+		if len(updates) == 0 {
+			logger.V(2).Info("No claim status updates generated for claim", "claim", claimKey.uid, "claimName", claimKey.name, "claimNamespace", claimKey.namespace)
+			p.requeue(logger, claimKey, unrecorded, unrecordedErr)
 			continue
 		}
-		if err := p.updateClaimNetworkDataWithRetry(ctx, claim); err != nil {
-			logger.Error(err, "Failed to update claim network data", "claim", claim.UID)
-			continue
+
+		err := p.updateClaimNetworkDataWithRetry(ctx, claimKey, updates)
+		switch {
+		case err == nil:
+			logger.V(2).Info("Successfully updated claim network data", "claim", claimKey.uid, "claimName", claimKey.name, "claimNamespace", claimKey.namespace)
+			p.requeue(logger, claimKey, unrecorded, unrecordedErr)
+		case ctx.Err() != nil:
+			logger.V(2).Info("Dropping claim network data update on shutdown", "claim", claimKey.uid, "claimName", claimKey.name, "claimNamespace", claimKey.namespace)
+			return
+		case errors.Is(err, errClaimReleased), errors.Is(err, types.ErrDeviceNotAllocated), apierrors.IsNotFound(err):
+			// The devices were prepared for a pod and claim that are gone; there
+			// is nothing left for their network data to describe.
+			logger.V(2).Info("Skipping claim the pod no longer holds", "claim", claimKey.uid, "claimName", claimKey.name, "claimNamespace", claimKey.namespace, "pod.UID", claimKey.podUID, "reason", err.Error())
+		case types.IsPermanentStatusUpdateError(err):
+			// The claim refusing this write says nothing about the data another
+			// device of it still has to get into the checkpoint.
+			logger.Error(err, "Failed to update claim network data", "claim", claimKey.uid, "claimName", claimKey.name, "claimNamespace", claimKey.namespace)
+			p.requeue(logger, claimKey, unrecorded, unrecordedErr)
+		default:
+			p.requeue(logger, claimKey, claimUpdates, err)
 		}
-		logger.V(2).Info("Successfully updated claim network data", "claim", claim.UID, "claimName", claimKey.name, "claimNamespace", claimKey.namespace)
 	}
+}
+
+// requeue puts updates a claim still owes back on the queue, behind whatever is
+// waiting, up to maxRequeues times: those whose data never reached the
+// checkpoint, and every update of the claim when the status write failed. They
+// were queued together, so the first one carries the count for all of them.
+func (p *Plugin) requeue(logger klog.Logger, claimKey networkClaimKey, claimUpdates types.NetworkDataChanStructList, cause error) {
+	if len(claimUpdates) == 0 {
+		return
+	}
+	if claimUpdates[0].Requeues >= maxRequeues {
+		logger.Error(cause, "Giving up on claim network data update", "claim", claimKey.uid, "claimName", claimKey.name, "claimNamespace", claimKey.namespace, "requeues", claimUpdates[0].Requeues)
+		return
+	}
+	for _, item := range claimUpdates {
+		item.Requeues++
+	}
+	select {
+	case p.networkDeviceDataUpdateChan <- claimUpdates:
+		logger.V(2).Info("Requeued claim network data update", "claim", claimKey.uid, "claimName", claimKey.name, "claimNamespace", claimKey.namespace, "requeues", claimUpdates[0].Requeues, "error", cause.Error())
+	default:
+		logger.Error(errUpdateQueueFull, "Dropping claim network data update", "claim", claimKey.uid, "claimName", claimKey.name, "claimNamespace", claimKey.namespace, "cause", cause.Error())
+	}
+}
+
+// deviceNetworkStatus builds the status the runner records for one device.
+// The retry replays it on every attempt, so it is built once and, unlike the
+// event, shares nothing with the pod manager's PreparedDevice.
+func deviceNetworkStatus(logger klog.Logger, item *types.NetworkDataChanStruct) types.DeviceNetworkStatus {
+	// ShareID is left nil, PreparedDevice does not record one; the mutation
+	// resolves it from the claim's allocation.
+	status := types.DeviceNetworkStatus{
+		Driver:      consts.DriverName,
+		Pool:        item.PreparedDevice.Device.PoolName,
+		Device:      item.PreparedDevice.Device.DeviceName,
+		NetworkData: item.NetworkDeviceData.DeepCopy(),
+	}
+	combined := map[string]any{
+		"vfConfig":  item.PreparedDevice.Config,
+		"cniConfig": item.CNIConfig,
+		"cniResult": item.CNIResult,
+	}
+	raw, err := json.Marshal(combined)
+	if err != nil {
+		logger.Error(err, "Failed to marshal device status data, leaving it unchanged", "deviceName", status.Device)
+		return status
+	}
+	status.Data = &runtime.RawExtension{Raw: raw}
+	return status
 }
 
 type networkClaimKey struct {
@@ -247,16 +384,9 @@ type networkClaimKey struct {
 	// uid is the claim this device was prepared for, so a claim recreated under
 	// the same name is not mistaken for it.
 	uid k8stypes.UID
-}
-
-// claimStatusDeviceKey indexes status.devices by driver, pool and device. It
-// omits ShareID because this driver never populates it, so those three identify
-// a device today. If consumable-capacity ShareIDs are ever written, this must
-// include ShareID to stay 1:1 with the merge key in pkg/types (keyOf).
-type claimStatusDeviceKey struct {
-	driver string
-	pool   string
-	device string
+	// podUID is the pod the device was prepared for; the claim must still be
+	// reserved for it when its network data is written.
+	podUID k8stypes.UID
 }
 
 func (p *Plugin) groupNetworkDataByClaim(
@@ -272,55 +402,11 @@ func (p *Plugin) groupNetworkDataByClaim(
 			namespace: claim.Namespace,
 			name:      claim.Name,
 			uid:       claim.UID,
+			podUID:    k8stypes.UID(item.PreparedDevice.PodUID),
 		}
 		grouped[key] = append(grouped[key], item)
 	}
 	return grouped
-}
-
-func (p *Plugin) buildClaimStatusDeviceIndex(claim *resourceapi.ResourceClaim) map[claimStatusDeviceKey][]int {
-	index := make(map[claimStatusDeviceKey][]int, len(claim.Status.Devices))
-	for idx, device := range claim.Status.Devices {
-		key := claimStatusDeviceKey{
-			driver: device.Driver,
-			pool:   device.Pool,
-			device: device.Device,
-		}
-		index[key] = append(index[key], idx)
-	}
-	return index
-}
-
-func (p *Plugin) updateClaimDeviceStatus(
-	claim *resourceapi.ResourceClaim,
-	statusDeviceIndex map[claimStatusDeviceKey][]int,
-	networkDataChanStruct *types.NetworkDataChanStruct,
-) bool {
-	key := claimStatusDeviceKey{
-		driver: consts.DriverName,
-		pool:   networkDataChanStruct.PreparedDevice.Device.PoolName,
-		device: networkDataChanStruct.PreparedDevice.Device.DeviceName,
-	}
-	deviceIndexes, found := statusDeviceIndex[key]
-	if !found {
-		return false
-	}
-
-	// Build combined Data: { vfConfig, cniConfig, cniResult } once per update.
-	combined := map[string]interface{}{
-		"vfConfig":  networkDataChanStruct.PreparedDevice.Config,
-		"cniConfig": networkDataChanStruct.CNIConfig,
-		"cniResult": networkDataChanStruct.CNIResult,
-	}
-	raw, rawErr := json.Marshal(combined)
-
-	for _, idx := range deviceIndexes {
-		claim.Status.Devices[idx].NetworkData = networkDataChanStruct.NetworkDeviceData
-		if rawErr == nil {
-			claim.Status.Devices[idx].Data = &runtime.RawExtension{Raw: raw}
-		}
-	}
-	return true
 }
 
 // updateRequestMetadataBeforeSandboxStart refreshes kubelet plugin request metadata
@@ -439,20 +525,33 @@ func (p *Plugin) buildRequestMetadataUpdates(
 	return updates
 }
 
-// updateClaimNetworkDataWithRetry updates the network device data for a claim,
-// retrying on conflict and preserving device status entries owned by other
-// drivers. It shares the retry with the prepare path in pkg/driver.
-func (p *Plugin) updateClaimNetworkDataWithRetry(ctx context.Context, claim *resourceapi.ResourceClaim) error {
-	logger := klog.FromContext(ctx).WithName("updateClaimNetworkDataWithRetry")
-	if err := types.UpdateClaimStatusWithRetry(
-		ctx,
-		p.k8sClient.ResourceV1().ResourceClaims(claim.Namespace),
-		claim,
-		consts.DriverName,
-		consts.Backoff,
-	); err != nil {
-		logger.Error(err, "Failed to update claim status after retries", "claim", claim.UID)
-		return err
+// updateClaimNetworkDataWithRetry records updates on the claim, retrying on
+// conflict. Only these devices are patched, on the latest claim, so entries
+// other drivers or the prepare path wrote in the meantime survive. It shares
+// the retry with the prepare path in pkg/driver.
+func (p *Plugin) updateClaimNetworkDataWithRetry(ctx context.Context, claimKey networkClaimKey, updates []types.DeviceNetworkStatus) error {
+	patch := types.PatchDeviceNetworkStatuses(updates)
+	mutate := func(claim *resourceapi.ResourceClaim) (bool, error) {
+		// Once the pod has released the claim its network data describes an
+		// attachment that is gone, or one that belongs to the pod that has since
+		// taken the claim over.
+		if claimKey.podUID != "" && !slices.ContainsFunc(claim.Status.ReservedFor, func(consumer resourceapi.ResourceClaimConsumerReference) bool {
+			return consumer.UID == claimKey.podUID
+		}) {
+			return false, errClaimReleased
+		}
+		return patch(claim)
 	}
-	return nil
+	backoff := p.statusBackoff
+	if backoff.Steps == 0 {
+		backoff = consts.Backoff
+	}
+	return types.UpdateClaimStatusWithRetry(
+		ctx,
+		p.k8sClient.ResourceV1().ResourceClaims(claimKey.namespace),
+		claimKey.name,
+		claimKey.uid,
+		backoff,
+		mutate,
+	)
 }
