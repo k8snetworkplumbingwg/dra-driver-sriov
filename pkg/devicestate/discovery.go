@@ -151,6 +151,32 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			// Check RDMA capability for this VF
 			rdmaCapable := host.GetHelpers().VerifyRDMACapability(vfInfo.PciAddress)
 
+			// vDPA management type ("vhost"/"virtio"), empty when the VF exposes no vDPA device.
+			vdpaType := host.GetHelpers().GetVdpaType(vfInfo.PciAddress)
+
+			// InfiniBand partition key, only applicable when the PF is an IB link.
+			pKey := ""
+			if pfInfo.LinkType == consts.LinkTypeInfiniband {
+				pKey = host.GetHelpers().GetIBPKey(vfInfo.PciAddress)
+			}
+
+			// Host-side switchdev representor, only applicable when the PF is in
+			// switchdev mode. Surfaced so tc-flower hardware offload tooling can
+			// correlate an allocated VF with its representor. A lookup failure is
+			// non-fatal: the representor attributes are simply omitted.
+			representor := ""
+			physPortName := ""
+			if pfInfo.EswitchMode == consts.EswitchModeSwitchdev {
+				rep, ppn, err := host.GetHelpers().GetVFRepresentor(pfInfo.Address, vfInfo.VFID)
+				if err != nil {
+					logger.V(2).Info("Failed to get VF representor, omitting representor attributes",
+						"pf", pfInfo.NetName, "vfAddress", vfInfo.PciAddress, "vfID", vfInfo.VFID, "err", err)
+				} else {
+					representor = rep
+					physPortName = ppn
+				}
+			}
+
 			logger.V(2).Info("Adding VF device to resource list",
 				"deviceName", deviceName,
 				"vfAddress", vfInfo.PciAddress,
@@ -158,7 +184,11 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 				"vfDeviceID", vfInfo.DeviceID,
 				"pfDeviceID", pfInfo.DeviceID,
 				"pf", pfInfo.NetName,
-				"rdmaCapable", rdmaCapable)
+				"rdmaCapable", rdmaCapable,
+				"vdpaType", vdpaType,
+				"pKey", pKey,
+				"representor", representor,
+				"physPortName", physPortName)
 
 			// Build device attributes
 			attributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
@@ -208,6 +238,30 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 				consts.AttributeNUMANode: {
 					IntValue: numaNodeIntPtr,
 				},
+			}
+
+			// Selector-parity attributes: only published when the hardware exposes
+			// the corresponding capability, so CEL selectors can distinguish devices
+			// that have it from those that do not.
+			if vdpaType != "" {
+				attributes[consts.AttributeVdpaType] = resourceapi.DeviceAttribute{
+					StringValue: ptr.To(vdpaType),
+				}
+			}
+			if pKey != "" {
+				attributes[consts.AttributePKey] = resourceapi.DeviceAttribute{
+					StringValue: ptr.To(pKey),
+				}
+			}
+			if representor != "" {
+				attributes[consts.AttributeRepresentor] = resourceapi.DeviceAttribute{
+					StringValue: ptr.To(representor),
+				}
+			}
+			if physPortName != "" {
+				attributes[consts.AttributePhysPortName] = resourceapi.DeviceAttribute{
+					StringValue: ptr.To(physPortName),
+				}
 			}
 
 			resourceList[deviceName] = resourceapi.Device{
