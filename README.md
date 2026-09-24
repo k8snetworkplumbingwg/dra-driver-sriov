@@ -450,6 +450,13 @@ Demonstrates independent claims mapped to different Multus networks:
 - Two separate claim references in one pod (`sriov1`, `sriov2`)
 - Useful for isolated control/data-plane style topologies
 
+#### Slingshot CXI Device (`demo/cxi-device/`)
+Shows allocation of Slingshot Cassini (CXI) VFs:
+- Selects VFs via the `cxiCapable` device attribute instead of Cassini PCI IDs
+- The driver mounts the VF's `/dev/cxiN` character device automatically, the same
+  way RDMA character devices are mounted — no opaque config required
+- Exposes `SRIOVNETWORK_<DEVICE>_CXI_DEVICE` in the container environment
+
 ## Project Structure
 
 ```
@@ -482,6 +489,7 @@ Demonstrates independent claims mapped to different Multus networks:
 │   ├── resource-alignment/        # Resource alignment and placement examples
 │   ├── extended-resource/         # Extended resource based examples
 │   ├── vfio-driver/               # VFIO-PCI driver configuration example
+│   ├── cxi-device/                # Slingshot Cassini (CXI) VF example
 │   ├── multus-integration-single-vf/ # Multus single VF integration
 │   ├── multus-integration-multiple-vf/ # Multus multiple VF integration
 │   └── multus-integration-multiple-resourceclaim/ # Multus multiple claims integration

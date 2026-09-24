@@ -151,6 +151,9 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			// Check RDMA capability for this VF
 			rdmaCapable := host.GetHelpers().VerifyRDMACapability(vfInfo.PciAddress)
 
+			// Check for an associated Cassini (CXI) char device
+			cxiCapable := host.GetHelpers().HasCxiDevice(vfInfo.PciAddress)
+
 			logger.V(2).Info("Adding VF device to resource list",
 				"deviceName", deviceName,
 				"vfAddress", vfInfo.PciAddress,
@@ -158,7 +161,8 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 				"vfDeviceID", vfInfo.DeviceID,
 				"pfDeviceID", pfInfo.DeviceID,
 				"pf", pfInfo.NetName,
-				"rdmaCapable", rdmaCapable)
+				"rdmaCapable", rdmaCapable,
+				"cxiCapable", cxiCapable)
 
 			// Build device attributes
 			attributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
@@ -203,6 +207,9 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 				},
 				consts.AttributeRDMACapable: {
 					BoolValue: ptr.To(rdmaCapable),
+				},
+				consts.AttributeCxiCapable: {
+					BoolValue: ptr.To(cxiCapable),
 				},
 				// compatibility attributes
 				consts.AttributeNUMANode: {
