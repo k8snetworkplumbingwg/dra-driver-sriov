@@ -30,17 +30,23 @@ const (
 	DriverPluginCheckpointFile = "checkpoint.json"
 	MultusAttributePrefix      = "k8s.cni.cncf.io"
 
-	AttributePciAddress         = DriverName + "/pciAddress"
-	AttributePFName             = DriverName + "/PFName"
-	AttributeEswitchMode        = DriverName + "/EswitchMode"
-	AttributeVendorID           = DriverName + "/vendor"
-	AttributeDeviceID           = DriverName + "/deviceID"
-	AttributePFDeviceID         = DriverName + "/pfDeviceID"
-	AttributeVFID               = DriverName + "/vfID"
-	AttributeResourceName       = DriverName + "/resourceName"
-	AttributeLinkType           = DriverName + "/linkType"
-	AttributeRDMACapable        = DriverName + "/rdmaCapable"
-	AttributeInterfaceName      = DriverName + "/interfaceName"
+	AttributePciAddress    = DriverName + "/pciAddress"
+	AttributePFName        = DriverName + "/PFName"
+	AttributeEswitchMode   = DriverName + "/EswitchMode"
+	AttributeVendorID      = DriverName + "/vendor"
+	AttributeDeviceID      = DriverName + "/deviceID"
+	AttributePFDeviceID    = DriverName + "/pfDeviceID"
+	AttributeVFID          = DriverName + "/vfID"
+	AttributeResourceName  = DriverName + "/resourceName"
+	AttributeLinkType      = DriverName + "/linkType"
+	AttributeRDMACapable   = DriverName + "/rdmaCapable"
+	AttributeInterfaceName = DriverName + "/interfaceName"
+	// AttributeVdpaType is the vDPA management type of the VF ("vhost" or "virtio").
+	// It is only published when the VF exposes a vDPA device.
+	AttributeVdpaType = DriverName + "/vdpaType"
+	// AttributePKey is the InfiniBand partition key of the VF.
+	// It is only published for InfiniBand links.
+	AttributePKey               = DriverName + "/pKey"
 	AttributeMultusDeviceID     = MultusAttributePrefix + "/deviceID"
 	AttributeMultusResourceName = MultusAttributePrefix + "/resourceName"
 	// Use upstream Kubernetes standard attribute prefix for pciAddress
@@ -69,6 +75,10 @@ const (
 
 	// RDMA device constants
 	SysClassInfiniband = "/sys/class/infiniband"
+
+	// vDPA type constants (as reported via the vdpa device's bound driver)
+	VdpaTypeVhost  = "vhost"
+	VdpaTypeVirtio = "virtio"
 )
 
 // Kubernetes standard attributes
