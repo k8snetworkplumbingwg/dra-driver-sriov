@@ -11,7 +11,7 @@ require (
 	github.com/k8snetworkplumbingwg/network-attachment-definition-client v1.7.7
 	github.com/k8snetworkplumbingwg/sriovnet v1.3.0
 	github.com/onsi/ginkgo/v2 v2.33.0
-	github.com/onsi/gomega v1.43.1
+	github.com/onsi/gomega v1.44.0
 	github.com/spf13/pflag v1.0.10
 	github.com/urfave/cli/v2 v2.27.7
 	github.com/vishvananda/netlink v1.3.2-0.20251101063711-6e61cd407d1d
