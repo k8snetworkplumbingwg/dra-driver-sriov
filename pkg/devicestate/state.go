@@ -363,6 +363,14 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 	deviceNodes = append(deviceNodes, rdmaDeviceNodes...)
 	envs = append(envs, rdmaEnvs...)
 
+	// Add the Cassini (CXI) character device if applicable
+	cxiDeviceNodes, cxiEnvs, err := s.handleCxiDevice(ctx, deviceInfo, pciAddress, result.Device)
+	if err != nil {
+		return nil, restoreDriverOnError(fmt.Errorf("error handling CXI device: %w", err))
+	}
+	deviceNodes = append(deviceNodes, cxiDeviceNodes...)
+	envs = append(envs, cxiEnvs...)
+
 	edits := &cdispec.ContainerEdits{
 		Env:         envs,
 		DeviceNodes: deviceNodes,
@@ -479,6 +487,42 @@ func (s *Manager) handleRDMADevice(ctx context.Context, deviceInfo resourceapi.D
 	// Add RDMA device name to environment variables
 	envs = append(envs, fmt.Sprintf("SRIOVNETWORK_%s_RDMA_DEVICE=%s",
 		devicePrefix, rdmaDevice))
+
+	return deviceNodes, envs, nil
+}
+
+// handleCxiDevice returns the CDI device node and environment variables for the Cassini (CXI)
+// char device of a VF. It returns nil device nodes and environment variables when the device
+// is not CXI capable, and an error when the char device cannot be resolved.
+func (s *Manager) handleCxiDevice(ctx context.Context, deviceInfo resourceapi.Device, pciAddress, deviceName string) ([]*cdispec.DeviceNode, []string, error) {
+	logger := klog.FromContext(ctx).WithName("handleCxiDevice")
+
+	if cxiCapableAttr, ok := deviceInfo.Attributes[consts.AttributeCxiCapable]; !ok || cxiCapableAttr.BoolValue == nil || !*cxiCapableAttr.BoolValue {
+		return nil, nil, nil
+	}
+
+	// The attribute is from discovery; the char device is gone if the VF was since bound to a userspace driver.
+	if !host.GetHelpers().HasCxiDevice(pciAddress) {
+		logger.V(2).Info("No CXI device found for PCI address (device may be bound to vfio-pci)", "device", pciAddress)
+		return nil, nil, nil
+	}
+
+	cxiDevice, err := host.GetHelpers().GetCxiDeviceFile(pciAddress)
+	if err != nil {
+		logger.Error(err, "Failed to get CXI character device", "device", pciAddress)
+		return nil, nil, err
+	}
+
+	deviceNodes := []*cdispec.DeviceNode{{
+		Path:     cxiDevice,
+		HostPath: cxiDevice,
+		Type:     "c", // character device
+	}}
+
+	devicePrefix := strings.ReplaceAll(deviceName, "-", "_")
+	envs := []string{fmt.Sprintf("SRIOVNETWORK_%s_CXI_DEVICE=%s", devicePrefix, cxiDevice)}
+
+	logger.V(2).Info("Added CXI character device for device", "device", pciAddress, "cxiDevice", cxiDevice)
 
 	return deviceNodes, envs, nil
 }

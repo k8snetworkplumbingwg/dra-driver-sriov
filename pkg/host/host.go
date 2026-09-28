@@ -132,6 +132,10 @@ type Interface interface {
 	GetRDMADevicesForPCI(pciAddr string) []string
 	VerifyRDMACapability(pciAddr string) bool
 	GetRDMACharDevices(rdmaDeviceName string) ([]string, error)
+
+	// CXI (Slingshot Cassini) device functions
+	HasCxiDevice(pciAddr string) bool
+	GetCxiDeviceFile(pciAddr string) (string, error)
 }
 
 // Host provides unified host system functionality for SR-IOV, PCI operations, and driver management
@@ -904,4 +908,45 @@ func (h *Host) GetRDMACharDevices(rdmaDeviceName string) ([]string, error) {
 	h.log.Info("GetRDMACharDevices(): found character devices",
 		"rdmaDevice", rdmaDeviceName, "charDevices", charDevices)
 	return charDevices, nil
+}
+
+// CXI (Slingshot Cassini) Device Functions
+
+// HasCxiDevice reports whether the PCI device at pciAddr has exactly one associated Cassini
+// (CXI) char device, matching what GetCxiDeviceFile is able to resolve. It returns false when
+// the sysfs cxi directory is missing, unreadable, empty, or holds more than one entry.
+func (h *Host) HasCxiDevice(pciAddr string) bool {
+	entries, err := os.ReadDir(buildSysBusPciPath(pciAddr, consts.SysBusPciCxiDir))
+	if err != nil {
+		return false
+	}
+	return len(entries) == 1
+}
+
+// GetCxiDeviceFile returns the Cassini (CXI) char device file (e.g. /dev/cxi4) for the PCI
+// device at pciAddr. It returns an error when the sysfs cxi directory is unreadable, empty,
+// or holds more than one entry.
+func (h *Host) GetCxiDeviceFile(pciAddr string) (string, error) {
+	cxiDir := buildSysBusPciPath(pciAddr, consts.SysBusPciCxiDir)
+
+	entries, err := os.ReadDir(cxiDir)
+	if err != nil {
+		return "", fmt.Errorf("GetCxiDeviceFile(): failed to read cxi directory for device %s: %w", pciAddr, err)
+	}
+
+	if len(entries) == 0 {
+		return "", fmt.Errorf("GetCxiDeviceFile(): no cxi device found under %s", cxiDir)
+	}
+
+	if len(entries) > 1 {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		return "", fmt.Errorf("GetCxiDeviceFile(): unexpected multiple cxi entries for device %s: %v", pciAddr, names)
+	}
+
+	devFile := filepath.Join(consts.DevDir, entries[0].Name())
+	h.log.V(2).Info("GetCxiDeviceFile(): resolved cxi device file", "device", pciAddr, "devFile", devFile)
+	return devFile, nil
 }

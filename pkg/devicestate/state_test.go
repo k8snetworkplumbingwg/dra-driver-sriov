@@ -1503,6 +1503,111 @@ var _ = Describe("Manager", Serial, func() {
 		})
 	})
 
+	Context("handleCxiDevice", func() {
+		var (
+			mockCtrl    *gomock.Controller
+			mockHost    *mock_host.MockInterface
+			origHelpers host.Interface
+			manager     *Manager
+		)
+
+		const (
+			pciAddress = "0000:21:00.1"
+			deviceName = "device-1"
+		)
+
+		BeforeEach(func() {
+			mockCtrl = gomock.NewController(GinkgoT())
+			mockHost = mock_host.NewMockInterface(mockCtrl)
+			_ = host.GetHelpers()
+			origHelpers = host.Helpers
+			host.Helpers = mockHost
+
+			manager = &Manager{}
+		})
+
+		AfterEach(func() {
+			host.Helpers = origHelpers
+			mockCtrl.Finish()
+		})
+
+		It("should return the cxi device node and environment variable", func() {
+			deviceInfo := resourceapi.Device{
+				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+					consts.AttributeCxiCapable: {BoolValue: ptr.To(true)},
+				},
+			}
+
+			mockHost.EXPECT().HasCxiDevice(pciAddress).Return(true)
+			mockHost.EXPECT().GetCxiDeviceFile(pciAddress).Return("/dev/cxi4", nil)
+
+			deviceNodes, envs, err := manager.handleCxiDevice(context.Background(), deviceInfo, pciAddress, deviceName)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(deviceNodes).To(HaveLen(1))
+			Expect(deviceNodes[0].Path).To(Equal("/dev/cxi4"))
+			Expect(deviceNodes[0].HostPath).To(Equal("/dev/cxi4"))
+			Expect(deviceNodes[0].Type).To(Equal("c"))
+			Expect(envs).To(ConsistOf("SRIOVNETWORK_device_1_CXI_DEVICE=/dev/cxi4"))
+		})
+
+		It("should return empty lists when device is not CXI capable", func() {
+			deviceInfo := resourceapi.Device{
+				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+					consts.AttributeCxiCapable: {BoolValue: ptr.To(false)},
+				},
+			}
+
+			deviceNodes, envs, err := manager.handleCxiDevice(context.Background(), deviceInfo, pciAddress, deviceName)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(deviceNodes).To(BeEmpty())
+			Expect(envs).To(BeEmpty())
+		})
+
+		It("should return empty lists when the cxiCapable attribute is absent", func() {
+			deviceNodes, envs, err := manager.handleCxiDevice(context.Background(), resourceapi.Device{}, pciAddress, deviceName)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(deviceNodes).To(BeEmpty())
+			Expect(envs).To(BeEmpty())
+		})
+
+		It("should skip when the char device is gone after binding to a userspace driver", func() {
+			deviceInfo := resourceapi.Device{
+				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+					consts.AttributeCxiCapable: {BoolValue: ptr.To(true)},
+				},
+			}
+
+			mockHost.EXPECT().HasCxiDevice(pciAddress).Return(false)
+
+			deviceNodes, envs, err := manager.handleCxiDevice(context.Background(), deviceInfo, pciAddress, deviceName)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(deviceNodes).To(BeEmpty())
+			Expect(envs).To(BeEmpty())
+		})
+
+		It("should return error when GetCxiDeviceFile fails", func() {
+			deviceInfo := resourceapi.Device{
+				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+					consts.AttributeCxiCapable: {BoolValue: ptr.To(true)},
+				},
+			}
+
+			mockHost.EXPECT().HasCxiDevice(pciAddress).Return(true)
+			mockHost.EXPECT().GetCxiDeviceFile(pciAddress).Return("", fmt.Errorf("no cxi device found"))
+
+			deviceNodes, envs, err := manager.handleCxiDevice(context.Background(), deviceInfo, pciAddress, deviceName)
+
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("no cxi device found"))
+			Expect(deviceNodes).To(BeNil())
+			Expect(envs).To(BeNil())
+		})
+	})
+
 	Context("MULTUS/STANDALONE behavior", func() {
 		It("skips ifName generation and NetAttachDef fetch in MULTUS", func() {
 			tmp, err := os.MkdirTemp("", "cdi-root")

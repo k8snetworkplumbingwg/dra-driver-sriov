@@ -911,4 +911,83 @@ vhost_net 32768 1 tun, Live 0xffffffffa0456000`),
 			})
 		})
 	})
+
+	Describe("CXI Device Functions", func() {
+		Context("HasCxiDevice", func() {
+			It("should return false when the cxi directory does not exist", func() {
+				fs.Dirs = []string{"sys/bus/pci/devices/0000:21:00.1"}
+				tearDown = fs.Use()
+
+				Expect(h.HasCxiDevice("0000:21:00.1")).To(BeFalse())
+			})
+
+			It("should return false when the cxi directory is empty", func() {
+				fs.Dirs = []string{"sys/bus/pci/devices/0000:21:00.1/cxi"}
+				tearDown = fs.Use()
+
+				Expect(h.HasCxiDevice("0000:21:00.1")).To(BeFalse())
+			})
+
+			It("should return true when a cxi device is present", func() {
+				fs.Dirs = []string{"sys/bus/pci/devices/0000:21:00.1/cxi/cxi4"}
+				tearDown = fs.Use()
+
+				Expect(h.HasCxiDevice("0000:21:00.1")).To(BeTrue())
+			})
+
+			It("should return false when multiple cxi entries are present", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:21:00.1/cxi/cxi4",
+					"sys/bus/pci/devices/0000:21:00.1/cxi/cxi5",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.HasCxiDevice("0000:21:00.1")).To(BeFalse())
+			})
+		})
+
+		Context("GetCxiDeviceFile", func() {
+			It("should return the char device path for the cxi device", func() {
+				fs.Dirs = []string{"sys/bus/pci/devices/0000:21:00.1/cxi/cxi4"}
+				tearDown = fs.Use()
+
+				devFile, err := h.GetCxiDeviceFile("0000:21:00.1")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(devFile).To(Equal("/dev/cxi4"))
+			})
+
+			It("should return an error when the cxi directory does not exist", func() {
+				fs.Dirs = []string{"sys/bus/pci/devices/0000:21:00.1"}
+				tearDown = fs.Use()
+
+				devFile, err := h.GetCxiDeviceFile("0000:21:00.1")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("failed to read cxi directory"))
+				Expect(devFile).To(BeEmpty())
+			})
+
+			It("should return an error when the cxi directory is empty", func() {
+				fs.Dirs = []string{"sys/bus/pci/devices/0000:21:00.1/cxi"}
+				tearDown = fs.Use()
+
+				devFile, err := h.GetCxiDeviceFile("0000:21:00.1")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("no cxi device found"))
+				Expect(devFile).To(BeEmpty())
+			})
+
+			It("should return an error when multiple cxi entries are present", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:21:00.1/cxi/cxi4",
+					"sys/bus/pci/devices/0000:21:00.1/cxi/cxi5",
+				}
+				tearDown = fs.Use()
+
+				devFile, err := h.GetCxiDeviceFile("0000:21:00.1")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("unexpected multiple cxi entries"))
+				Expect(devFile).To(BeEmpty())
+			})
+		})
+	})
 })

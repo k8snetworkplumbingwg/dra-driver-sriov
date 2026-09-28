@@ -1,0 +1,104 @@
+---
+# Advertise Slingshot Cassini (CXI) VFs. Adjust namespace to match the driver's
+# Helm release namespace.
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: SriovResourcePolicy
+metadata:
+  name: cxi-devices
+  namespace: dra-driver-sriov
+spec:
+  configs:
+  - resourceFilters:
+    - vendors: ["1590"]
+      devices: ["0372"]
+---
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: cxi-vf
+spec:
+  selectors:
+    - cel:
+        expression: >-
+          device.driver == 'sriovnetwork.k8snetworkplumbingwg.io' &&
+          device.attributes['sriovnetwork.k8snetworkplumbingwg.io'].cxiCapable
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cxi-test
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: cxi-net
+  namespace: cxi-test
+spec:
+  config: |-
+    {
+        "cniVersion": "1.0.0",
+        "name": "cxi-net",
+        "type": "sriov",
+        "logLevel": "info",
+        "ipam": {
+            "type": "host-local",
+            "ranges": [
+                [
+                    {
+                        "subnet": "10.0.1.0/24"
+                    }
+                ]
+            ]
+        }
+    }
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  namespace: cxi-test
+  name: cxi-vf
+spec:
+  spec:
+    devices:
+      requests:
+      - name: vf
+        exactly:
+          deviceClassName: cxi-vf
+      config:
+      - requests: ["vf"]
+        opaque:
+          driver: sriovnetwork.k8snetworkplumbingwg.io
+          parameters:
+            apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+            kind: VfConfig
+            ifName: hsn1
+            netAttachDefName: cxi-net
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: cxi-test
+  name: cxi-pod
+  labels:
+    app: cxi
+spec:
+  terminationGracePeriodSeconds: 2
+  containers:
+  - name: ctr0
+    image: quay.io/schseba/toolbox:latest
+    command:
+      - /bin/bash
+      - -c
+      - sleep INF
+    securityContext:
+      runAsUser: 0
+      capabilities:
+        add:
+          - NET_ADMIN
+          - NET_RAW
+    resources:
+      claims:
+      - name: vf
+  resourceClaims:
+  - name: vf
+    resourceClaimTemplateName: cxi-vf
