@@ -25,9 +25,12 @@ type Handler struct {
 	cache *cdiapi.Cache
 }
 
+// NewHandler returns a Handler that writes and removes CDI Spec files.
 func NewHandler(cdiRootPath string) (*Handler, error) {
+	// Nothing reads this cache back, so the auto-refresh watcher is unnecessary.
 	cache, err := cdiapi.NewCache(
 		cdiapi.WithSpecDirs(cdiRootPath),
+		cdiapi.WithAutoRefresh(false),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create a new CDI cache: %w", err)
