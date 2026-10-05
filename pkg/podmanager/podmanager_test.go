@@ -490,7 +490,7 @@ var _ = Describe("PodManager", func() {
 				InterfaceName: "net1",
 				IPs:           []string{"10.10.0.10/24"},
 			}
-			err = pm.UpdatePreparedDeviceNetworkData(devices[0], networkData)
+			err = pm.UpdatePreparedDeviceNetworkData(devices[0], networkData, 1)
 			Expect(err).NotTo(HaveOccurred())
 
 			pm2, err := podmanager.NewPodManager(config)

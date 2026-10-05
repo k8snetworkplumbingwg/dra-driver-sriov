@@ -58,6 +58,9 @@ var _ = Describe("demo/single-vf-claim", Label(framework.LabelStandalone), Seria
 		By("checking SR-IOV interface has an address")
 		clients.ExpectInterfaceHasAddress(ctx, ns, podName, container, ifName)
 
+		By("waiting for the driver to record the network data on the ResourceClaim")
+		clients.WaitForResourceClaimDeviceNetworkData(ctx, ns, claimName, ifName)
+
 		By("deleting pod to reclaim")
 		err = clients.Clientset.CoreV1().Pods(ns).Delete(ctx, podName, metav1.DeleteOptions{})
 		Expect(err).NotTo(HaveOccurred())

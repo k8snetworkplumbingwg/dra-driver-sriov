@@ -69,7 +69,7 @@ var _ = Describe("Driver", func() {
 		It("errors when ReservedFor is empty", func() {
 			d := &Driver{}
 			claim := &resourceapi.ResourceClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "rc", UID: k8stypes.UID("rc-uid")}}
-			res := d.prepareResourceClaim(context.Background(), new(int), claim)
+			res := d.prepareResourceClaim(context.Background(), context.Background(), new(int), claim)
 			Expect(res.Err).To(HaveOccurred())
 			Expect(res.Err.Error()).To(ContainSubstring("no pod info found"))
 		})
@@ -78,7 +78,7 @@ var _ = Describe("Driver", func() {
 			d := &Driver{}
 			claim := &resourceapi.ResourceClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "rc", UID: k8stypes.UID("rc-uid")}}
 			claim.Status.ReservedFor = []resourceapi.ResourceClaimConsumerReference{{UID: "a"}, {UID: "b"}}
-			res := d.prepareResourceClaim(context.Background(), new(int), claim)
+			res := d.prepareResourceClaim(context.Background(), context.Background(), new(int), claim)
 			Expect(res.Err).To(HaveOccurred())
 			Expect(res.Err.Error()).To(ContainSubstring("multiple pods"))
 		})
@@ -87,7 +87,7 @@ var _ = Describe("Driver", func() {
 			d := &Driver{}
 			claim := &resourceapi.ResourceClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "rc", UID: k8stypes.UID("rc-uid")}}
 			claim.Status.ReservedFor = []resourceapi.ResourceClaimConsumerReference{{UID: k8stypes.UID("pod-uid")}}
-			res := d.prepareResourceClaim(context.Background(), new(int), claim)
+			res := d.prepareResourceClaim(context.Background(), context.Background(), new(int), claim)
 			Expect(res.Err).To(HaveOccurred())
 			Expect(res.Err.Error()).To(ContainSubstring("claim not yet allocated"))
 		})

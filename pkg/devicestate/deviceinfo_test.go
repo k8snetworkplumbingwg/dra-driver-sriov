@@ -327,7 +327,7 @@ var _ = Describe("DeviceInfo compatibility", Serial, func() {
 		}
 
 		ifNameIndex := 0
-		_, err = manager.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+		_, _, err = manager.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("unable to create device-info files for claim"))
 	})
@@ -402,7 +402,7 @@ var _ = Describe("DeviceInfo compatibility", Serial, func() {
 		}
 
 		ifNameIndex := 0
-		_, err = manager.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+		_, _, err = manager.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fakeUtils.saveCalls).To(BeEmpty())
 	})

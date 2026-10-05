@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	resourceapi "k8s.io/api/resource/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -15,6 +16,14 @@ import (
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
+// prepareStatusTimeout bounds the claim status writes of one
+// PrepareResourceClaims call, all of them together. The writes are
+// best-effort, and the kubelet gives the whole call 45s, so conflict retries
+// must not eat into that; in STANDALONE mode the NRI runner adds a missing
+// entry when it records the network data. It is a variable so unit tests can
+// shorten it.
+var prepareStatusTimeout = 10 * time.Second
+
 func (d *Driver) PrepareResourceClaims(ctx context.Context, claims []*resourceapi.ResourceClaim) (map[k8stypes.UID]kubeletplugin.PrepareResult, error) {
 	result := make(map[k8stypes.UID]kubeletplugin.PrepareResult)
 	if len(claims) == 0 {
@@ -23,13 +32,16 @@ func (d *Driver) PrepareResourceClaims(ctx context.Context, claims []*resourceap
 	logger := klog.FromContext(ctx).WithName("PrepareResourceClaims")
 	logger.V(3).Info("claims", "claims", claims)
 
+	statusCtx, cancelStatus := context.WithTimeout(ctx, prepareStatusTimeout)
+	defer cancelStatus()
+
 	// we share this between all the claims so we can enumerate network interfaces
 	ifNameIndex := 0
 	// let's prepare the claims
 	for _, claim := range claims {
 		logger.V(1).Info("Preparing claim", "claim", claim.UID)
 		logger.V(3).Info("Claim", "claim", claim)
-		result[claim.UID] = d.prepareResourceClaim(ctx, &ifNameIndex, claim)
+		result[claim.UID] = d.prepareResourceClaim(ctx, statusCtx, &ifNameIndex, claim)
 		logger.V(1).Info("Prepared claim", "claim", claim.UID, "result", result[claim.UID])
 		if result[claim.UID].Err != nil {
 			logger.Error(result[claim.UID].Err, "failed to prepare resource claim", "claim", claim)
@@ -104,7 +116,9 @@ func (d *Driver) rollbackPreparedClaims(ctx context.Context, claims []*resourcea
 	return nil
 }
 
-func (d *Driver) prepareResourceClaim(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
+// prepareResourceClaim prepares one claim's devices. statusCtx bounds the
+// claim status write; it is shared by every claim of the call.
+func (d *Driver) prepareResourceClaim(ctx, statusCtx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
 	logger := klog.FromContext(ctx).WithName("prepareResourceClaim")
 
 	// Get pod info from claim
@@ -139,7 +153,7 @@ func (d *Driver) prepareResourceClaim(ctx context.Context, ifNameIndex *int, cla
 	}
 
 	// if the pod claim is not prepared, prepare the devices for the claim
-	preparedDevices, err := d.deviceStateManager.PrepareDevicesForClaim(ctx, ifNameIndex, claim)
+	preparedDevices, deviceStatuses, err := d.deviceStateManager.PrepareDevicesForClaim(ctx, ifNameIndex, claim)
 	if err != nil {
 		logger.Error(err, "Error preparing devices for claim", "claim", claim.UID)
 		return kubeletplugin.PrepareResult{
@@ -165,16 +179,17 @@ func (d *Driver) prepareResourceClaim(ctx context.Context, ifNameIndex *int, cla
 		}
 	}
 
-	// status.devices is shared with every other driver that contributed a device
-	// to the claim, so the retry refetches and merges on conflict rather than
-	// restoring a pre-conflict snapshot. The status write is best-effort here: on
-	// failure the devices are still prepared, so log and return them.
+	// Record the applied configuration on the claim. Only the prepared devices
+	// are written, onto the latest claim, so an entry another driver or the NRI
+	// path wrote in the meantime survives a conflict. The write is best-effort:
+	// on failure the devices are still prepared, so log and return them.
 	if err := types.UpdateClaimStatusWithRetry(
-		ctx,
+		statusCtx,
 		d.client.ResourceV1().ResourceClaims(claim.Namespace),
-		claim,
-		consts.DriverName,
+		claim.Name,
+		claim.UID,
 		consts.Backoff,
+		types.UpsertDeviceStatuses(deviceStatuses),
 	); err != nil {
 		logger.Error(err, "Failed to update claim status after retries", "claim", claim.UID)
 	}
