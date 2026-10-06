@@ -1,11 +1,14 @@
 package devicestate
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"strconv"
 	"strings"
 
 	resourceapi "k8s.io/api/resource/v1"
+	"k8s.io/dynamic-resource-allocation/deviceattribute"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 
@@ -23,13 +26,34 @@ type PFInfo struct {
 	EswitchMode string
 	PCIeRoot    string
 	LinkType    string
-	NumaNode    string
 }
 
-func DiscoverSriovDevices() (types.AllocatableDevices, error) {
+type discoveryOptions struct {
+	numaAttributeForm deviceattribute.AttributeForm
+}
+
+// DiscoveryOption configures SR-IOV device discovery.
+type DiscoveryOption func(*discoveryOptions)
+
+// WithListNUMAAttributes publishes resource.kubernetes.io/numaNode as an
+// integer list. The Kubernetes DRAListTypeAttributes feature gate must be
+// enabled on the kube-apiserver and kube-scheduler before this option is used.
+func WithListNUMAAttributes() DiscoveryOption {
+	return func(options *discoveryOptions) {
+		options.numaAttributeForm = deviceattribute.ListAttribute
+	}
+}
+
+func DiscoverSriovDevices(options ...DiscoveryOption) (types.AllocatableDevices, error) {
 	logger := klog.LoggerWithName(klog.Background(), "DiscoverSriovDevices")
 	pfList := []PFInfo{}
 	resourceList := types.AllocatableDevices{}
+	discoveryConfig := &discoveryOptions{
+		numaAttributeForm: deviceattribute.ScalarAttribute,
+	}
+	for _, option := range options {
+		option(discoveryConfig)
+	}
 
 	logger.Info("Starting SR-IOV device discovery")
 
@@ -75,14 +99,6 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 
 		eswitchMode := host.GetHelpers().GetNicSriovMode(device.Address)
 
-		// Get NUMA node information
-		// -1 indicates NUMA is not supported/enabled (standard Linux convention)
-		numaNode, err := host.GetHelpers().GetNumaNode(device.Address)
-		if err != nil {
-			logger.Error(err, "Failed to get NUMA node, using -1 (not supported)", "address", device.Address)
-			numaNode = "-1"
-		}
-
 		// Get PCIe Root Complex information using upstream Kubernetes implementation
 		pcieRoot, err := host.GetHelpers().GetPCIeRoot(device.Address)
 		if err != nil {
@@ -103,7 +119,6 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			"vendor", device.Vendor.ID,
 			"device", device.Product.ID,
 			"eswitchMode", eswitchMode,
-			"numaNode", numaNode,
 			"pcieRoot", pcieRoot,
 			"linkType", linkType)
 
@@ -116,7 +131,6 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			EswitchMode: eswitchMode,
 			PCIeRoot:    pcieRoot,
 			LinkType:    linkType,
-			NumaNode:    numaNode,
 		})
 	}
 
@@ -133,23 +147,30 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 
 		logger.Info("Found VFs for PF", "pf", pfInfo.NetName, "vfCount", len(vfList))
 
-		// Parse NUMA node value. Keep the actual value including -1 which indicates
-		// NUMA is not supported/enabled (standard Linux convention).
-		// This allows users to filter devices based on NUMA availability.
-		numaNodeInt, err := strconv.ParseInt(pfInfo.NumaNode, 10, 64)
-		if err != nil {
-			logger.Error(err, "Failed to parse NUMA node, defaulting to -1",
-				"pf", pfInfo.NetName, "numaNodeStr", pfInfo.NumaNode)
-			numaNodeInt = -1
-		}
-		numaNodeIntPtr := ptr.To(numaNodeInt)
-
 		for _, vfInfo := range vfList {
 			deviceName := strings.ReplaceAll(vfInfo.PciAddress, ":", "-")
 			deviceName = strings.ReplaceAll(deviceName, ".", "-")
 
 			// Check RDMA capability for this VF
 			rdmaCapable := host.GetHelpers().VerifyRDMACapability(vfInfo.PciAddress)
+
+			// Derive standardized NUMA topology from the advertised VF itself. The
+			// first list element is always the physical NUMA node, so it also acts
+			// as the source for the scalar dra.net compatibility attribute.
+			numaNodeInt := int64(-1)
+			numaAttribute, numaErr := host.GetHelpers().GetNUMANodeAttribute(vfInfo.PciAddress, discoveryConfig.numaAttributeForm)
+			if numaErr != nil {
+				if isNUMATopologyReadFailure(numaErr) {
+					logger.Error(numaErr, "Failed to read NUMA topology", "address", vfInfo.PciAddress)
+				} else {
+					logger.V(2).Info("Device has no NUMA affinity", "address", vfInfo.PciAddress, "error", numaErr)
+				}
+			} else if physicalNode, ok := physicalNUMANode(numaAttribute.Value); ok {
+				numaNodeInt = physicalNode
+			} else {
+				numaErr = fmt.Errorf("NUMA attribute has neither a scalar nor a list value")
+				logger.Error(numaErr, "Upstream NUMA helper returned an attribute without a physical node", "address", vfInfo.PciAddress)
+			}
 
 			logger.V(2).Info("Adding VF device to resource list",
 				"deviceName", deviceName,
@@ -206,8 +227,11 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 				},
 				// compatibility attributes
 				consts.AttributeNUMANode: {
-					IntValue: numaNodeIntPtr,
+					IntValue: ptr.To(numaNodeInt),
 				},
+			}
+			if numaErr == nil {
+				attributes[numaAttribute.Name] = numaAttribute.Value
 			}
 
 			resourceList[deviceName] = resourceapi.Device{
@@ -219,4 +243,22 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 
 	logger.Info("SR-IOV device discovery completed", "totalDevices", len(resourceList))
 	return resourceList, nil
+}
+
+func isNUMATopologyReadFailure(err error) bool {
+	var pathErr *fs.PathError
+	return errors.As(err, &pathErr)
+}
+
+// physicalNUMANode recovers the physical NUMA node from either representation
+// defined by the standard attribute. In list form the physical node is first;
+// the remaining entries are an unordered set used for topology matching.
+func physicalNUMANode(attribute resourceapi.DeviceAttribute) (int64, bool) {
+	if attribute.IntValue != nil {
+		return *attribute.IntValue, true
+	}
+	if len(attribute.IntValues) > 0 {
+		return attribute.IntValues[0], true
+	}
+	return 0, false
 }
