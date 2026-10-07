@@ -83,6 +83,10 @@ var _ = Describe("Consts", func() {
 				consts.AttributeStandardPciAddress,
 				consts.AttributeLinkType,
 				consts.AttributeRDMACapable,
+				consts.AttributeVdpaType,
+				consts.AttributePKey,
+				consts.AttributeRepresentor,
+				consts.AttributePhysPortName,
 				consts.AttributeNUMANode,
 			}
 

@@ -45,10 +45,18 @@ type FakeSriovnetProvider struct {
 	UplinkName string
 	// UplinkError, when non-nil, is returned instead of UplinkName.
 	UplinkError error
+	// RepresentorName is returned by GetVfRepresentor on success.
+	RepresentorName string
+	// RepresentorError, when non-nil, is returned instead of RepresentorName.
+	RepresentorError error
 }
 
 func (f *FakeSriovnetProvider) GetUplinkRepresentor(_ string) (string, error) {
 	return f.UplinkName, f.UplinkError
+}
+
+func (f *FakeSriovnetProvider) GetVfRepresentor(_ string, _ int) (string, error) {
+	return f.RepresentorName, f.RepresentorError
 }
 
 // FakeFilesystem allows to setup isolated fake files structure used for the tests.
