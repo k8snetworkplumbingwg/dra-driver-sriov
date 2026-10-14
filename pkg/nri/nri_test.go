@@ -26,6 +26,7 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
+	"k8s.io/klog/v2"
 	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1beta1"
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
 	ctrlclientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -37,6 +38,37 @@ import (
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/podmanager"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
+
+var _ = Describe("deviceNetworkStatus", func() {
+	It("carries the share ID from the prepared device", func() {
+		shareID := "share-a"
+		item := &types.NetworkDataChanStruct{
+			PreparedDevice: &types.PreparedDevice{
+				Device:  drapbv1.Device{PoolName: "vf-pool", DeviceName: "vf0"},
+				ShareID: &shareID,
+			},
+			NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1"},
+		}
+
+		status := deviceNetworkStatus(klog.Background(), item)
+		Expect(status.Device).To(Equal("vf0"))
+		Expect(status.Pool).To(Equal("vf-pool"))
+		Expect(status.ShareID).NotTo(BeNil())
+		Expect(*status.ShareID).To(Equal("share-a"))
+	})
+
+	It("leaves the share ID nil when the device is allocated once", func() {
+		item := &types.NetworkDataChanStruct{
+			PreparedDevice: &types.PreparedDevice{
+				Device: drapbv1.Device{PoolName: "vf-pool", DeviceName: "vf0"},
+			},
+			NetworkDeviceData: &resourceapi.NetworkDeviceData{InterfaceName: "net1"},
+		}
+
+		status := deviceNetworkStatus(klog.Background(), item)
+		Expect(status.ShareID).To(BeNil())
+	})
+})
 
 // checkpointRefuses wraps the pod manager and refuses to record the devices its
 // predicate names, as a checkpoint write that failed for them would.

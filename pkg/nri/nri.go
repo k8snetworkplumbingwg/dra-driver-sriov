@@ -356,12 +356,13 @@ func (p *Plugin) requeue(logger klog.Logger, claimKey networkClaimKey, claimUpda
 // The retry replays it on every attempt, so it is built once and, unlike the
 // event, shares nothing with the pod manager's PreparedDevice.
 func deviceNetworkStatus(logger klog.Logger, item *types.NetworkDataChanStruct) types.DeviceNetworkStatus {
-	// ShareID is left nil, PreparedDevice does not record one; the mutation
-	// resolves it from the claim's allocation.
+	// ShareID comes from the PreparedDevice so a device allocated more than once
+	// is matched to its own share; it is nil when the device is allocated once.
 	status := types.DeviceNetworkStatus{
 		Driver:      consts.DriverName,
 		Pool:        item.PreparedDevice.Device.PoolName,
 		Device:      item.PreparedDevice.Device.DeviceName,
+		ShareID:     item.PreparedDevice.ShareID,
 		NetworkData: item.NetworkDeviceData.DeepCopy(),
 	}
 	combined := map[string]any{

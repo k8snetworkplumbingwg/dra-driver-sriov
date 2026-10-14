@@ -354,7 +354,7 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			ifNameIndex := 0
-			_, _, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("error creating map of opaque device config"))
 		})
@@ -419,7 +419,7 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			ifNameIndex := 0
-			_, _, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("error applying config on device"))
 			Expect(err.Error()).To(ContainSubstring("error getting net attach def raw config"))
@@ -450,7 +450,7 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			ifNameIndex := 0
-			_, _, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("no prepared devices found for claim"))
 		})
@@ -516,7 +516,7 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			ifNameIndex := 0
-			_, _, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("unable to create device-info files for claim"))
 			Expect(err.Error()).To(ContainSubstring("rollback failed"))
@@ -569,7 +569,7 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			ifNameIndex := 0
-			_, _, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("unable to create device-info files for claim"))
 			Expect(err.Error()).To(ContainSubstring("cleanup after device-info sync failure failed"))
@@ -637,11 +637,10 @@ var _ = Describe("Manager", Serial, func() {
 			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", gomock.Any()).Return("", nil)
 
 			ifNameIndex := 0
-			prepared, deviceStatuses, err := m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+			prepared, err := m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(prepared).To(HaveLen(1))
 			Expect(prepared[0].NetAttachDefConfig).To(BeEmpty())
-			Expect(deviceStatuses).To(HaveLen(1))
 			Expect(claim.Status.Devices).To(BeEmpty(), "prepare must not write onto the kubelet's copy of the claim")
 		})
 	})
@@ -677,10 +676,9 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			ifNameIndex := 0
-			devices, deviceStatuses, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resultsConfig)
+			devices, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resultsConfig)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(devices).To(HaveLen(0))
-			Expect(deviceStatuses).To(BeEmpty())
 		})
 
 		It("should use default config when config not found for request", func() {
@@ -734,7 +732,7 @@ var _ = Describe("Manager", Serial, func() {
 			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", gomock.Any()).Return("", nil)
 
 			ifNameIndex := 0
-			prepared, _, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resultsConfig)
+			prepared, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resultsConfig)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(prepared).To(HaveLen(1))
 			Expect(prepared[0].IfName).To(Equal(""))
@@ -781,7 +779,7 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			ifNameIndex := 0
-			_, _, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resultsConfig)
+			_, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resultsConfig)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("error applying config on device"))
 		})
@@ -850,7 +848,7 @@ var _ = Describe("Manager", Serial, func() {
 			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", vfConfig).Return("", nil)
 
 			ifNameIndex := 0
-			devices, deviceStatuses, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resultsConfig)
+			devices, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resultsConfig)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(devices).To(HaveLen(1))
 
@@ -861,14 +859,15 @@ var _ = Describe("Manager", Serial, func() {
 			Expect(devices[0].Device.PoolName).To(Equal("pool1"))
 			Expect(devices[0].Device.RequestNames).To(Equal([]string{"req1"}))
 
-			// The status entry carries the applied config for the caller to write
-			// on the claim; the kubelet's copy itself is left untouched.
-			Expect(deviceStatuses).To(HaveLen(1))
-			Expect(deviceStatuses[0].Device).To(Equal("device1"))
-			Expect(deviceStatuses[0].Pool).To(Equal("pool1"))
-			Expect(deviceStatuses[0].Driver).To(Equal(consts.DriverName))
-			Expect(deviceStatuses[0].Data).NotTo(BeNil())
-			Expect(string(deviceStatuses[0].Data.Raw)).To(ContainSubstring(`"netAttachDefName":"test-net"`))
+			// The device's status entry carries the applied config for the caller
+			// to write on the claim; the kubelet's copy itself is left untouched.
+			status, err := devices[0].AllocatedDeviceStatus()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(status.Device).To(Equal("device1"))
+			Expect(status.Pool).To(Equal("pool1"))
+			Expect(status.Driver).To(Equal(consts.DriverName))
+			Expect(status.Data).NotTo(BeNil())
+			Expect(string(status.Data.Raw)).To(ContainSubstring(`"netAttachDefName":"test-net"`))
 			Expect(claim.Status.Devices).To(BeEmpty())
 		})
 	})

@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1beta1"
 
+	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 	draTypes "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
@@ -323,6 +324,42 @@ var _ = Describe("Types", func() {
 			device := prepared.ToKubeletPluginDevice(nil)
 			Expect(device.Metadata).NotTo(BeNil())
 			Expect(device.Metadata.NetworkData).To(Equal(stored))
+		})
+	})
+
+	Context("PreparedDevice status", func() {
+		It("derives the allocated device status from the device, share and config", func() {
+			shareID := "share-7"
+			prepared := &draTypes.PreparedDevice{
+				Device: drapbv1.Device{
+					PoolName:   "pool-a",
+					DeviceName: "dev-a",
+				},
+				ShareID: &shareID,
+				Config:  &configapi.VfConfig{NetAttachDefName: "test-net"},
+			}
+
+			status, err := prepared.AllocatedDeviceStatus()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(status.Device).To(Equal("dev-a"))
+			Expect(status.Pool).To(Equal("pool-a"))
+			Expect(status.Driver).To(Equal(consts.DriverName))
+			Expect(status.ShareID).NotTo(BeNil())
+			Expect(*status.ShareID).To(Equal("share-7"))
+			Expect(status.Data).NotTo(BeNil())
+			Expect(string(status.Data.Raw)).To(ContainSubstring(`"netAttachDefName":"test-net"`))
+		})
+
+		It("leaves the share nil when the device is allocated once", func() {
+			prepared := &draTypes.PreparedDevice{
+				Device: drapbv1.Device{PoolName: "pool-a", DeviceName: "dev-a"},
+				Config: &configapi.VfConfig{},
+			}
+
+			status, err := prepared.AllocatedDeviceStatus()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(status.ShareID).To(BeNil())
+			Expect(status.Data).NotTo(BeNil())
 		})
 	})
 })

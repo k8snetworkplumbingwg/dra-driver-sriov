@@ -153,7 +153,7 @@ func (d *Driver) prepareResourceClaim(ctx, statusCtx context.Context, ifNameInde
 	}
 
 	// if the pod claim is not prepared, prepare the devices for the claim
-	preparedDevices, deviceStatuses, err := d.deviceStateManager.PrepareDevicesForClaim(ctx, ifNameIndex, claim)
+	preparedDevices, err := d.deviceStateManager.PrepareDevicesForClaim(ctx, ifNameIndex, claim)
 	if err != nil {
 		logger.Error(err, "Error preparing devices for claim", "claim", claim.UID)
 		return kubeletplugin.PrepareResult{
@@ -177,6 +177,18 @@ func (d *Driver) prepareResourceClaim(ctx, statusCtx context.Context, ifNameInde
 		return kubeletplugin.PrepareResult{
 			Err: fmt.Errorf("error setting prepared devices for pod %s into pod manager: %w", podUID, err),
 		}
+	}
+
+	// Each prepared device's status is derived from the device itself, so the
+	// applied config reaches the claim without a second return from the prepare
+	// path. A device whose config will not marshal is recorded with an empty one.
+	deviceStatuses := make([]resourceapi.AllocatedDeviceStatus, 0, len(preparedDevices))
+	for _, preparedDevice := range preparedDevices {
+		status, statusErr := preparedDevice.AllocatedDeviceStatus()
+		if statusErr != nil {
+			logger.Error(statusErr, "recording device status with empty config", "device", preparedDevice.Device.GetDeviceName())
+		}
+		deviceStatuses = append(deviceStatuses, status)
 	}
 
 	// Record the applied configuration on the claim. Only the prepared devices

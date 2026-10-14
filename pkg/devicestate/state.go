@@ -2,7 +2,6 @@ package devicestate
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -10,7 +9,6 @@ import (
 	"strings"
 
 	resourceapi "k8s.io/api/resource/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
@@ -123,23 +121,23 @@ func (s *Manager) isMultusMode() bool {
 // PrepareDevicesForClaim prepares the devices for a given claim. It returns the
 // prepared devices and, in the same order, the status entry recording each
 // device's applied configuration for the caller to write onto the claim.
-func (s *Manager) PrepareDevicesForClaim(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim) (drasriovtypes.PreparedDevices, []resourceapi.AllocatedDeviceStatus, error) {
+func (s *Manager) PrepareDevicesForClaim(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim) (drasriovtypes.PreparedDevices, error) {
 	logger := klog.FromContext(ctx).WithName("PrepareDevicesForClaim")
 
 	resultsConfig, err := getMapOfOpaqueDeviceConfigForDevice(configapi.Decoder, claim.Status.Allocation.Devices.Config)
 	if err != nil {
 		logger.Error(err, "failed to create map of opaque device config for device", "claim", *claim)
-		return nil, nil, fmt.Errorf("error creating map of opaque device config for device: %v", err)
+		return nil, fmt.Errorf("error creating map of opaque device config for device: %v", err)
 	}
 
-	preparedDevices, deviceStatuses, err := s.prepareDevices(ctx, ifNameIndex, claim, resultsConfig)
+	preparedDevices, err := s.prepareDevices(ctx, ifNameIndex, claim, resultsConfig)
 	if err != nil {
 		logger.Error(err, "Prepare failed", "claim", *claim)
-		return nil, nil, fmt.Errorf("prepare failed: %v", err)
+		return nil, fmt.Errorf("prepare failed: %v", err)
 	}
 	if len(preparedDevices) == 0 {
 		logger.Error(fmt.Errorf("no prepared devices found for claim"), "Prepare failed", "claim", *claim)
-		return nil, nil, fmt.Errorf("no prepared devices found for claim")
+		return nil, fmt.Errorf("no prepared devices found for claim")
 	}
 
 	if err = s.syncDeviceInfoFilesForPreparedDevicesIfNeeded(ctx, preparedDevices); err != nil {
@@ -150,7 +148,7 @@ func (s *Manager) PrepareDevicesForClaim(ctx context.Context, ifNameIndex *int, 
 		if rollbackErr := s.unprepareDevices(preparedDevices); rollbackErr != nil {
 			rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback failed: %w", rollbackErr))
 		}
-		return nil, nil, errors.Join(rollbackErrs...)
+		return nil, errors.Join(rollbackErrs...)
 	}
 
 	if err = s.cdi.CreateClaimSpecFile(preparedDevices); err != nil {
@@ -161,18 +159,17 @@ func (s *Manager) PrepareDevicesForClaim(ctx context.Context, ifNameIndex *int, 
 		if rollbackErr := s.unprepareDevices(preparedDevices); rollbackErr != nil {
 			rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback failed: %w", rollbackErr))
 		}
-		return nil, nil, errors.Join(rollbackErrs...)
+		return nil, errors.Join(rollbackErrs...)
 	}
 
-	return preparedDevices, deviceStatuses, nil
+	return preparedDevices, nil
 }
 
 func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 	claim *resourceapi.ResourceClaim,
-	resultsConfig map[string]*configapi.VfConfig) (drasriovtypes.PreparedDevices, []resourceapi.AllocatedDeviceStatus, error) {
+	resultsConfig map[string]*configapi.VfConfig) (drasriovtypes.PreparedDevices, error) {
 	logger := klog.FromContext(ctx).WithName("prepareDevices")
 	preparedDevices := drasriovtypes.PreparedDevices{}
-	var deviceStatuses []resourceapi.AllocatedDeviceStatus
 	for _, result := range claim.Status.Allocation.Devices.Results {
 		if result.Driver != consts.DriverName {
 			continue
@@ -193,31 +190,16 @@ func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 		if err != nil {
 			logger.Error(err, "error applying config on device", "config", config, "result", result)
 			if rollbackErr := s.unprepareDevices(preparedDevices); rollbackErr != nil {
-				return nil, nil, fmt.Errorf("error applying config on device: %v; rollback failed: %v", err, rollbackErr)
+				return nil, fmt.Errorf("error applying config on device: %v; rollback failed: %v", err, rollbackErr)
 			}
-			return nil, nil, fmt.Errorf("error applying config on device: %v", err)
+			return nil, fmt.Errorf("error applying config on device: %v", err)
 		}
 
-		rawConfig, err := json.Marshal(config)
-		if err != nil {
-			logger.Error(err, "error marshaling config", "config", config)
-			rawConfig = []byte("{}")
-		}
-		// The applied config is the device's status entry. It is returned rather
-		// than written onto claim, which is the kubelet's copy: the caller records
-		// it on the latest claim from the API server.
-		deviceStatuses = append(deviceStatuses, resourceapi.AllocatedDeviceStatus{
-			Device:  result.Device,
-			Pool:    result.Pool,
-			Driver:  result.Driver,
-			ShareID: (*string)(result.ShareID),
-			Data:    &runtime.RawExtension{Raw: rawConfig},
-		})
 		preparedDevices = append(preparedDevices, preparedDevice)
 	}
 
 	logger.V(3).Info("Prepared devices", "preparedDevices", preparedDevices)
-	return preparedDevices, deviceStatuses, nil
+	return preparedDevices, nil
 }
 
 func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim, config *configapi.VfConfig, result *resourceapi.DeviceRequestAllocationResult) (*drasriovtypes.PreparedDevice, error) {
@@ -403,6 +385,7 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 		PodUID:             string(claim.Status.ReservedFor[0].UID),
 		Config:             config,
 		OriginalDriver:     originalDriver,
+		ShareID:            (*string)(result.ShareID),
 	}
 
 	return preparedDevice, nil

@@ -310,8 +310,8 @@ var _ = Describe("PatchDeviceNetworkStatuses", func() {
 	})
 
 	It("finds the entry of a shared device through the allocation", func() {
-		// The update names the device without a share ID, as the NRI path does;
-		// the allocation says which share it is.
+		// An update may name the device without a share ID; the allocation then
+		// says which share it is.
 		claim := allocatedClaim(
 			[]resourceapi.DeviceRequestAllocationResult{sharedAllocation(ownDriver, "vf-pool", "vf0", "share-a")},
 			sharedStatus(ownDriver, "vf-pool", "vf0", "share-a"),
