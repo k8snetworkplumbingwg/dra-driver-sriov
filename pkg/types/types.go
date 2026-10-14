@@ -13,6 +13,7 @@ import (
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 
 	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 )
 
 // AllocatableDevices is a map of device pci address to dra device objects
@@ -88,6 +89,28 @@ type PreparedDevice struct {
 	PodUID             string
 	NetAttachDefConfig string
 	OriginalDriver     string // Store original driver for restoration during unprepare
+	// ShareID distinguishes this allocation of the device from another share of
+	// the same device when consumable capacity is in use; nil when allocated once.
+	ShareID *string
+}
+
+// AllocatedDeviceStatus is the device's entry for ResourceClaim.status.devices,
+// built from the device's own identity, share and applied config. Config
+// marshals to "{}" on error, which is returned so the caller can log it.
+func (p *PreparedDevice) AllocatedDeviceStatus() (resourceapi.AllocatedDeviceStatus, error) {
+	status := resourceapi.AllocatedDeviceStatus{
+		Device:  p.Device.GetDeviceName(),
+		Pool:    p.Device.GetPoolName(),
+		Driver:  consts.DriverName,
+		ShareID: p.ShareID,
+		Data:    &runtime.RawExtension{Raw: []byte("{}")},
+	}
+	raw, err := json.Marshal(p.Config)
+	if err != nil {
+		return status, fmt.Errorf("marshaling config for device %s: %w", status.Device, err)
+	}
+	status.Data = &runtime.RawExtension{Raw: raw}
+	return status, nil
 }
 
 func (p *PreparedDevice) ToKubeletPluginDevice(networkData *resourceapi.NetworkDeviceData) kubeletplugin.Device {
