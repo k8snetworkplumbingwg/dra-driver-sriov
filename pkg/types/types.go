@@ -90,8 +90,10 @@ type PreparedDevice struct {
 	NetAttachDefConfig string
 	OriginalDriver     string // Store original driver for restoration during unprepare
 	// ShareID distinguishes this allocation of the device from another share of
-	// the same device when consumable capacity is in use; nil when allocated once.
-	ShareID *string
+	// the same device when consumable capacity is in use; nil when allocated
+	// once. omitempty keeps a nil one out of the checkpoint, so a checkpoint
+	// written before this field existed still matches its checksum on load.
+	ShareID *string `json:",omitempty"`
 }
 
 // AllocatedDeviceStatus is the device's entry for ResourceClaim.status.devices,
