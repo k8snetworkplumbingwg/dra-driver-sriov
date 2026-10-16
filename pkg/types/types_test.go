@@ -1,13 +1,16 @@
 package types_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/types"
 	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1beta1"
+	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager/checksum"
 
 	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
@@ -221,6 +224,38 @@ var _ = Describe("Types", func() {
 
 			err := checkpoint.UnmarshalCheckpoint(invalidJSON)
 			Expect(err).To(HaveOccurred())
+		})
+
+		It("loads a checkpoint written before ShareID existed", func() {
+			// Render a populated state as the previous on-disk format: the
+			// same JSON without the ShareID key, checksummed over that older
+			// body. After an upgrade the current code must still load and
+			// verify it, or the driver cannot recover its prepared claims.
+			podUID := types.UID("pod-1")
+			claimUID := types.UID("claim-1")
+			src := draTypes.NewCheckpoint()
+			src.V1.PreparedClaimsByPodUID[podUID] = draTypes.PreparedDevicesByClaimID{
+				claimUID: draTypes.PreparedDevices{{
+					Device: drapbv1.Device{PoolName: "pool-a", DeviceName: "dev-a"},
+					PodUID: string(podUID),
+					IfName: "net1",
+				}},
+			}
+			src.Checksum = 0
+			body, err := json.Marshal(*src)
+			Expect(err).NotTo(HaveOccurred())
+			body = bytes.ReplaceAll(body, []byte(`,"ShareID":null`), nil)
+			stored := bytes.Replace(body, []byte(`"checksum":0`),
+				[]byte(fmt.Sprintf(`"checksum":%d`, uint64(checksum.New(body)))), 1)
+
+			loaded := draTypes.NewCheckpoint()
+			Expect(loaded.UnmarshalCheckpoint(stored)).To(Succeed())
+			Expect(loaded.VerifyChecksum()).To(Succeed())
+
+			device := loaded.V1.PreparedClaimsByPodUID[podUID][claimUID][0]
+			Expect(device.ShareID).To(BeNil())
+			Expect(device.PodUID).To(Equal("pod-1"))
+			Expect(device.IfName).To(Equal("net1"))
 		})
 	})
 
