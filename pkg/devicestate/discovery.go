@@ -7,7 +7,6 @@ import (
 
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/klog/v2"
-	"k8s.io/utils/ptr"
 
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host"
@@ -136,13 +135,14 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 		// Parse NUMA node value. Keep the actual value including -1 which indicates
 		// NUMA is not supported/enabled (standard Linux convention).
 		// This allows users to filter devices based on NUMA availability.
+		numaNodeIntPtr := new(int64(-1))
 		numaNodeInt, err := strconv.ParseInt(pfInfo.NumaNode, 10, 64)
 		if err != nil {
 			logger.Error(err, "Failed to parse NUMA node, defaulting to -1",
 				"pf", pfInfo.NetName, "numaNodeStr", pfInfo.NumaNode)
-			numaNodeInt = -1
+		} else {
+			*numaNodeIntPtr = numaNodeInt
 		}
-		numaNodeIntPtr := ptr.To(numaNodeInt)
 
 		for _, vfInfo := range vfList {
 			deviceName := strings.ReplaceAll(vfInfo.PciAddress, ":", "-")
@@ -163,46 +163,46 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 			// Build device attributes
 			attributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 				consts.AttributeVendorID: {
-					StringValue: ptr.To(pfInfo.VendorID),
+					StringValue: new(pfInfo.VendorID),
 				},
 				consts.AttributeDeviceID: {
-					StringValue: ptr.To(vfInfo.DeviceID),
+					StringValue: new(vfInfo.DeviceID),
 				},
 				consts.AttributePFDeviceID: {
-					StringValue: ptr.To(pfInfo.DeviceID),
+					StringValue: new(pfInfo.DeviceID),
 				},
 				consts.AttributePciAddress: {
-					StringValue: ptr.To(vfInfo.PciAddress),
+					StringValue: new(vfInfo.PciAddress),
 				},
 				consts.AttributeMultusDeviceID: {
-					StringValue: ptr.To(vfInfo.PciAddress),
+					StringValue: new(vfInfo.PciAddress),
 				},
 				consts.AttributePFName: {
-					StringValue: ptr.To(pfInfo.NetName),
+					StringValue: new(pfInfo.NetName),
 				},
 				consts.AttributeEswitchMode: {
-					StringValue: ptr.To(pfInfo.EswitchMode),
+					StringValue: new(pfInfo.EswitchMode),
 				},
 				consts.AttributeVFID: {
-					IntValue: ptr.To(int64(vfInfo.VFID)),
+					IntValue: new(int64(vfInfo.VFID)),
 				},
 				// PCIe Root Complex (upstream Kubernetes standard) - for topology-aware scheduling
 				consts.AttributePCIeRoot: {
-					StringValue: ptr.To(pfInfo.PCIeRoot),
+					StringValue: new(pfInfo.PCIeRoot),
 				},
 				consts.AttributePfPciAddress: {
-					StringValue: ptr.To(pfInfo.PciAddress),
+					StringValue: new(pfInfo.PciAddress),
 				},
 				// Standard Kubernetes PCI address attribute
 				consts.AttributeStandardPciAddress: {
-					StringValue: ptr.To(vfInfo.PciAddress),
+					StringValue: new(vfInfo.PciAddress),
 				},
 				// Link type (ethernet, infiniband, etc.)
 				consts.AttributeLinkType: {
-					StringValue: ptr.To(pfInfo.LinkType),
+					StringValue: new(pfInfo.LinkType),
 				},
 				consts.AttributeRDMACapable: {
-					BoolValue: ptr.To(rdmaCapable),
+					BoolValue: new(rdmaCapable),
 				},
 				// compatibility attributes
 				consts.AttributeNUMANode: {
