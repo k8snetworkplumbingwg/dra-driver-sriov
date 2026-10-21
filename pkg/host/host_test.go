@@ -313,6 +313,117 @@ var _ = Describe("Host", func() {
 				Expect(linkType).To(BeEmpty())
 			})
 		})
+
+		Context("GetVdpaType", func() {
+			It("should return 'vhost' when the vdpa device is bound to vhost_vdpa", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.1",
+					"sys/bus/pci/devices/0000:01:00.1/vdpa0",
+				}
+				fs.Symlinks = map[string]string{
+					"sys/bus/pci/devices/0000:01:00.1/vdpa0/driver": "../../../../../bus/vdpa/drivers/vhost_vdpa",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetVdpaType("0000:01:00.1")).To(Equal(consts.VdpaTypeVhost))
+			})
+
+			It("should return 'virtio' when the vdpa device is bound to virtio_vdpa", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.1",
+					"sys/bus/pci/devices/0000:01:00.1/vdpa0",
+				}
+				fs.Symlinks = map[string]string{
+					"sys/bus/pci/devices/0000:01:00.1/vdpa0/driver": "../../../../../bus/vdpa/drivers/virtio_vdpa",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetVdpaType("0000:01:00.1")).To(Equal(consts.VdpaTypeVirtio))
+			})
+
+			It("should return empty string when the vdpa device has no bound driver", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.1",
+					"sys/bus/pci/devices/0000:01:00.1/vdpa0",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetVdpaType("0000:01:00.1")).To(BeEmpty())
+			})
+
+			It("should return empty string when the bound driver is unknown", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.1",
+					"sys/bus/pci/devices/0000:01:00.1/vdpa0",
+				}
+				fs.Symlinks = map[string]string{
+					"sys/bus/pci/devices/0000:01:00.1/vdpa0/driver": "../../../../../bus/vdpa/drivers/some_other_vdpa",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetVdpaType("0000:01:00.1")).To(BeEmpty())
+			})
+
+			It("should return empty string when the VF exposes no vdpa device", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.1",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetVdpaType("0000:01:00.1")).To(BeEmpty())
+			})
+
+			It("should return empty string when the PCI device directory does not exist", func() {
+				tearDown = fs.Use()
+
+				Expect(h.GetVdpaType("0000:01:00.1")).To(BeEmpty())
+			})
+		})
+
+		Context("GetIBPKey", func() {
+			It("should return the pkey read from the VF netdev", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:02:00.1/net",
+					"sys/bus/pci/devices/0000:02:00.1/net/ib0",
+					"sys/class/net/ib0",
+				}
+				fs.Files = map[string][]byte{
+					"sys/class/net/ib0/pkey": []byte("0x7fff\n"),
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetIBPKey("0000:02:00.1")).To(Equal("0x7fff"))
+			})
+
+			It("should return empty string when the netdev has no pkey file", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:02:00.1/net",
+					"sys/bus/pci/devices/0000:02:00.1/net/eth0",
+					"sys/class/net/eth0",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetIBPKey("0000:02:00.1")).To(BeEmpty())
+			})
+
+			It("should return empty string when the VF has no netdev", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:02:00.1/net",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetIBPKey("0000:02:00.1")).To(BeEmpty())
+			})
+
+			It("should return empty string when the net directory does not exist", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:02:00.1",
+				}
+				tearDown = fs.Use()
+
+				Expect(h.GetIBPKey("0000:02:00.1")).To(BeEmpty())
+			})
+		})
 	})
 
 	Describe("Topology Functions", func() {
