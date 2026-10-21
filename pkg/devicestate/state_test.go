@@ -14,7 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
-	"k8s.io/utils/ptr"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 	crfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -375,7 +374,7 @@ var _ = Describe("Manager", Serial, func() {
 			m.allocatable["device1"] = resourceapi.Device{
 				Name: "device1",
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-					consts.AttributePciAddress: {StringValue: ptr.To("0000:01:00.1")},
+					consts.AttributePciAddress: {StringValue: new("0000:01:00.1")},
 				},
 			}
 
@@ -467,9 +466,9 @@ var _ = Describe("Manager", Serial, func() {
 					"device1": {
 						Name: "device1",
 						Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-							consts.AttributePciAddress:         {StringValue: ptr.To("0000:01:00.1")},
-							consts.AttributeMultusResourceName: {StringValue: ptr.To("intel.com/sriov")},
-							consts.AttributeMultusDeviceID:     {StringValue: ptr.To("0000:01:00.1")},
+							consts.AttributePciAddress:         {StringValue: new("0000:01:00.1")},
+							consts.AttributeMultusResourceName: {StringValue: new("intel.com/sriov")},
+							consts.AttributeMultusDeviceID:     {StringValue: new("0000:01:00.1")},
 						},
 					},
 				},
@@ -537,9 +536,9 @@ var _ = Describe("Manager", Serial, func() {
 					"device1": {
 						Name: "device1",
 						Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-							consts.AttributePciAddress:         {StringValue: ptr.To("0000:01:00.1")},
-							consts.AttributeMultusResourceName: {StringValue: ptr.To("intel.com/sriov")},
-							consts.AttributeMultusDeviceID:     {StringValue: ptr.To("0000:01:00.1")},
+							consts.AttributePciAddress:         {StringValue: new("0000:01:00.1")},
+							consts.AttributeMultusResourceName: {StringValue: new("intel.com/sriov")},
+							consts.AttributeMultusDeviceID:     {StringValue: new("0000:01:00.1")},
 						},
 					},
 				},
@@ -586,7 +585,7 @@ var _ = Describe("Manager", Serial, func() {
 						Name: "device1",
 						Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 							consts.AttributePciAddress: {
-								StringValue: ptr.To("0000:01:00.1"),
+								StringValue: new("0000:01:00.1"),
 							},
 						},
 					},
@@ -692,7 +691,7 @@ var _ = Describe("Manager", Serial, func() {
 						Name: "device1",
 						Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 							consts.AttributePciAddress: {
-								StringValue: ptr.To("0000:01:00.1"),
+								StringValue: new("0000:01:00.1"),
 							},
 						},
 					},
@@ -806,7 +805,7 @@ var _ = Describe("Manager", Serial, func() {
 					Name: "device1",
 					Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 						consts.AttributePciAddress: {
-							StringValue: ptr.To("0000:01:00.1"),
+							StringValue: new("0000:01:00.1"),
 						},
 					},
 				},
@@ -911,7 +910,7 @@ var _ = Describe("Manager", Serial, func() {
 					Name: "device1",
 					Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 						consts.AttributePciAddress: {
-							StringValue: ptr.To("0000:01:00.1"),
+							StringValue: new("0000:01:00.1"),
 						},
 					},
 				},
@@ -958,7 +957,7 @@ var _ = Describe("Manager", Serial, func() {
 						"device1": {
 							Name: "device1",
 							Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-								consts.AttributePciAddress: {StringValue: ptr.To("0000:01:00.1")},
+								consts.AttributePciAddress: {StringValue: new("0000:01:00.1")},
 							},
 						},
 					},
@@ -1031,7 +1030,7 @@ var _ = Describe("Manager", Serial, func() {
 					"device1": {
 						Name: "device1",
 						Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-							consts.AttributePciAddress: {StringValue: ptr.To("0000:01:00.1")},
+							consts.AttributePciAddress: {StringValue: new("0000:01:00.1")},
 						},
 					},
 				},
@@ -1076,7 +1075,7 @@ var _ = Describe("Manager", Serial, func() {
 					"device1": {
 						Name: "device1",
 						Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-							consts.AttributePciAddress: {StringValue: ptr.To("0000:01:00.1")},
+							consts.AttributePciAddress: {StringValue: new("0000:01:00.1")},
 						},
 					},
 				},
@@ -1146,7 +1145,7 @@ var _ = Describe("Manager", Serial, func() {
 				allocatable: map[string]resourceapi.Device{
 					"devA": {Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 						consts.AttributeResourceName: {StringValue: &resName},
-						consts.AttributeVendorID:     {StringValue: ptr.To("8086")},
+						consts.AttributeVendorID:     {StringValue: new("8086")},
 					}},
 				},
 				policyAttrKeys: map[string]map[resourceapi.QualifiedName]bool{
@@ -1219,7 +1218,7 @@ var _ = Describe("Manager", Serial, func() {
 					"devA": {
 						Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 							consts.AttributeResourceName: {
-								StringValue: ptr.To("vendor.com/resA"),
+								StringValue: new("vendor.com/resA"),
 							},
 						},
 					},
@@ -1266,8 +1265,8 @@ var _ = Describe("Manager", Serial, func() {
 			s := &Manager{
 				allocatable: map[string]resourceapi.Device{
 					"devA": {Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-						consts.AttributeVendorID:   {StringValue: ptr.To("8086")},
-						consts.AttributePciAddress: {StringValue: ptr.To("0000:03:00.0")},
+						consts.AttributeVendorID:   {StringValue: new("8086")},
+						consts.AttributePciAddress: {StringValue: new("0000:03:00.0")},
 					}},
 				},
 			}
@@ -1275,10 +1274,10 @@ var _ = Describe("Manager", Serial, func() {
 			policyDevices := map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 				"devA": {
 					// Reserved — should be skipped
-					consts.AttributeVendorID:   {StringValue: ptr.To("EVIL")},
-					consts.AttributePciAddress: {StringValue: ptr.To("FAKE")},
+					consts.AttributeVendorID:   {StringValue: new("EVIL")},
+					consts.AttributePciAddress: {StringValue: new("FAKE")},
 					// Non-reserved — should be applied
-					consts.AttributeResourceName: {StringValue: ptr.To("myResource")},
+					consts.AttributeResourceName: {StringValue: new("myResource")},
 				},
 			}
 			err := s.UpdatePolicyDevices(context.Background(), policyDevices)
@@ -1301,16 +1300,16 @@ var _ = Describe("Manager", Serial, func() {
 			s := &Manager{
 				allocatable: map[string]resourceapi.Device{
 					"devA": {Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-						consts.AttributeVendorID: {StringValue: ptr.To("8086")},
-						consts.AttributeVFID:     {IntValue: ptr.To(int64(3))},
+						consts.AttributeVendorID: {StringValue: new("8086")},
+						consts.AttributeVFID:     {IntValue: new(int64(3))},
 					}},
 				},
 			}
 
 			policyDevices := map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 				"devA": {
-					consts.AttributeVendorID: {StringValue: ptr.To("EVIL")},
-					consts.AttributeVFID:     {IntValue: ptr.To(int64(999))},
+					consts.AttributeVendorID: {StringValue: new("EVIL")},
+					consts.AttributeVFID:     {IntValue: new(int64(999))},
 				},
 			}
 			err := s.UpdatePolicyDevices(context.Background(), policyDevices)
@@ -1330,7 +1329,7 @@ var _ = Describe("Manager", Serial, func() {
 			manager := &Manager{}
 			nonRdmaDevice := resourceapi.Device{
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-					consts.AttributeRDMACapable: {BoolValue: ptr.To(false)},
+					consts.AttributeRDMACapable: {BoolValue: new(false)},
 				},
 			}
 
@@ -1371,7 +1370,7 @@ var _ = Describe("Manager", Serial, func() {
 
 			deviceInfo := resourceapi.Device{
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-					consts.AttributeRDMACapable: {BoolValue: ptr.To(true)},
+					consts.AttributeRDMACapable: {BoolValue: new(true)},
 				},
 			}
 
@@ -1408,7 +1407,7 @@ var _ = Describe("Manager", Serial, func() {
 
 			deviceInfo := resourceapi.Device{
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-					consts.AttributeRDMACapable: {BoolValue: ptr.To(true)},
+					consts.AttributeRDMACapable: {BoolValue: new(true)},
 				},
 			}
 
@@ -1428,7 +1427,7 @@ var _ = Describe("Manager", Serial, func() {
 
 			deviceInfo := resourceapi.Device{
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-					consts.AttributeRDMACapable: {BoolValue: ptr.To(false)},
+					consts.AttributeRDMACapable: {BoolValue: new(false)},
 				},
 			}
 
@@ -1445,7 +1444,7 @@ var _ = Describe("Manager", Serial, func() {
 
 			deviceInfo := resourceapi.Device{
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-					consts.AttributeRDMACapable: {BoolValue: ptr.To(true)},
+					consts.AttributeRDMACapable: {BoolValue: new(true)},
 				},
 			}
 
@@ -1465,7 +1464,7 @@ var _ = Describe("Manager", Serial, func() {
 
 			deviceInfo := resourceapi.Device{
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-					consts.AttributeRDMACapable: {BoolValue: ptr.To(true)},
+					consts.AttributeRDMACapable: {BoolValue: new(true)},
 				},
 			}
 
@@ -1487,7 +1486,7 @@ var _ = Describe("Manager", Serial, func() {
 
 			deviceInfo := resourceapi.Device{
 				Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-					consts.AttributeRDMACapable: {BoolValue: ptr.To(true)},
+					consts.AttributeRDMACapable: {BoolValue: new(true)},
 				},
 			}
 
