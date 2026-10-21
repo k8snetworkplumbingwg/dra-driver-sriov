@@ -2,6 +2,7 @@ package framework
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -74,6 +75,33 @@ func (c *Clients) WaitForResourceClaimAllocated(ctx context.Context, namespace, 
 		g.Expect(claim.Status.Allocation).NotTo(BeNil(), "claim %s/%s has no status.allocation", namespace, name)
 	}).WithTimeout(DefaultTimeout).WithPolling(DefaultInterval).Should(Succeed())
 	return claim
+}
+
+// WaitForResourceClaimDeviceNetworkData waits until the driver has recorded
+// the network data of a device on the claim: status.devices has an entry for
+// the driver whose networkData names ifName and carries at least one IP, and
+// whose data carries the CNI result next to the VF config.
+func (c *Clients) WaitForResourceClaimDeviceNetworkData(ctx context.Context, namespace, name, ifName string) {
+	Eventually(func(g Gomega) {
+		claim, err := c.Clientset.ResourceV1().ResourceClaims(namespace).Get(ctx, name, metav1.GetOptions{})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(claim.Status.Devices).NotTo(BeEmpty(), "claim %s/%s has no status.devices", namespace, name)
+		var matched bool
+		for _, device := range claim.Status.Devices {
+			if device.Driver != DriverName || device.NetworkData == nil || device.NetworkData.InterfaceName != ifName {
+				// Other devices of this driver say nothing about this one.
+				continue
+			}
+			g.Expect(device.NetworkData.IPs).NotTo(BeEmpty(), "claim %s/%s device %s has no IPs", namespace, name, device.Device)
+			g.Expect(device.Data).NotTo(BeNil(), "claim %s/%s device %s has no data", namespace, name, device.Device)
+			var data map[string]any
+			g.Expect(json.Unmarshal(device.Data.Raw, &data)).To(Succeed())
+			g.Expect(data).To(HaveKey("vfConfig"))
+			g.Expect(data).To(HaveKey("cniResult"))
+			matched = true
+		}
+		g.Expect(matched).To(BeTrue(), "claim %s/%s has no %s status.devices entry for %s", namespace, name, DriverName, ifName)
+	}).WithTimeout(DefaultTimeout).WithPolling(DefaultInterval).Should(Succeed())
 }
 
 // WaitForResourceSlicesWithDevices waits until at least one ResourceSlice publishes devices.

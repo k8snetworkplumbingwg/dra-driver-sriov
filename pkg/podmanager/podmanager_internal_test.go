@@ -106,14 +106,15 @@ var _ = Describe("PodManager when the checkpoint cannot be written", func() {
 	It("should keep the previous network data when the update fails", func() {
 		Expect(pm.Set(podUID, claimUID, devices)).To(Succeed())
 		previous := &resourceapi.NetworkDeviceData{InterfaceName: "net-old"}
-		Expect(pm.UpdatePreparedDeviceNetworkData(devices[0], previous)).To(Succeed())
+		Expect(pm.UpdatePreparedDeviceNetworkData(devices[0], previous, 1)).To(Succeed())
 		cm.fail = true
 
-		Expect(pm.UpdatePreparedDeviceNetworkData(devices[0], &resourceapi.NetworkDeviceData{InterfaceName: "net-new"})).NotTo(Succeed())
+		Expect(pm.UpdatePreparedDeviceNetworkData(devices[0], &resourceapi.NetworkDeviceData{InterfaceName: "net-new"}, 2)).NotTo(Succeed())
 
 		got, found := pm.Get(podUID, claimUID)
 		Expect(found).To(BeTrue())
 		Expect(got[0].NetworkDeviceData).To(Equal(previous))
+		Expect(got[0].NetworkDataSeq).To(Equal(uint64(1)), "the sequence has to describe the data the device kept")
 		Expect(reload()[podUID][claimUID][0].NetworkDeviceData).To(Equal(previous))
 	})
 })
