@@ -16,6 +16,7 @@ import (
 	v1alpha1 "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 	host "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host"
 	gomock "go.uber.org/mock/gomock"
+	deviceattribute "k8s.io/dynamic-resource-allocation/deviceattribute"
 )
 
 // MockInterface is a mock of Interface interface.
@@ -143,6 +144,21 @@ func (mr *MockInterfaceMockRecorder) GetLinkType(pciAddr any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLinkType", reflect.TypeOf((*MockInterface)(nil).GetLinkType), pciAddr)
 }
 
+// GetNUMANodeAttribute mocks base method.
+func (m *MockInterface) GetNUMANodeAttribute(pciAddress string, attributeForm deviceattribute.AttributeForm) (deviceattribute.DeviceAttribute, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetNUMANodeAttribute", pciAddress, attributeForm)
+	ret0, _ := ret[0].(deviceattribute.DeviceAttribute)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetNUMANodeAttribute indicates an expected call of GetNUMANodeAttribute.
+func (mr *MockInterfaceMockRecorder) GetNUMANodeAttribute(pciAddress, attributeForm any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetNUMANodeAttribute", reflect.TypeOf((*MockInterface)(nil).GetNUMANodeAttribute), pciAddress, attributeForm)
+}
+
 // GetNicSriovMode mocks base method.
 func (m *MockInterface) GetNicSriovMode(pciAddr string) string {
 	m.ctrl.T.Helper()
@@ -155,21 +171,6 @@ func (m *MockInterface) GetNicSriovMode(pciAddr string) string {
 func (mr *MockInterfaceMockRecorder) GetNicSriovMode(pciAddr any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetNicSriovMode", reflect.TypeOf((*MockInterface)(nil).GetNicSriovMode), pciAddr)
-}
-
-// GetNumaNode mocks base method.
-func (m *MockInterface) GetNumaNode(pciAddress string) (string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetNumaNode", pciAddress)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetNumaNode indicates an expected call of GetNumaNode.
-func (mr *MockInterfaceMockRecorder) GetNumaNode(pciAddress any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetNumaNode", reflect.TypeOf((*MockInterface)(nil).GetNumaNode), pciAddress)
 }
 
 // GetPCIeRoot mocks base method.

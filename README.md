@@ -29,6 +29,7 @@ The driver features an advanced resource filtering system that enables administr
 - **VFIO Driver Support**: Support for both kernel and VFIO-PCI driver binding modes
 - **Vhost-user Integration**: Optional mounting of vhost-user sockets for DPDK and userspace networking
 - **Health Monitoring**: Built-in health check endpoints for monitoring driver status
+- **Standard NUMA Topology**: Publishes `resource.kubernetes.io/numaNode` for cross-driver topology alignment
 - **Helm Deployment**: Easy deployment through Helm charts
 
 ## Requirements
@@ -144,6 +145,43 @@ helm upgrade -i dra-driver-sriov \
 ```
 
 When running in `MULTUS` mode, create `SriovResourcePolicy` and `DeviceAttributes` in the same namespace watched by the driver (see [`demo/multus-integration-single-vf/README.md`](demo/multus-integration-single-vf/README.md)).
+
+### NUMA topology attributes
+
+For VFs with NUMA affinity, the driver publishes the standardized
+`resource.kubernetes.io/numaNode` attribute and retains the scalar
+`dra.net/numaNode` attribute for compatibility. By default, the standard
+attribute is also scalar and contains the VF's physical NUMA node.
+
+Kubernetes 1.37 can publish the standard attribute as a list containing the
+physical node first, followed by equally local same-socket nodes derived from
+ACPI SLIT distances. Before enabling list mode, enable
+`DRAListTypeAttributes` on both the kube-apiserver and kube-scheduler. Then
+enable the matching driver feature gate:
+
+```bash
+helm upgrade -i dra-driver-sriov \
+  --create-namespace -n dra-driver-sriov \
+  --set kubeletPlugin.featureGates.DRAListTypeAttributes=true \
+  ./deployments/helm/dra-driver-sriov/
+```
+
+Enabling list mode only on the driver causes ResourceSlice publication to
+fail. The driver does not attempt to detect control-plane feature gates.
+
+Use `matchAttribute` to align this driver's VFs with devices from other DRA
+drivers:
+
+```yaml
+constraints:
+- matchAttribute: resource.kubernetes.io/numaNode
+  requests: [vf, gpu]
+```
+
+With `DRAListTypeAttributes`, matching uses set intersection and works when one
+driver publishes a scalar and another publishes a list. See
+[KEP-6072](https://github.com/kubernetes/enhancements/blob/master/keps/sig-node/6072-dra-standard-numanode/README.md)
+for the attribute semantics and consumer expectations.
 
 ## Usage
 

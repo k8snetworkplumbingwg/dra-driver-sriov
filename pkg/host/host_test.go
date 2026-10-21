@@ -1,12 +1,15 @@
 package host_test
 
 import (
+	"errors"
 	"fmt"
+	iofs "io/fs"
 	"os"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"go.uber.org/mock/gomock"
+	"k8s.io/dynamic-resource-allocation/deviceattribute"
 
 	"github.com/k8snetworkplumbingwg/sriovnet"
 
@@ -316,8 +319,8 @@ var _ = Describe("Host", func() {
 	})
 
 	Describe("Topology Functions", func() {
-		Context("GetNumaNode", func() {
-			It("should return NUMA node from file", func() {
+		Context("GetNUMANodeAttribute", func() {
+			It("should return a scalar NUMA attribute", func() {
 				fs.Dirs = []string{
 					"sys/bus/pci/devices/0000:01:00.0",
 				}
@@ -326,12 +329,32 @@ var _ = Describe("Host", func() {
 				}
 				tearDown = fs.Use()
 
-				numaNode, err := h.GetNumaNode("0000:01:00.0")
+				attribute, err := h.GetNUMANodeAttribute("0000:01:00.0", deviceattribute.ScalarAttribute)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(numaNode).To(Equal("1"))
+				Expect(attribute.Name).To(Equal(deviceattribute.StandardDeviceAttributeNUMANode))
+				Expect(attribute.Value.IntValue).To(HaveValue(Equal(int64(1))))
+				Expect(attribute.Value.IntValues).To(BeNil())
 			})
 
-			It("should passthrough '-1' when NUMA node file contains -1", func() {
+			It("should return a list NUMA attribute", func() {
+				fs.Dirs = []string{
+					"sys/bus/pci/devices/0000:01:00.0",
+					"sys/devices/system/node/node1",
+				}
+				fs.Files = map[string][]byte{
+					"sys/bus/pci/devices/0000:01:00.0/numa_node": []byte("1"),
+					"sys/devices/system/node/node1/distance":     []byte("12 10 12"),
+				}
+				tearDown = fs.Use()
+
+				attribute, err := h.GetNUMANodeAttribute("0000:01:00.0", deviceattribute.ListAttribute)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(attribute.Name).To(Equal(deviceattribute.StandardDeviceAttributeNUMANode))
+				Expect(attribute.Value.IntValue).To(BeNil())
+				Expect(attribute.Value.IntValues).To(Equal([]int64{1, 0, 2}))
+			})
+
+			It("should reject a device without NUMA affinity", func() {
 				fs.Dirs = []string{
 					"sys/bus/pci/devices/0000:01:00.0",
 				}
@@ -340,17 +363,21 @@ var _ = Describe("Host", func() {
 				}
 				tearDown = fs.Use()
 
-				numaNode, err := h.GetNumaNode("0000:01:00.0")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(numaNode).To(Equal("-1"))
+				_, err := h.GetNUMANodeAttribute("0000:01:00.0", deviceattribute.ScalarAttribute)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("no NUMA affinity"))
+				var pathErr *iofs.PathError
+				Expect(errors.As(err, &pathErr)).To(BeFalse())
 			})
 
-			It("should return '-1' when NUMA node file does not exist", func() {
+			It("should return an error when the NUMA node file does not exist", func() {
 				tearDown = fs.Use()
 
-				numaNode, err := h.GetNumaNode("0000:01:00.0")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(numaNode).To(Equal("-1"))
+				_, err := h.GetNUMANodeAttribute("0000:01:00.0", deviceattribute.ScalarAttribute)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("failed to read NUMA node"))
+				var pathErr *iofs.PathError
+				Expect(errors.As(err, &pathErr)).To(BeTrue())
 			})
 		})
 
