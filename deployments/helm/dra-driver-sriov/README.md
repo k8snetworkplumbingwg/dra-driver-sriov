@@ -145,6 +145,7 @@ The kubelet plugin runs as a DaemonSet on all nodes where SR-IOV devices should 
 | `kubeletPlugin.nriPluginIndex` | int | `42` | Index of the NRI plugin (determines execution order) |
 | `kubeletPlugin.defaultInterfacePrefix` | string | `vfnet` | Default prefix for network interface names |
 | `kubeletPlugin.configurationMode` | string | `STANDALONE` | Driver networking mode. Supported values: `STANDALONE` (default, with NRI-based interface management) and `MULTUS` (delegates network attachment to Multus). |
+| `kubeletPlugin.multusAutoAttach` | bool | `false` | POC: create device-bound NADs and patch Pod network selections. Requires `MULTUS` mode and Multus live reads on ADD. See [the POC](../../../demo/multus-auto-attach/README.md). |
 | `kubeletPlugin.metrics.enabled` | bool | `false` | Enable the controller-runtime Prometheus metrics endpoint |
 | `kubeletPlugin.metrics.port` | int | `8080` | Host-network port for the metrics endpoint when enabled |
 | `kubeletPlugin.containers.init.securityContext` | object | `{}` | Security context for init container |

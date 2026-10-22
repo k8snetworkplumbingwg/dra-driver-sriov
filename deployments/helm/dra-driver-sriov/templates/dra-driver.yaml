@@ -106,6 +106,8 @@ spec:
           value: {{ .Values.kubeletPlugin.defaultInterfacePrefix | quote }}
         - name: CONFIGURATION_MODE
           value: {{ .Values.kubeletPlugin.configurationMode | quote }}
+        - name: MULTUS_AUTO_ATTACH
+          value: {{ .Values.kubeletPlugin.multusAutoAttach | quote }}
         - name: ENABLE_DEVICE_METADATA
           value: {{ .Values.kubeletPlugin.enableDeviceMetadata | quote }}
         - name: NODE_NAME

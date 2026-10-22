@@ -131,6 +131,11 @@ func (d *Driver) prepareResourceClaim(ctx context.Context, ifNameIndex *int, cla
 	// check if the pod claim is already prepared and return the prepared devices
 	preparedDevices, isAlreadyPrepared := d.podManager.Get(podUID, claim.UID)
 	if isAlreadyPrepared {
+		if d.config != nil && d.config.Flags.MultusAutoAttach {
+			if err := d.ensureMultusAttachments(ctx, claim, preparedDevices); err != nil {
+				return kubeletplugin.PrepareResult{Err: err}
+			}
+		}
 		var prepared []kubeletplugin.Device
 		for _, preparedDevice := range preparedDevices {
 			prepared = append(prepared, preparedDevice.ToKubeletPluginDevice(nil))
@@ -179,6 +184,11 @@ func (d *Driver) prepareResourceClaim(ctx context.Context, ifNameIndex *int, cla
 		logger.Error(err, "Failed to update claim status after retries", "claim", claim.UID)
 	}
 
+	if d.config != nil && d.config.Flags.MultusAutoAttach {
+		if err := d.ensureMultusAttachments(ctx, claim, preparedDevices); err != nil {
+			return kubeletplugin.PrepareResult{Err: err}
+		}
+	}
 	logger.V(3).Info("Returning prepared devices for claim", "claim", claim.UID, "prepared", prepared)
 	return kubeletplugin.PrepareResult{Devices: prepared}
 }
@@ -209,6 +219,11 @@ func (d *Driver) unprepareResourceClaim(ctx context.Context, claim kubeletplugin
 
 	if err := d.deviceStateManager.Unprepare(string(claim.UID), preparedDevices); err != nil {
 		return fmt.Errorf("error unpreparing devices for claim %v: %w", claim.UID, err)
+	}
+	if d.config != nil && d.config.Flags.MultusAutoAttach {
+		if err := d.deleteMultusAttachments(ctx, claim.Namespace, claim.UID); err != nil {
+			return fmt.Errorf("delete Multus attachments: %w", err)
+		}
 	}
 
 	// delete the claim from the pod manager
