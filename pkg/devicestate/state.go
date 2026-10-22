@@ -120,6 +120,70 @@ func (s *Manager) GetAllocatableDeviceByName(deviceName string) (resourceapi.Dev
 	return device, exists
 }
 
+// RefreshDevices discovers the SR-IOV devices again and adds the ones that are
+// not allocatable yet, such as VFs created after the driver started. Devices
+// that are no longer discovered are kept. It returns the number of added devices.
+func (s *Manager) RefreshDevices(ctx context.Context) (int, error) {
+	logger := klog.FromContext(ctx).WithName("RefreshDevices")
+
+	// A periodic rescan would repeat the whole startup discovery log, so it only logs at high verbosity.
+	discovered, err := discoverSriovDevices(logger.V(4))
+	if err != nil {
+		return 0, fmt.Errorf("error discovering devices: %w", err)
+	}
+
+	added, rdmaEnabled := s.mergeDiscoveredDevices(logger, discovered)
+
+	// A policy update republishes added devices, but not a changed attribute of a known one.
+	// The callback reads the advertised devices, so it must run without the lock held.
+	if rdmaEnabled > 0 && s.republishCallback != nil {
+		if err := s.republishCallback(ctx); err != nil {
+			return added, fmt.Errorf("failed to republish resources: %w", err)
+		}
+	}
+	return added, nil
+}
+
+// mergeDiscoveredDevices adds the devices that are not allocatable yet. For a known
+// device it only turns rdmaCapable on: a VF can be discovered before its RDMA device
+// exists, while a VF bound to vfio-pci for a claim loses its RDMA device.
+func (s *Manager) mergeDiscoveredDevices(logger klog.Logger, discovered drasriovtypes.AllocatableDevices) (added, rdmaEnabled int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.allocatable == nil {
+		s.allocatable = make(drasriovtypes.AllocatableDevices, len(discovered))
+	}
+	for name, device := range discovered {
+		known, exists := s.allocatable[name]
+		if !exists {
+			s.allocatable[name] = device
+			added++
+			continue
+		}
+		if isRDMACapable(device) && !isRDMACapable(known) {
+			known.Attributes = maps.Clone(known.Attributes)
+			if known.Attributes == nil {
+				known.Attributes = make(map[resourceapi.QualifiedName]resourceapi.DeviceAttribute)
+			}
+			known.Attributes[consts.AttributeRDMACapable] = device.Attributes[consts.AttributeRDMACapable]
+			s.allocatable[name] = known
+			rdmaEnabled++
+		}
+	}
+	if added > 0 {
+		logger.Info("Added newly discovered devices", "added", added, "totalDevices", len(s.allocatable))
+	}
+	if rdmaEnabled > 0 {
+		logger.Info("Known devices became RDMA capable", "devices", rdmaEnabled)
+	}
+	return added, rdmaEnabled
+}
+
+func isRDMACapable(device resourceapi.Device) bool {
+	attr, ok := device.Attributes[consts.AttributeRDMACapable]
+	return ok && attr.BoolValue != nil && *attr.BoolValue
+}
+
 // isStandaloneMode reports whether the manager is running in STANDALONE mode.
 func (s *Manager) isStandaloneMode() bool {
 	mode := consts.ConfigurationMode(s.configurationMode)

@@ -56,6 +56,21 @@ func (mr *MockDeviceStateMockRecorder) GetAllocatableDevices() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllocatableDevices", reflect.TypeOf((*MockDeviceState)(nil).GetAllocatableDevices))
 }
 
+// RefreshDevices mocks base method.
+func (m *MockDeviceState) RefreshDevices(ctx context.Context) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RefreshDevices", ctx)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// RefreshDevices indicates an expected call of RefreshDevices.
+func (mr *MockDeviceStateMockRecorder) RefreshDevices(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RefreshDevices", reflect.TypeOf((*MockDeviceState)(nil).RefreshDevices), ctx)
+}
+
 // UpdatePolicyDevices mocks base method.
 func (m *MockDeviceState) UpdatePolicyDevices(ctx context.Context, policyDevices map[string]map[v1.QualifiedName]v1.DeviceAttribute) error {
 	m.ctrl.T.Helper()
