@@ -26,7 +26,10 @@ type PFInfo struct {
 }
 
 func DiscoverSriovDevices() (types.AllocatableDevices, error) {
-	logger := klog.LoggerWithName(klog.Background(), "DiscoverSriovDevices")
+	return discoverSriovDevices(klog.LoggerWithName(klog.Background(), "DiscoverSriovDevices"))
+}
+
+func discoverSriovDevices(logger klog.Logger) (types.AllocatableDevices, error) {
 	pfList := []PFInfo{}
 	resourceList := types.AllocatableDevices{}
 
