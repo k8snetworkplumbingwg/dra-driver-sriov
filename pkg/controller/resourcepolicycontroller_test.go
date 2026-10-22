@@ -25,6 +25,7 @@ func (l *localFakeState) GetAdvertisedDevices() drasriovtypes.AllocatableDevices
 func (l *localFakeState) UpdatePolicyDevices(_ context.Context, _ map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute) error {
 	return nil
 }
+func (l *localFakeState) RefreshDevices(_ context.Context) (int, error) { return 0, nil }
 
 var _ = Describe("matchesNodeSelector", func() {
 	var r *SriovResourcePolicyReconciler

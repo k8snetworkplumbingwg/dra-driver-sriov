@@ -120,6 +120,36 @@ func (s *Manager) GetAllocatableDeviceByName(deviceName string) (resourceapi.Dev
 	return device, exists
 }
 
+// RefreshDevices discovers the SR-IOV devices again and adds the ones that are
+// not allocatable yet, such as VFs created after the driver started. Devices
+// that are no longer discovered are kept. It returns the number of added devices.
+func (s *Manager) RefreshDevices(ctx context.Context) (int, error) {
+	logger := klog.FromContext(ctx).WithName("RefreshDevices")
+
+	// A periodic rescan would repeat the whole startup discovery log, so it only logs at high verbosity.
+	discovered, err := discoverSriovDevices(logger.V(4))
+	if err != nil {
+		return 0, fmt.Errorf("error discovering devices: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.allocatable == nil {
+		s.allocatable = make(drasriovtypes.AllocatableDevices, len(discovered))
+	}
+	added := 0
+	for name, device := range discovered {
+		if _, exists := s.allocatable[name]; !exists {
+			s.allocatable[name] = device
+			added++
+		}
+	}
+	if added > 0 {
+		logger.Info("Added newly discovered devices", "added", added, "totalDevices", len(s.allocatable))
+	}
+	return added, nil
+}
+
 // isStandaloneMode reports whether the manager is running in STANDALONE mode.
 func (s *Manager) isStandaloneMode() bool {
 	mode := consts.ConfigurationMode(s.configurationMode)

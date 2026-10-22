@@ -88,6 +88,7 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 	ctrlMock := gomock.NewController(GinkgoT())
 	devState := mock.NewMockDeviceState(ctrlMock)
 	devState.EXPECT().GetAllocatableDevices().AnyTimes().Return(defaultAllocatableDevices())
+	devState.EXPECT().RefreshDevices(gomock.Any()).AnyTimes().Return(0, nil)
 	devState.EXPECT().UpdatePolicyDevices(gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
 		func(_ context.Context, m map[string]map[resourcev1.QualifiedName]resourcev1.DeviceAttribute) error {
 			applied = m
@@ -95,7 +96,7 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 		},
 	)
 
-	reconciler = controller.NewSriovResourcePolicyReconciler(mgr.GetClient(), "test-node", "dra-driver-sriov", devState)
+	reconciler = controller.NewSriovResourcePolicyReconciler(mgr.GetClient(), "test-node", "dra-driver-sriov", devState, 0)
 	Expect(reconciler.SetupWithManager(mgr)).To(Succeed())
 
 	var startCtx context.Context
@@ -256,9 +257,25 @@ var _ = Describe("SriovResourcePolicyReconciler (envtest)", func() {
 	})
 
 	It("should requeue when node is missing (direct Reconcile call)", func(ctx SpecContext) {
-		bogus := controller.NewSriovResourcePolicyReconciler(k8sClient, "missing-node", "dra-driver-sriov", nil)
+		bogus := controller.NewSriovResourcePolicyReconciler(k8sClient, "missing-node", "dra-driver-sriov", nil, 0)
 		result, err := bogus.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Name: "irrelevant", Namespace: "dra-driver-sriov"}})
 		Expect(err).To(BeNil())
 		Expect(result.RequeueAfter).NotTo(BeZero())
+	})
+
+	It("should rediscover devices and requeue only the sync request (direct Reconcile call)", func(ctx SpecContext) {
+		devState := mock.NewMockDeviceState(gomock.NewController(GinkgoT()))
+		devState.EXPECT().RefreshDevices(gomock.Any()).Times(2).Return(1, nil)
+		devState.EXPECT().GetAllocatableDevices().AnyTimes().Return(defaultAllocatableDevices())
+		devState.EXPECT().UpdatePolicyDevices(gomock.Any(), gomock.Any()).Times(2).Return(nil)
+		r := controller.NewSriovResourcePolicyReconciler(k8sClient, "test-node", "dra-driver-sriov", devState, time.Minute)
+
+		result, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Name: "resource-policy-sync", Namespace: "dra-driver-sriov"}})
+		Expect(err).To(BeNil())
+		Expect(result.RequeueAfter).To(Equal(time.Minute))
+
+		result, err = r.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Name: "some-policy", Namespace: "dra-driver-sriov"}})
+		Expect(err).To(BeNil())
+		Expect(result.RequeueAfter).To(BeZero())
 	})
 })

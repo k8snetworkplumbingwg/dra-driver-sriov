@@ -1,6 +1,7 @@
 package devicestate
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/jaypipes/ghw/pkg/pci"
@@ -8,11 +9,13 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"go.uber.org/mock/gomock"
+	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/utils/ptr"
 
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host"
 	mock_host "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host/mock"
+	drasriovtypes "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
 var _ = Describe("DiscoverSriovDevices", func() {
@@ -586,6 +589,73 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			devices, err := DiscoverSriovDevices()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(devices).To(HaveLen(0))
+		})
+	})
+
+	Context("RefreshDevices", func() {
+		expectPFWithVFs := func(vfList []host.VFInfo) {
+			pciInfo := &pci.Info{
+				Devices: []*pci.Device{
+					{
+						Address: "0000:01:00.0",
+						Class:   &pcidb.Class{ID: "02"},
+						Vendor:  &pcidb.Vendor{ID: "8086"},
+						Product: &pcidb.Product{ID: "1572"},
+					},
+				},
+			}
+
+			mockHost.EXPECT().PCI().Return(pciInfo, nil)
+			mockHost.EXPECT().IsSriovVF("0000:01:00.0").Return(false)
+			mockHost.EXPECT().TryGetPFInterfaceName("0000:01:00.0").Return("eth0")
+			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return(consts.EswitchModeLegacy)
+			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
+			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
+			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
+			for _, vf := range vfList {
+				mockHost.EXPECT().VerifyRDMACapability(vf.PciAddress).Return(false)
+			}
+		}
+
+		It("should add VFs created after the initial discovery and keep known devices", func() {
+			resName := "vendor.com/resA"
+			s := &Manager{
+				allocatable: drasriovtypes.AllocatableDevices{
+					"0000-01-00-1": {
+						Name: "0000-01-00-1",
+						Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+							consts.AttributeResourceName: {StringValue: &resName},
+						},
+					},
+				},
+			}
+			expectPFWithVFs([]host.VFInfo{
+				{PciAddress: "0000:01:00.1", VFID: 0, DeviceID: "154c"},
+				{PciAddress: "0000:01:00.2", VFID: 1, DeviceID: "154c"},
+			})
+
+			added, err := s.RefreshDevices(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(added).To(Equal(1))
+			Expect(s.allocatable).To(HaveLen(2))
+			Expect(s.allocatable["0000-01-00-2"].Attributes[consts.AttributePciAddress].StringValue).To(Equal(ptr.To("0000:01:00.2")))
+			// The known device is not replaced, so its policy attributes stay.
+			Expect(s.allocatable["0000-01-00-1"].Attributes[consts.AttributeResourceName].StringValue).To(Equal(&resName))
+		})
+
+		It("should keep the known devices when discovery fails", func() {
+			s := &Manager{
+				allocatable: drasriovtypes.AllocatableDevices{
+					"0000-01-00-1": {Name: "0000-01-00-1"},
+				},
+			}
+			mockHost.EXPECT().PCI().Return(nil, fmt.Errorf("failed to get PCI info"))
+
+			added, err := s.RefreshDevices(context.Background())
+			Expect(err).To(HaveOccurred())
+			Expect(added).To(BeZero())
+			Expect(s.allocatable).To(HaveLen(1))
 		})
 	})
 })
