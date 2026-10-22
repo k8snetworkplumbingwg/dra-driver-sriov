@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/urfave/cli/v2"
 
@@ -112,6 +113,13 @@ func newApp() *cli.App {
 			Value:       string(consts.ConfigurationModeStandalone),
 			Destination: &flagsOptions.ConfigurationMode,
 			EnvVars:     []string{"CONFIGURATION_MODE"},
+		},
+		&cli.DurationFlag{
+			Name:        "device-rescan-interval",
+			Usage:       "Interval at which to rediscover SR-IOV devices, so that VFs created after the driver started are published. Set to 0 to disable.",
+			Value:       30 * time.Second,
+			Destination: &flagsOptions.DeviceRescanInterval,
+			EnvVars:     []string{"DEVICE_RESCAN_INTERVAL"},
 		},
 	}
 	cliFlags = append(cliFlags, flagsOptions.KubeClientConfig.Flags()...)
@@ -236,7 +244,7 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 	}
 
 	// create and setup resource policy controller
-	resourcePolicyController := controller.NewSriovResourcePolicyReconciler(config.K8sClient.Client, config.Flags.NodeName, config.Flags.Namespace, deviceStateManager)
+	resourcePolicyController := controller.NewSriovResourcePolicyReconciler(config.K8sClient.Client, config.Flags.NodeName, config.Flags.Namespace, deviceStateManager, config.Flags.DeviceRescanInterval)
 	if err := resourcePolicyController.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("failed to setup resource policy controller: %w", err)
 	}
