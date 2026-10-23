@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -1260,6 +1261,57 @@ var _ = Describe("Manager", Serial, func() {
 			})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("failed to republish resources"))
+		})
+
+		It("should not race with concurrent device reads", func() {
+			// The policy controller calls UpdatePolicyDevices while kubelet prepare
+			// calls read the same devices; run with -race to catch a regression.
+			pciAddress := "0000:05:00.1"
+			s := &Manager{
+				allocatable: map[string]resourceapi.Device{
+					"devA": {Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+						consts.AttributePciAddress: {StringValue: &pciAddress},
+					}},
+				},
+			}
+			// PublishResources reads the advertised devices from inside the callback.
+			s.SetRepublishCallback(func(ctx context.Context) error {
+				_ = s.GetAdvertisedDevices()
+				return nil
+			})
+
+			resA, resB := "vendor.com/resA", "vendor.com/resB"
+			var wg sync.WaitGroup
+			wg.Add(2)
+
+			go func() {
+				// Done runs after GinkgoRecover, so a failed assertion still releases Wait.
+				defer wg.Done()
+				defer GinkgoRecover()
+				for i := 0; i < 200; i++ {
+					resName := resA
+					if i%2 == 1 {
+						resName = resB
+					}
+					err := s.UpdatePolicyDevices(context.Background(), map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+						"devA": {consts.AttributeResourceName: {StringValue: &resName}},
+					})
+					Expect(err).ToNot(HaveOccurred())
+				}
+			}()
+
+			go func() {
+				defer wg.Done()
+				defer GinkgoRecover()
+				for i := 0; i < 200; i++ {
+					device, exists := s.GetAllocatableDeviceByName("devA")
+					Expect(exists).To(BeTrue())
+					Expect(*device.Attributes[consts.AttributePciAddress].StringValue).To(Equal(pciAddress))
+					_ = s.GetAllocatableDevices()
+				}
+			}()
+
+			wg.Wait()
 		})
 
 		It("should skip reserved discovery attributes and still apply non-reserved ones", func() {

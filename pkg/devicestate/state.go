@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -35,8 +37,13 @@ type Manager struct {
 	cdi                    *cdi.Handler
 	deviceInfoStore        DeviceInfoStore
 	defaultInterfacePrefix string
-	allocatable            drasriovtypes.AllocatableDevices
-	republishCallback      func(context.Context) error
+	// mu guards allocatable and policyAttrKeys: the policy controller writes
+	// them while kubelet prepare calls read them. A stored device's attribute
+	// map is never modified in place, so a device returned by a getter stays
+	// safe to read after the lock is released.
+	mu                sync.RWMutex
+	allocatable       drasriovtypes.AllocatableDevices
+	republishCallback func(context.Context) error
 	// policyAttrKeys tracks attribute keys set by policy per device, so they
 	// can be cleared without touching discovery attributes. Presence of a
 	// device key also indicates that the device is advertised (policy-matched).
@@ -84,9 +91,11 @@ func NewManager(config *drasriovtypes.Config, cdi *cdi.Handler, deviceInfoStore 
 	return state, nil
 }
 
-// GetAllocatableDevices returns the allocatable devices
+// GetAllocatableDevices returns a snapshot of the allocatable devices
 func (s *Manager) GetAllocatableDevices() drasriovtypes.AllocatableDevices {
-	return s.allocatable
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return maps.Clone(s.allocatable)
 }
 
 // normalizeConfigurationMode validates the configured mode and applies defaulting.
@@ -105,6 +114,8 @@ func normalizeConfigurationMode(mode string) (string, error) {
 
 // GetAllocatableDeviceByName returns a discovered allocatable device and whether it exists.
 func (s *Manager) GetAllocatableDeviceByName(deviceName string) (resourceapi.Device, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	device, exists := s.allocatable[deviceName]
 	return device, exists
 }
@@ -222,7 +233,7 @@ func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim, config *configapi.VfConfig, result *resourceapi.DeviceRequestAllocationResult) (*drasriovtypes.PreparedDevice, error) {
 	logger := klog.FromContext(ctx).WithName("applyConfigOnDevice")
 	logger.V(3).Info("Applying config on device", "config", config, "result", result)
-	deviceInfo, exist := s.allocatable[result.Device]
+	deviceInfo, exist := s.GetAllocatableDeviceByName(result.Device)
 	if !exist {
 		return nil, fmt.Errorf("device %s not found in allocatable devices", result.Device)
 	}
@@ -552,6 +563,8 @@ func (s *Manager) unprepareDevices(preparedDevices drasriovtypes.PreparedDevices
 
 // GetAdvertisedDevices returns only devices that are matched by a policy.
 func (s *Manager) GetAdvertisedDevices() drasriovtypes.AllocatableDevices {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	result := make(drasriovtypes.AllocatableDevices, len(s.policyAttrKeys))
 	for name := range s.policyAttrKeys {
 		if device, exists := s.allocatable[name]; exists {
@@ -568,6 +581,28 @@ func (s *Manager) GetAdvertisedDevices() drasriovtypes.AllocatableDevices {
 func (s *Manager) UpdatePolicyDevices(ctx context.Context, policyDevices map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute) error {
 	logger := klog.FromContext(ctx).WithName("UpdatePolicyDevices")
 	logger.V(2).Info("Updating policy devices", "policyDeviceCount", len(policyDevices))
+
+	if !s.applyPolicyDevices(logger, policyDevices) {
+		logger.V(2).Info("No changes to policy devices")
+		return nil
+	}
+
+	// The callback reads the advertised devices, so it must run without the lock held.
+	if s.republishCallback != nil {
+		if err := s.republishCallback(ctx); err != nil {
+			logger.Error(err, "Failed to republish resources after policy update")
+			return fmt.Errorf("failed to republish resources: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// applyPolicyDevices applies policyDevices under the lock and reports whether
+// the advertised set or any device attribute changed.
+func (s *Manager) applyPolicyDevices(logger klog.Logger, policyDevices map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	changesMade := false
 
@@ -602,6 +637,7 @@ func (s *Manager) UpdatePolicyDevices(ctx context.Context, policyDevices map[str
 			continue
 		}
 
+		device.Attributes = maps.Clone(device.Attributes)
 		if device.Attributes == nil {
 			device.Attributes = make(map[resourceapi.QualifiedName]resourceapi.DeviceAttribute)
 		}
@@ -641,23 +677,14 @@ func (s *Manager) UpdatePolicyDevices(ctx context.Context, policyDevices map[str
 		s.policyAttrKeys[deviceName] = newKeys
 	}
 
-	if !changesMade {
-		logger.V(2).Info("No changes to policy devices")
-		return nil
+	if changesMade {
+		logger.Info("Policy devices updated", "totalDevices", len(s.allocatable), "advertisedDevices", len(s.policyAttrKeys))
 	}
-
-	logger.Info("Policy devices updated", "totalDevices", len(s.allocatable), "advertisedDevices", len(s.policyAttrKeys))
-	if s.republishCallback != nil {
-		if err := s.republishCallback(ctx); err != nil {
-			logger.Error(err, "Failed to republish resources after policy update")
-			return fmt.Errorf("failed to republish resources: %w", err)
-		}
-	}
-
-	return nil
+	return changesMade
 }
 
 // clearPolicyAttributes removes all policy-set attributes from a device.
+// The caller must hold s.mu.
 func (s *Manager) clearPolicyAttributes(deviceName string) bool {
 	oldKeys, ok := s.policyAttrKeys[deviceName]
 	if !ok || len(oldKeys) == 0 {
@@ -671,6 +698,7 @@ func (s *Manager) clearPolicyAttributes(deviceName string) bool {
 		return false
 	}
 
+	device.Attributes = maps.Clone(device.Attributes)
 	for key := range oldKeys {
 		delete(device.Attributes, key)
 	}
