@@ -21,6 +21,9 @@ type DeviceState interface {
 	// Values are additional attributes from resolved DeviceAttributes objects.
 	// Devices not in the map are excluded from advertisement, and their policy-set attributes are cleared.
 	UpdatePolicyDevices(ctx context.Context, policyDevices map[string]map[resourceapi.QualifiedName]resourceapi.DeviceAttribute) error
+	// RefreshDevices discovers the devices again, adds the ones that are not allocatable yet
+	// and returns how many were added.
+	RefreshDevices(ctx context.Context) (int, error)
 }
 
 // DeviceInfoStore abstracts DP device-info persistence and cleanup.

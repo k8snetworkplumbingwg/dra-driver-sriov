@@ -53,16 +53,19 @@ type SriovResourcePolicyReconciler struct {
 	namespace          string
 	log                klog.Logger
 	deviceStateManager devicestate.DeviceState
+	rescanInterval     time.Duration
 }
 
-// NewSriovResourcePolicyReconciler creates a new SriovResourcePolicyReconciler
-func NewSriovResourcePolicyReconciler(client client.Client, nodeName, namespace string, deviceStateManager devicestate.DeviceState) *SriovResourcePolicyReconciler {
+// NewSriovResourcePolicyReconciler creates a new SriovResourcePolicyReconciler.
+// A positive rescanInterval makes it rediscover devices periodically; zero disables that.
+func NewSriovResourcePolicyReconciler(client client.Client, nodeName, namespace string, deviceStateManager devicestate.DeviceState, rescanInterval time.Duration) *SriovResourcePolicyReconciler {
 	return &SriovResourcePolicyReconciler{
 		Client:             client,
 		deviceStateManager: deviceStateManager,
 		nodeName:           nodeName,
 		namespace:          namespace,
 		log:                klog.Background().WithName("SriovResourcePolicy"),
+		rescanInterval:     rescanInterval,
 	}
 }
 
@@ -105,12 +108,21 @@ func (r *SriovResourcePolicyReconciler) Reconcile(ctx context.Context, req ctrl.
 		}
 	}
 
+	// VFs can be created after the driver started, e.g. by the SR-IOV operator after a node reboot.
+	if _, err := r.deviceStateManager.RefreshDevices(ctx); err != nil {
+		r.log.Error(err, "Failed to rediscover devices, keeping the devices discovered so far")
+	}
+
 	policyDevices := r.getPolicyDeviceMap(matchingPolicies, deviceAttrList.Items)
 	if err := r.deviceStateManager.UpdatePolicyDevices(ctx, policyDevices); err != nil {
 		r.log.Error(err, "Failed to update policy devices")
 		return ctrl.Result{}, err
 	}
 
+	// Only the sync request is requeued, so that one reconcile per interval rediscovers devices.
+	if r.rescanInterval > 0 && req.Name == resourcePolicySyncEventName {
+		return ctrl.Result{RequeueAfter: r.rescanInterval}, nil
+	}
 	return ctrl.Result{}, nil
 }
 
