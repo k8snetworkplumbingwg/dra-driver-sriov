@@ -126,8 +126,8 @@ func (s *Manager) GetAllocatableDeviceByName(deviceName string) (resourceapi.Dev
 func (s *Manager) RefreshDevices(ctx context.Context) (int, error) {
 	logger := klog.FromContext(ctx).WithName("RefreshDevices")
 
-	// A periodic rescan would repeat the whole startup discovery log, so it only logs at high verbosity.
-	discovered, err := discoverSriovDevices(logger.V(4))
+	// A periodic rescan would repeat the whole startup discovery log, so it runs quietly at high verbosity.
+	discovered, err := discoverSriovDevices(logger.V(4), true)
 	if err != nil {
 		return 0, fmt.Errorf("error discovering devices: %w", err)
 	}

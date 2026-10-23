@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/go-logr/logr"
 	"github.com/jaypipes/ghw/pkg/pci"
 	"github.com/jaypipes/pcidb"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"go.uber.org/mock/gomock"
 	resourceapi "k8s.io/api/resource/v1"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
@@ -17,6 +19,19 @@ import (
 	mock_host "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host/mock"
 	drasriovtypes "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
+
+// recordingSink is a logr sink that records Info and Error messages.
+type recordingSink struct {
+	infos  []string
+	errors []string
+}
+
+func (r *recordingSink) Init(logr.RuntimeInfo)               {}
+func (r *recordingSink) Enabled(int) bool                    { return true }
+func (r *recordingSink) Info(_ int, msg string, _ ...any)    { r.infos = append(r.infos, msg) }
+func (r *recordingSink) Error(_ error, msg string, _ ...any) { r.errors = append(r.errors, msg) }
+func (r *recordingSink) WithValues(...any) logr.LogSink      { return r }
+func (r *recordingSink) WithName(string) logr.LogSink        { return r }
 
 var _ = Describe("DiscoverSriovDevices", func() {
 	var (
@@ -593,7 +608,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 	})
 
 	Context("RefreshDevices", func() {
-		expectPFWithVFs := func(vfList []host.VFInfo) {
+		expectPFWithVFs := func(vfList []host.VFInfo, numaErr error) {
 			pciInfo := &pci.Info{
 				Devices: []*pci.Device{
 					{
@@ -609,7 +624,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().IsSriovVF("0000:01:00.0").Return(false)
 			mockHost.EXPECT().TryGetPFInterfaceName("0000:01:00.0").Return("eth0")
 			mockHost.EXPECT().GetNicSriovMode("0000:01:00.0").Return(consts.EswitchModeLegacy)
-			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", nil)
+			mockHost.EXPECT().GetNumaNode("0000:01:00.0").Return("0", numaErr)
 			mockHost.EXPECT().GetPCIeRoot("0000:01:00.0").Return("pci0000:00", nil)
 			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
@@ -633,7 +648,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			expectPFWithVFs([]host.VFInfo{
 				{PciAddress: "0000:01:00.1", VFID: 0, DeviceID: "154c"},
 				{PciAddress: "0000:01:00.2", VFID: 1, DeviceID: "154c"},
-			})
+			}, nil)
 
 			added, err := s.RefreshDevices(context.Background())
 			Expect(err).NotTo(HaveOccurred())
@@ -642,6 +657,20 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			Expect(s.allocatable["0000-01-00-2"].Attributes[consts.AttributePciAddress].StringValue).To(Equal(ptr.To("0000:01:00.2")))
 			// The known device is not replaced, so its policy attributes stay.
 			Expect(s.allocatable["0000-01-00-1"].Attributes[consts.AttributeResourceName].StringValue).To(Equal(&resName))
+		})
+
+		It("should log recoverable discovery failures below error level", func() {
+			// A persistent per-device failure must not produce an error log on every rescan.
+			sink := &recordingSink{}
+			s := &Manager{}
+			expectPFWithVFs([]host.VFInfo{{PciAddress: "0000:01:00.1", VFID: 0, DeviceID: "154c"}}, fmt.Errorf("no numa"))
+
+			ctx := klog.NewContext(context.Background(), logr.New(sink))
+			added, err := s.RefreshDevices(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(added).To(Equal(1))
+			Expect(sink.errors).To(BeEmpty())
+			Expect(sink.infos).To(ContainElement(ContainSubstring("Failed to get NUMA node")))
 		})
 
 		It("should keep the known devices when discovery fails", func() {
