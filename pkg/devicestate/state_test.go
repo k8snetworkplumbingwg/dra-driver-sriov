@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -1280,9 +1281,12 @@ var _ = Describe("Manager", Serial, func() {
 			})
 
 			resA, resB := "vendor.com/resA", "vendor.com/resB"
-			done := make(chan bool)
+			var wg sync.WaitGroup
+			wg.Add(2)
 
 			go func() {
+				// Done runs after GinkgoRecover, so a failed assertion still releases Wait.
+				defer wg.Done()
 				defer GinkgoRecover()
 				for i := 0; i < 200; i++ {
 					resName := resA
@@ -1294,10 +1298,10 @@ var _ = Describe("Manager", Serial, func() {
 					})
 					Expect(err).ToNot(HaveOccurred())
 				}
-				done <- true
 			}()
 
 			go func() {
+				defer wg.Done()
 				defer GinkgoRecover()
 				for i := 0; i < 200; i++ {
 					device, exists := s.GetAllocatableDeviceByName("devA")
@@ -1305,11 +1309,9 @@ var _ = Describe("Manager", Serial, func() {
 					Expect(*device.Attributes[consts.AttributePciAddress].StringValue).To(Equal(pciAddress))
 					_ = s.GetAllocatableDevices()
 				}
-				done <- true
 			}()
 
-			<-done
-			<-done
+			wg.Wait()
 		})
 
 		It("should skip reserved discovery attributes and still apply non-reserved ones", func() {
