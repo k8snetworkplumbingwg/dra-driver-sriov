@@ -4,7 +4,8 @@ The driver reads the allocated VF's network template, creates a Pod-owned NAD
 with that VF's `deviceID`, and adds the temporary NAD to the Pod's Multus network
 selection. The submitted Pods have no `k8s.v1.cni.cncf.io/networks` annotation.
 Source NADs have neither `resourceName` annotations nor `deviceID` fields.
-Multus runs SR-IOV CNI and IPAM; the driver never calls CNI in MULTUS mode.
+Multus runs SR-IOV CNI, IPAM, and any chained plugins; the driver never calls
+CNI in MULTUS mode.
 
 Enable `kubeletPlugin.configurationMode=MULTUS` and
 `kubeletPlugin.multusAutoAttach=true` in the driver's Helm values. The equivalent
@@ -64,7 +65,11 @@ kubectl delete -f demo/multus-auto-attach/single-vf.yaml --ignore-not-found
 
 ## POC boundaries
 
-Only single-plugin `sriov` NADs and exclusive kernel/netdevice VFs are supported.
+Source NADs may contain a single `sriov` config or a `plugins` list containing
+exactly one `sriov` entry, followed by plugins such as `sbr`. The driver injects
+`deviceID` into the SR-IOV entry and preserves the chain. Conflicting device
+IDs and multiple SR-IOV entries are rejected. Only exclusive kernel/netdevice
+VFs are supported.
 For multiple VFs, omit `VfConfig.ifName` so Multus assigns distinct names, or
 provide a different name per request. A NAD reference can come from `VfConfig`
 or the allocated device's `sriovnetwork.k8snetworkplumbingwg.io/netAttachDefName`
@@ -73,7 +78,7 @@ Pod namespace; conflicting references fail preparation.
 
 This single-node test uses host-local IPAM and fake GPUs. It does not validate
 physical GPU performance, multi-node IPAM, or communication between rails.
-Recovery workers, protection finalizers, admission guards, conflists, and
+Recovery workers, protection finalizers, admission guards, and
 operator changes from the full design are omitted. Normal unprepare deletes
 the generated NADs, and Pod ownership also permits garbage collection. Keep
 Multus's delegate cache available until CNI DEL finishes.

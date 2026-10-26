@@ -28,17 +28,42 @@ const (
 	attributeNADNamespace resourceapi.QualifiedName = consts.DriverName + "/netAttachDefNamespace"
 )
 
-// shortcut: single-plugin netdevice NADs only; extend the renderer when the POC needs conflists.
+// renderShadowConfig binds the single SR-IOV plugin in a config or conflist to an allocated VF.
 func renderShadowConfig(source *nadv1.NetworkAttachmentDefinition, pci string) (string, error) {
 	var config map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(source.Spec.Config), &config); err != nil {
 		return "", fmt.Errorf("decode NAD %s/%s: %w", source.Namespace, source.Name, err)
 	}
-	if config == nil || string(config["type"]) != `"sriov"` || config["plugins"] != nil {
-		return "", fmt.Errorf("NAD %s/%s must contain a single sriov plugin", source.Namespace, source.Name)
+	if config == nil {
+		return "", fmt.Errorf("NAD %s/%s contains an empty config", source.Namespace, source.Name)
+	}
+	sriov := config
+	var plugins []map[string]json.RawMessage
+	if raw, chained := config["plugins"]; chained {
+		if err := json.Unmarshal(raw, &plugins); err != nil {
+			return "", fmt.Errorf("decode plugins in NAD %s/%s: %w", source.Namespace, source.Name, err)
+		}
+		sriov = nil
+		for _, plugin := range plugins {
+			var pluginType string
+			if err := json.Unmarshal(plugin["type"], &pluginType); err != nil || pluginType == "" {
+				return "", fmt.Errorf("NAD %s/%s contains an invalid plugin type", source.Namespace, source.Name)
+			}
+			if pluginType != "sriov" {
+				continue
+			}
+			if sriov != nil {
+				return "", fmt.Errorf("NAD %s/%s contains multiple sriov plugins", source.Namespace, source.Name)
+			}
+			sriov = plugin
+		}
+	}
+	var pluginType string
+	if sriov == nil || json.Unmarshal(sriov["type"], &pluginType) != nil || pluginType != "sriov" {
+		return "", fmt.Errorf("NAD %s/%s must contain exactly one sriov plugin", source.Namespace, source.Name)
 	}
 	var oldPCI, name string
-	if raw, ok := config["deviceID"]; ok {
+	if raw, ok := sriov["deviceID"]; ok {
 		if err := json.Unmarshal(raw, &oldPCI); err != nil || (oldPCI != "" && oldPCI != pci) {
 			return "", fmt.Errorf("NAD %s/%s has a conflicting deviceID", source.Namespace, source.Name)
 		}
@@ -51,7 +76,14 @@ func renderShadowConfig(source *nadv1.NetworkAttachmentDefinition, pci string) (
 	if name == "" {
 		config["name"], _ = json.Marshal(source.Name)
 	}
-	config["deviceID"], _ = json.Marshal(pci)
+	sriov["deviceID"], _ = json.Marshal(pci)
+	if plugins != nil {
+		raw, err := json.Marshal(plugins)
+		if err != nil {
+			return "", fmt.Errorf("encode plugins in NAD %s/%s: %w", source.Namespace, source.Name, err)
+		}
+		config["plugins"] = raw
+	}
 	rendered, err := json.Marshal(config)
 	return string(rendered), err
 }

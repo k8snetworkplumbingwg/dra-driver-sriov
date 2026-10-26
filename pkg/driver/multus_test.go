@@ -3,6 +3,8 @@ package driver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -38,11 +40,90 @@ func TestRenderShadowConfig(t *testing.T) {
 	if string(config["name"]) != `"rail-a"` || string(config["deviceID"]) != `"0000:15:10.0"` || string(config["extension"]) != "9007199254740993" || !strings.Contains(string(config["ipam"]), "10.20.0.0/24") {
 		t.Fatalf("source identity, IPAM or precision changed: %s", rendered)
 	}
-	for _, invalid := range []string{`null`, `{}`, `{"type":"bridge"}`, `{"plugins":[{"type":"sriov"}]}`, `{"type":"sriov","deviceID":"0000:29:10.0"}`} {
+	for _, invalid := range []string{`null`, `{}`, `{"type":"bridge"}`, `{"type":"sriov","deviceID":"0000:29:10.0"}`} {
 		source.Spec.Config = invalid
 		if _, err := renderShadowConfig(source, "0000:15:10.0"); err == nil {
 			t.Errorf("accepted unsupported source %s", invalid)
 		}
+	}
+}
+
+func TestRenderShadowConfigConflist(t *testing.T) {
+	const pci = "0000:15:10.0"
+	for _, existingPCI := range []string{"", pci} {
+		t.Run("existingPCI="+existingPCI, func(t *testing.T) {
+			original := fmt.Sprintf(`{"cniVersion":"1.0.0","name":"rail-a","extension":9007199254740993,"plugins":[{"type":"sriov","vlan":0,"deviceID":%q,"ipam":{"type":"whereabouts","range":"172.16.100.0/24","gateway":"172.16.100.254"},"extension":9007199254740993},{"type":"sbr","extension":9007199254740993}]}`, existingPCI)
+			source := &nadv1.NetworkAttachmentDefinition{
+				ObjectMeta: metav1.ObjectMeta{Name: "template", Namespace: "system"},
+				Spec:       nadv1.NetworkAttachmentDefinitionSpec{Config: original},
+			}
+			rendered, err := renderShadowConfig(source, pci)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Compare the entire document: only the nested deviceID may change.
+			decoder := json.NewDecoder(strings.NewReader(rendered))
+			decoder.UseNumber()
+			var got map[string]interface{}
+			if err := decoder.Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			decoder = json.NewDecoder(strings.NewReader(original))
+			decoder.UseNumber()
+			var want map[string]interface{}
+			if err := decoder.Decode(&want); err != nil {
+				t.Fatal(err)
+			}
+			want["plugins"].([]interface{})[0].(map[string]interface{})["deviceID"] = pci
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("config changed beyond deviceID: got %s", rendered)
+			}
+			if source.Spec.Config != original {
+				t.Fatal("source NAD was modified")
+			}
+		})
+	}
+}
+
+func TestRenderShadowConfigConflistNameFallback(t *testing.T) {
+	source := &nadv1.NetworkAttachmentDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: "rail-a"},
+		Spec:       nadv1.NetworkAttachmentDefinitionSpec{Config: `{"plugins":[{"type":"sriov"},{"type":"sbr"}]}`},
+	}
+	rendered, err := renderShadowConfig(source, "0000:15:10.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(rendered), &config); err != nil {
+		t.Fatal(err)
+	}
+	if string(config["name"]) != `"rail-a"` || config["deviceID"] != nil {
+		t.Fatalf("incorrect conflist root: %s", rendered)
+	}
+}
+
+func TestRenderShadowConfigRejectsInvalidConflists(t *testing.T) {
+	for name, config := range map[string]string{
+		"null-list":       `{"plugins":null}`,
+		"empty-list":      `{"plugins":[]}`,
+		"not-a-list":      `{"plugins":{}}`,
+		"scalar-entry":    `{"plugins":["sriov"]}`,
+		"null-entry":      `{"plugins":[null]}`,
+		"missing-type":    `{"plugins":[{}, {"type":"sriov"}]}`,
+		"empty-type":      `{"plugins":[{"type":""}, {"type":"sriov"}]}`,
+		"nonstring-type":  `{"plugins":[{"type":7}, {"type":"sriov"}]}`,
+		"no-sriov":        `{"plugins":[{"type":"sbr"}]}`,
+		"multiple-sriov":  `{"plugins":[{"type":"sriov"},{"type":"sriov"}]}`,
+		"conflicting-pci": `{"plugins":[{"type":"sriov","deviceID":"0000:29:10.0"},{"type":"sbr"}]}`,
+		"invalid-pci":     `{"plugins":[{"type":"sriov","deviceID":42},{"type":"sbr"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := &nadv1.NetworkAttachmentDefinition{Spec: nadv1.NetworkAttachmentDefinitionSpec{Config: config}}
+			if _, err := renderShadowConfig(source, "0000:15:10.0"); err == nil {
+				t.Fatal("accepted invalid conflist")
+			}
+		})
 	}
 }
 
