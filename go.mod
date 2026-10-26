@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/Mellanox/rdmamap v1.2.0
-	github.com/containerd/nri v0.12.3
+	github.com/containerd/nri v0.12.4
 	github.com/containernetworking/cni v1.3.1
 	github.com/jaypipes/ghw v0.26.0
 	github.com/jaypipes/pcidb v1.1.1
