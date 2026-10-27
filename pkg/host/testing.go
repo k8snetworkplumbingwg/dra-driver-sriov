@@ -7,6 +7,8 @@ import (
 	"path"
 
 	"k8s.io/klog/v2"
+
+	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 )
 
 // NewHostForTest creates a Host with injectable providers, for use in unit tests.
@@ -30,13 +32,125 @@ func NewHostForTest(netlinkProvider NetlinkProvider, sriovnetProvider ...Sriovne
 }
 
 // FakeNetlinkProvider is a configurable NetlinkProvider for use in unit tests.
+// It records the arguments of the VF setter calls so tests can assert on how
+// VFLinkConfig fields map to netlink calls.
 type FakeNetlinkProvider struct {
 	EswitchMode  string
 	EswitchError error
+
+	// Recorded calls to the VF setters, in the order they were invoked.
+	VlanCalls     []VlanCall
+	SpoofchkCalls []SpoofchkCall
+	TrustCalls    []TrustCall
+	RateCalls     []RateCall
+	StateCalls    []StateCall
+
+	// Optional errors to return from the corresponding setter.
+	VlanErr     error
+	SpoofchkErr error
+	TrustErr    error
+	RateErr     error
+	StateErr    error
+
+	// CurrentVfLinkConfig is returned by GetVfLinkConfig. When nil a neutral
+	// default snapshot is returned instead.
+	CurrentVfLinkConfig *configapi.VFLinkConfig
+	// GetVfLinkConfigErr, when non-nil, is returned by GetVfLinkConfig.
+	GetVfLinkConfigErr error
+}
+
+// VlanCall records a SetVfVlanQosProto invocation.
+type VlanCall struct {
+	PF    string
+	VF    int
+	Vlan  int
+	Qos   int
+	Proto string
+}
+
+// SpoofchkCall records a SetVfSpoofchk invocation.
+type SpoofchkCall struct {
+	PF      string
+	VF      int
+	Enabled bool
+}
+
+// TrustCall records a SetVfTrust invocation.
+type TrustCall struct {
+	PF      string
+	VF      int
+	Enabled bool
+}
+
+// RateCall records a SetVfRate invocation.
+type RateCall struct {
+	PF      string
+	VF      int
+	MinRate int
+	MaxRate int
+}
+
+// StateCall records a SetVfState invocation.
+type StateCall struct {
+	PF    string
+	VF    int
+	State string
 }
 
 func (f *FakeNetlinkProvider) GetDevLinkDeviceEswitchMode(_ string) (string, error) {
 	return f.EswitchMode, f.EswitchError
+}
+
+func (f *FakeNetlinkProvider) SetVfVlanQosProto(pfName string, vf, vlan, qos int, proto string) error {
+	f.VlanCalls = append(f.VlanCalls, VlanCall{PF: pfName, VF: vf, Vlan: vlan, Qos: qos, Proto: proto})
+	return f.VlanErr
+}
+
+func (f *FakeNetlinkProvider) SetVfSpoofchk(pfName string, vf int, enabled bool) error {
+	f.SpoofchkCalls = append(f.SpoofchkCalls, SpoofchkCall{PF: pfName, VF: vf, Enabled: enabled})
+	return f.SpoofchkErr
+}
+
+func (f *FakeNetlinkProvider) SetVfTrust(pfName string, vf int, enabled bool) error {
+	f.TrustCalls = append(f.TrustCalls, TrustCall{PF: pfName, VF: vf, Enabled: enabled})
+	return f.TrustErr
+}
+
+func (f *FakeNetlinkProvider) SetVfRate(pfName string, vf, minRate, maxRate int) error {
+	f.RateCalls = append(f.RateCalls, RateCall{PF: pfName, VF: vf, MinRate: minRate, MaxRate: maxRate})
+	return f.RateErr
+}
+
+func (f *FakeNetlinkProvider) SetVfState(pfName string, vf int, state string) error {
+	f.StateCalls = append(f.StateCalls, StateCall{PF: pfName, VF: vf, State: state})
+	return f.StateErr
+}
+
+func (f *FakeNetlinkProvider) GetVfLinkConfig(_ string, _ int) (*configapi.VFLinkConfig, error) {
+	if f.GetVfLinkConfigErr != nil {
+		return nil, f.GetVfLinkConfigErr
+	}
+	if f.CurrentVfLinkConfig != nil {
+		return f.CurrentVfLinkConfig, nil
+	}
+	zero := 0
+	spoofChk := true
+	trust := false
+	proto := configapi.VlanProto8021q
+	state := configapi.LinkStateAuto
+	minRate := 0
+	maxRate := 0
+	qos := 0
+	return &configapi.VFLinkConfig{
+		VLAN:      &zero,
+		Qos:       &qos,
+		VlanProto: &proto,
+		SpoofChk:  &spoofChk,
+		Trust:     &trust,
+		MinTxRate: &minRate,
+		MaxTxRate: &maxRate,
+		LinkState: &state,
+	}, nil
 }
 
 // FakeSriovnetProvider is a configurable SriovnetProvider for use in unit tests.

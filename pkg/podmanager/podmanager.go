@@ -18,9 +18,10 @@ import (
 // across multiple Pods. It is indexed by the Pod's UID, and for each Pod, it maps
 // claim IDs to their specific PreparedDevices.
 type PodManager struct {
-	mu                     sync.RWMutex
-	preparedClaimsByPodUID drasriovtypes.PreparedClaimsByPodUID
-	checkpointManager      checkpointmanager.CheckpointManager
+	mu                              sync.RWMutex
+	preparedClaimsByPodUID          drasriovtypes.PreparedClaimsByPodUID
+	pendingPreparedDevicesByClaimID drasriovtypes.PreparedDevicesByClaimID
+	checkpointManager               checkpointmanager.CheckpointManager
 }
 
 func NewPodManager(config *drasriovtypes.Config) (*PodManager, error) {
@@ -28,25 +29,21 @@ func NewPodManager(config *drasriovtypes.Config) (*PodManager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unable to create checkpoint manager: %v", err)
 	}
-	return newPodManager(checkpointManager)
+	return NewPodManagerWithCheckpointManager(checkpointManager)
 }
 
-// NewPodManagerWithCheckpointManager constructs a PodManager using the given checkpoint
-// manager. It is intended for tests that need to simulate checkpoint persistence failures.
+// NewPodManagerWithCheckpointManager creates a PodManager using an injected checkpoint manager.
 func NewPodManagerWithCheckpointManager(checkpointManager checkpointmanager.CheckpointManager) (*PodManager, error) {
-	return newPodManager(checkpointManager)
-}
-
-func newPodManager(checkpointManager checkpointmanager.CheckpointManager) (*PodManager, error) {
 	checkpoints, err := checkpointManager.ListCheckpoints()
 	if err != nil {
 		return nil, fmt.Errorf("unable to list checkpoints: %v", err)
 	}
 
 	podmManager := &PodManager{
-		mu:                     sync.RWMutex{},
-		checkpointManager:      checkpointManager,
-		preparedClaimsByPodUID: make(drasriovtypes.PreparedClaimsByPodUID),
+		mu:                              sync.RWMutex{},
+		checkpointManager:               checkpointManager,
+		preparedClaimsByPodUID:          make(drasriovtypes.PreparedClaimsByPodUID),
+		pendingPreparedDevicesByClaimID: make(drasriovtypes.PreparedDevicesByClaimID),
 	}
 
 	for _, c := range checkpoints {
@@ -56,7 +53,17 @@ func newPodManager(checkpointManager checkpointmanager.CheckpointManager) (*PodM
 			if err := checkpointManager.GetCheckpoint(consts.DriverPluginCheckpointFile, checkpoint); err != nil {
 				return nil, fmt.Errorf("unable to load checkpoint: %v", err)
 			}
+			if checkpoint.V1 == nil {
+				return nil, fmt.Errorf("unable to load checkpoint: missing v1 data")
+			}
+			if checkpoint.V1.PreparedClaimsByPodUID == nil {
+				checkpoint.V1.PreparedClaimsByPodUID = make(drasriovtypes.PreparedClaimsByPodUID)
+			}
+			if checkpoint.V1.PendingPreparedDevicesByClaimID == nil {
+				checkpoint.V1.PendingPreparedDevicesByClaimID = make(drasriovtypes.PreparedDevicesByClaimID)
+			}
 			podmManager.preparedClaimsByPodUID = checkpoint.V1.PreparedClaimsByPodUID
+			podmManager.pendingPreparedDevicesByClaimID = checkpoint.V1.PendingPreparedDevicesByClaimID
 			klog.Infof("Loaded checkpoint with %d pods", len(podmManager.preparedClaimsByPodUID))
 			return podmManager, nil
 		}
@@ -73,27 +80,39 @@ func newPodManager(checkpointManager checkpointmanager.CheckpointManager) (*PodM
 
 // Set stores the configuration for all prepared devices under a given Pod UID.
 // If a configuration for the Pod UID or claim ID already exists, it will be overwritten.
-// When the checkpoint cannot be written the store is left as it was, so a
-// claim whose devices the caller then unprepares is not reported as prepared.
 func (s *PodManager) Set(podUID types.UID, claimID types.UID, preparedDevices drasriovtypes.PreparedDevices) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	claims, hadPod := s.preparedClaimsByPodUID[podUID]
-	if !hadPod {
-		claims = make(drasriovtypes.PreparedDevicesByClaimID)
-		s.preparedClaimsByPodUID[podUID] = claims
+
+	oldPodClaims, hadPod := s.preparedClaimsByPodUID[podUID]
+	var oldClaimDevices drasriovtypes.PreparedDevices
+	var hadClaim bool
+	if hadPod {
+		oldClaimDevices, hadClaim = oldPodClaims[claimID]
 	}
-	previous, hadClaim := claims[claimID]
-	claims[claimID] = preparedDevices
+	oldPending, hadPending := s.pendingPreparedDevicesByClaimID[claimID]
+
+	if _, ok := s.preparedClaimsByPodUID[podUID]; !ok {
+		s.preparedClaimsByPodUID[podUID] = make(drasriovtypes.PreparedDevicesByClaimID)
+	}
+	s.preparedClaimsByPodUID[podUID][claimID] = preparedDevices
+	delete(s.pendingPreparedDevicesByClaimID, claimID)
 
 	if err := s.syncToCheckpoint(); err != nil {
-		switch {
-		case hadClaim:
-			claims[claimID] = previous
-		case hadPod:
-			delete(claims, claimID)
-		default:
+		if hadPod {
+			s.preparedClaimsByPodUID[podUID] = oldPodClaims
+			if hadClaim {
+				oldPodClaims[claimID] = oldClaimDevices
+			} else {
+				delete(oldPodClaims, claimID)
+			}
+		} else {
 			delete(s.preparedClaimsByPodUID, podUID)
+		}
+		if hadPending {
+			s.pendingPreparedDevicesByClaimID[claimID] = oldPending
+		} else {
+			delete(s.pendingPreparedDevicesByClaimID, claimID)
 		}
 		return err
 	}
@@ -159,8 +178,7 @@ func (s *PodManager) GetByClaim(claim kubeletplugin.NamespacedObject) (drasriovt
 }
 
 // UpdatePreparedDeviceNetworkData persists runtime network data on an already
-// tracked prepared device and syncs the checkpoint. When the checkpoint cannot
-// be written the device keeps its previous network data.
+// tracked prepared device and syncs the checkpoint.
 func (s *PodManager) UpdatePreparedDeviceNetworkData(preparedDevice *drasriovtypes.PreparedDevice, networkData *resourceapi.NetworkDeviceData) error {
 	if preparedDevice == nil {
 		return fmt.Errorf("prepared device is nil")
@@ -177,34 +195,150 @@ func (s *PodManager) UpdatePreparedDeviceNetworkData(preparedDevice *drasriovtyp
 	return nil
 }
 
-// DeleteClaim removes the prepared devices of a claim. The pod's other claims
-// are kept, and the pod itself is removed once it has no claim left.
+// DeleteClaim removes all configurations associated with a given claim.
 // NOTE: for now we only support one pod per claim as VFs are not shared between pods
 func (s *PodManager) DeleteClaim(claim kubeletplugin.NamespacedObject) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for podUID, claims := range s.preparedClaimsByPodUID {
-		devices, found := claims[claim.UID]
-		if !found {
-			continue
+	oldPreparedClaimsByPodUID := make(drasriovtypes.PreparedClaimsByPodUID, len(s.preparedClaimsByPodUID))
+	for podUID, devicesByClaimID := range s.preparedClaimsByPodUID {
+		oldPreparedClaimsByPodUID[podUID] = make(drasriovtypes.PreparedDevicesByClaimID, len(devicesByClaimID))
+		for claimID, devices := range devicesByClaimID {
+			oldPreparedClaimsByPodUID[podUID][claimID] = devices
 		}
-		delete(claims, claim.UID)
-		if len(claims) == 0 {
-			delete(s.preparedClaimsByPodUID, podUID)
+	}
+	oldPending, hadPending := s.pendingPreparedDevicesByClaimID[claim.UID]
+	podsToDelete := []types.UID{}
+	for uid, preparedDevicesByClaimID := range s.preparedClaimsByPodUID {
+		_, found := preparedDevicesByClaimID[claim.UID]
+		if found {
+			podsToDelete = append(podsToDelete, uid)
 		}
+	}
+
+	if len(podsToDelete) > 0 {
+		for _, uid := range podsToDelete {
+			delete(s.preparedClaimsByPodUID[uid], claim.UID)
+			if len(s.preparedClaimsByPodUID[uid]) == 0 {
+				delete(s.preparedClaimsByPodUID, uid)
+			}
+		}
+		delete(s.pendingPreparedDevicesByClaimID, claim.UID)
 		if err := s.syncToCheckpoint(); err != nil {
-			claims[claim.UID] = devices
-			s.preparedClaimsByPodUID[podUID] = claims
+			s.preparedClaimsByPodUID = oldPreparedClaimsByPodUID
+			if hadPending {
+				s.pendingPreparedDevicesByClaimID[claim.UID] = oldPending
+			}
 			return err
 		}
 		return nil
 	}
+	if hadPending {
+		delete(s.pendingPreparedDevicesByClaimID, claim.UID)
+		if err := s.syncToCheckpoint(); err != nil {
+			s.pendingPreparedDevicesByClaimID[claim.UID] = oldPending
+			return err
+		}
+	}
 	return nil
+}
+
+// BeginPrepare persists the cleanup metadata for a device before host mutation.
+func (s *PodManager) BeginPrepare(claimID types.UID, preparedDevice *drasriovtypes.PreparedDevice) error {
+	if preparedDevice == nil {
+		return fmt.Errorf("prepared device is nil")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	oldPending, hadPending := s.pendingPreparedDevicesByClaimID[claimID]
+	for _, pendingDevice := range oldPending {
+		if pendingDevice != nil && pendingDevice.PciAddress == preparedDevice.PciAddress {
+			return fmt.Errorf("pending prepare already exists for claim %s and device %s", claimID, preparedDevice.PciAddress)
+		}
+	}
+	s.pendingPreparedDevicesByClaimID[claimID] = append(
+		s.pendingPreparedDevicesByClaimID[claimID],
+		preparedDevice,
+	)
+	if err := s.syncToCheckpoint(); err != nil {
+		if hadPending {
+			s.pendingPreparedDevicesByClaimID[claimID] = oldPending
+		} else {
+			delete(s.pendingPreparedDevicesByClaimID, claimID)
+		}
+		return err
+	}
+	return nil
+}
+
+// AbortPendingPrepare removes durable cleanup metadata after a prepare rollback.
+func (s *PodManager) AbortPendingPrepare(claimID types.UID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	pending, found := s.pendingPreparedDevicesByClaimID[claimID]
+	if !found {
+		return nil
+	}
+	delete(s.pendingPreparedDevicesByClaimID, claimID)
+	if err := s.syncToCheckpoint(); err != nil {
+		s.pendingPreparedDevicesByClaimID[claimID] = pending
+		return err
+	}
+	return nil
+}
+
+// AbortPendingPrepareDevice removes one device's durable cleanup metadata.
+func (s *PodManager) AbortPendingPrepareDevice(claimID types.UID, pciAddress string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	pending, found := s.pendingPreparedDevicesByClaimID[claimID]
+	if !found {
+		return nil
+	}
+	remaining := make(drasriovtypes.PreparedDevices, 0, len(pending))
+	removed := false
+	for _, pendingDevice := range pending {
+		if pendingDevice != nil && pendingDevice.PciAddress == pciAddress {
+			removed = true
+			continue
+		}
+		remaining = append(remaining, pendingDevice)
+	}
+	if !removed {
+		return nil
+	}
+	if len(remaining) == 0 {
+		delete(s.pendingPreparedDevicesByClaimID, claimID)
+	} else {
+		s.pendingPreparedDevicesByClaimID[claimID] = remaining
+	}
+	if err := s.syncToCheckpoint(); err != nil {
+		s.pendingPreparedDevicesByClaimID[claimID] = pending
+		return err
+	}
+	return nil
+}
+
+// PendingPrepares returns a snapshot of cleanup metadata awaiting commit or rollback.
+func (s *PodManager) PendingPrepares() map[types.UID]drasriovtypes.PreparedDevices {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	pending := make(map[types.UID]drasriovtypes.PreparedDevices, len(s.pendingPreparedDevicesByClaimID))
+	for claimID, devices := range s.pendingPreparedDevicesByClaimID {
+		pending[claimID] = append(drasriovtypes.PreparedDevices(nil), devices...)
+	}
+	return pending
 }
 
 func (s *PodManager) syncToCheckpoint() error {
 	checkpoint := drasriovtypes.NewCheckpoint()
 	checkpoint.V1.PreparedClaimsByPodUID = s.preparedClaimsByPodUID
+	checkpoint.V1.PendingPreparedDevicesByClaimID = s.pendingPreparedDevicesByClaimID
 	if err := s.checkpointManager.CreateCheckpoint(consts.DriverPluginCheckpointFile, checkpoint); err != nil {
 		return fmt.Errorf("unable to sync to checkpoint: %v", err)
 	}
