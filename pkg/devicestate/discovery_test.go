@@ -80,6 +80,10 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
 			mockHost.EXPECT().VerifyRDMACapability("0000:01:00.2").Return(false)
+			// First VF exposes a vhost vDPA device, second exposes none.
+			mockHost.EXPECT().GetVdpaType("0000:01:00.1").Return(consts.VdpaTypeVhost)
+			mockHost.EXPECT().GetVdpaType("0000:01:00.2").Return("")
+			// Ethernet PF: GetIBPKey is not called.
 
 			devices, err := DiscoverSriovDevices()
 			Expect(err).NotTo(HaveOccurred())
@@ -101,12 +105,19 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			Expect(dev1.Attributes[consts.AttributeLinkType].StringValue).To(Equal(ptr.To(consts.LinkTypeEthernet)))
 			// Compatibility attributes
 			Expect(dev1.Attributes[consts.AttributeNUMANode].IntValue).To(Equal(ptr.To(int64(0))))
+			// vDPA type published for the first VF; no pKey on an ethernet PF.
+			Expect(dev1.Attributes[consts.AttributeVdpaType].StringValue).To(Equal(ptr.To(consts.VdpaTypeVhost)))
+			_, hasPKey := dev1.Attributes[consts.AttributePKey]
+			Expect(hasPKey).To(BeFalse())
 
 			// Check second VF
 			dev2 := devices["0000-01-00-2"]
 			Expect(dev2.Name).To(Equal("0000-01-00-2"))
 			Expect(dev2.Attributes[consts.AttributeVFID].IntValue).To(Equal(ptr.To(int64(1))))
 			Expect(dev2.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.2")))
+			// No vDPA device -> attribute omitted entirely.
+			_, hasVdpa := dev2.Attributes[consts.AttributeVdpaType]
+			Expect(hasVdpa).To(BeFalse())
 		})
 
 		It("should discover multiple PFs with VFs", func() {
@@ -156,6 +167,13 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
 			mockHost.EXPECT().GetVFList("0000:02:00.0").Return(vfList2, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:02:00.1").Return(false)
+			// Neither VF exposes a vDPA device.
+			mockHost.EXPECT().GetVdpaType("0000:01:00.1").Return("")
+			mockHost.EXPECT().GetVdpaType("0000:02:00.1").Return("")
+			// Only the InfiniBand PF's VF is queried for a pKey.
+			mockHost.EXPECT().GetIBPKey("0000:02:00.1").Return("0x7fff")
+			// Only the switchdev PF's VF is queried for a representor.
+			mockHost.EXPECT().GetVFRepresentor("0000:02:00.0", 0).Return("eth1_0", "pf0vf0", nil)
 
 			devices, err := DiscoverSriovDevices()
 			Expect(err).NotTo(HaveOccurred())
@@ -171,6 +189,16 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			Expect(dev1.Attributes[consts.AttributeLinkType].StringValue).To(Equal(ptr.To(consts.LinkTypeEthernet)))
 			// Compatibility attributes
 			Expect(dev1.Attributes[consts.AttributeNUMANode].IntValue).To(Equal(ptr.To(int64(0))))
+			// Ethernet PF, no vDPA: neither pKey nor vdpaType are published.
+			_, hasPKey := dev1.Attributes[consts.AttributePKey]
+			Expect(hasPKey).To(BeFalse())
+			_, hasVdpa := dev1.Attributes[consts.AttributeVdpaType]
+			Expect(hasVdpa).To(BeFalse())
+			// Legacy PF: no representor attributes.
+			_, hasRep := dev1.Attributes[consts.AttributeRepresentor]
+			Expect(hasRep).To(BeFalse())
+			_, hasPPN := dev1.Attributes[consts.AttributePhysPortName]
+			Expect(hasPPN).To(BeFalse())
 
 			// Check Mellanox VF
 			dev2 := devices["0000-02-00-1"]
@@ -182,6 +210,13 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			Expect(dev2.Attributes[consts.AttributeLinkType].StringValue).To(Equal(ptr.To(consts.LinkTypeInfiniband)))
 			// Compatibility attributes
 			Expect(dev2.Attributes[consts.AttributeNUMANode].IntValue).To(Equal(ptr.To(int64(1))))
+			// InfiniBand PF: pKey published, still no vDPA.
+			Expect(dev2.Attributes[consts.AttributePKey].StringValue).To(Equal(ptr.To("0x7fff")))
+			_, hasVdpa2 := dev2.Attributes[consts.AttributeVdpaType]
+			Expect(hasVdpa2).To(BeFalse())
+			// Switchdev PF: representor and phys_port_name published.
+			Expect(dev2.Attributes[consts.AttributeRepresentor].StringValue).To(Equal(ptr.To("eth1_0")))
+			Expect(dev2.Attributes[consts.AttributePhysPortName].StringValue).To(Equal(ptr.To("pf0vf0")))
 		})
 
 		It("should set PF PCI address on VF devices", func() {
@@ -209,6 +244,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
+			mockHost.EXPECT().GetVdpaType("0000:01:00.1").Return("")
 
 			devices, err := DiscoverSriovDevices()
 			Expect(err).NotTo(HaveOccurred())
@@ -244,6 +280,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return("", fmt.Errorf("lookup failed"))
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
+			mockHost.EXPECT().GetVdpaType("0000:01:00.1").Return("")
 
 			devices, err := DiscoverSriovDevices()
 			Expect(err).NotTo(HaveOccurred())
@@ -315,6 +352,17 @@ var _ = Describe("DiscoverSriovDevices", func() {
 				// Second VF is not RDMA-capable
 				mockHost.EXPECT().VerifyRDMACapability("0000:01:00.2").Return(false)
 
+				// First VF exposes a virtio vDPA device; second exposes none.
+				mockHost.EXPECT().GetVdpaType("0000:01:00.1").Return(consts.VdpaTypeVirtio)
+				mockHost.EXPECT().GetVdpaType("0000:01:00.2").Return("")
+				// InfiniBand PF: both VFs are queried for a pKey.
+				mockHost.EXPECT().GetIBPKey("0000:01:00.1").Return("0x8001")
+				mockHost.EXPECT().GetIBPKey("0000:01:00.2").Return("")
+				// Switchdev PF: first VF resolves a representor, second fails the
+				// lookup (representor attributes must then be omitted).
+				mockHost.EXPECT().GetVFRepresentor("0000:01:00.0", 0).Return("ib0_0", "pf0vf0", nil)
+				mockHost.EXPECT().GetVFRepresentor("0000:01:00.0", 1).Return("", "", fmt.Errorf("representor not found"))
+
 				devices, err := DiscoverSriovDevices()
 				Expect(err).NotTo(HaveOccurred())
 				Expect(devices).To(HaveLen(2))
@@ -336,18 +384,37 @@ var _ = Describe("DiscoverSriovDevices", func() {
 				Expect(dev1.Attributes[consts.AttributeRDMACapable].BoolValue).To(Equal(ptr.To(true)))
 				// Compatibility attributes
 				Expect(dev1.Attributes[consts.AttributeNUMANode].IntValue).To(Equal(ptr.To(int64(1))))
+				// Selector-parity attributes: vDPA type and IB pKey both published.
+				Expect(dev1.Attributes[consts.AttributeVdpaType].StringValue).To(Equal(ptr.To(consts.VdpaTypeVirtio)))
+				Expect(dev1.Attributes[consts.AttributePKey].StringValue).To(Equal(ptr.To("0x8001")))
+				// Switchdev PF: representor and phys_port_name published.
+				Expect(dev1.Attributes[consts.AttributeRepresentor].StringValue).To(Equal(ptr.To("ib0_0")))
+				Expect(dev1.Attributes[consts.AttributePhysPortName].StringValue).To(Equal(ptr.To("pf0vf0")))
 
 				// Check second VF (not RDMA-capable)
 				dev2 := devices["0000-01-00-2"]
 				Expect(dev2.Name).To(Equal("0000-01-00-2"))
 				Expect(dev2.Attributes[consts.AttributeVFID].IntValue).To(Equal(ptr.To(int64(1))))
 				Expect(dev2.Attributes[consts.AttributeRDMACapable].BoolValue).To(Equal(ptr.To(false)))
+				// No vDPA device and an empty pKey -> both attributes omitted.
+				_, hasVdpa := dev2.Attributes[consts.AttributeVdpaType]
+				Expect(hasVdpa).To(BeFalse())
+				_, hasPKey := dev2.Attributes[consts.AttributePKey]
+				Expect(hasPKey).To(BeFalse())
+				// Representor lookup failed -> representor attributes omitted.
+				_, hasRep := dev2.Attributes[consts.AttributeRepresentor]
+				Expect(hasRep).To(BeFalse())
+				_, hasPPN := dev2.Attributes[consts.AttributePhysPortName]
+				Expect(hasPPN).To(BeFalse())
 			})
 
 			It("should handle RDMA capability check errors gracefully", func() {
 				mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 				// RDMA capability check fails (returns false)
 				mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
+				mockHost.EXPECT().GetVdpaType("0000:01:00.1").Return("")
+				mockHost.EXPECT().GetIBPKey("0000:01:00.1").Return("")
+				mockHost.EXPECT().GetVFRepresentor("0000:01:00.0", 0).Return("ib0_0", "pf0vf0", nil)
 
 				devices, err := DiscoverSriovDevices()
 				Expect(err).NotTo(HaveOccurred())
@@ -421,6 +488,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
+			mockHost.EXPECT().GetVdpaType("0000:01:00.1").Return("")
 
 			// Second device (VF) - should be skipped
 			mockHost.EXPECT().IsSriovVF("0000:01:00.1").Return(true)
@@ -551,6 +619,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:af:10.7").Return(false)
+			mockHost.EXPECT().GetVdpaType("0000:af:10.7").Return("")
 
 			devices, err := DiscoverSriovDevices()
 			Expect(err).NotTo(HaveOccurred())
