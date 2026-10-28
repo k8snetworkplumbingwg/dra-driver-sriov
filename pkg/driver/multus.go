@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
+	"unicode"
 
 	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadutils "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/utils"
@@ -24,6 +26,7 @@ import (
 const (
 	networksAnnotation                              = "k8s.v1.cni.cncf.io/networks"
 	attachmentClaimLabel                            = consts.DriverName + "/attachment-claim"
+	attributeIfName       resourceapi.QualifiedName = consts.DriverName + "/ifName"
 	attributeNADName      resourceapi.QualifiedName = consts.DriverName + "/netAttachDefName"
 	attributeNADNamespace resourceapi.QualifiedName = consts.DriverName + "/netAttachDefNamespace"
 )
@@ -114,6 +117,32 @@ func networkTemplate(device *types.PreparedDevice, podNamespace string) (client.
 	return ref, nil
 }
 
+// multusInterfaceName opts into PF-based naming only when the ifName attribute exists.
+// The attribute is a prefix; the allocated VF index makes names unique per PF.
+func multusInterfaceName(device *types.PreparedDevice) (string, error) {
+	prefix, enabled := device.DeviceAttributes[string(attributeIfName)]
+	if !enabled {
+		return device.IfName, nil
+	}
+	if prefix.StringValue == nil || *prefix.StringValue == "" {
+		return "", fmt.Errorf("device %s has an invalid ifName prefix: expected a nonempty string", device.Device.DeviceName)
+	}
+	vfID := device.DeviceAttributes[consts.AttributeVFID]
+	if vfID.IntValue == nil || *vfID.IntValue < 0 {
+		return "", fmt.Errorf("device %s requires a nonnegative integer vfID for ifName naming", device.Device.DeviceName)
+	}
+	name := fmt.Sprintf("%svf%d", *prefix.StringValue, *vfID.IntValue)
+	// Linux interface names are at most IFNAMSIZ-1 bytes and cannot contain
+	// whitespace, a slash, a colon, or a NUL byte.
+	if len(name) > 15 || strings.ContainsAny(name, "/:\x00") || strings.IndexFunc(name, unicode.IsSpace) >= 0 {
+		return "", fmt.Errorf("device %s generates invalid interface name %q (maximum 15 bytes; no whitespace, /, : or NUL)", device.Device.DeviceName, name)
+	}
+	if device.IfName != "" && device.IfName != name {
+		return "", fmt.Errorf("device %s ifName %q conflicts with VfConfig interface %q", device.Device.DeviceName, name, device.IfName)
+	}
+	return name, nil
+}
+
 func (d *Driver) ensureMultusAttachments(ctx context.Context, claim *resourceapi.ResourceClaim, devices types.PreparedDevices) error {
 	consumer := claim.Status.ReservedFor[0]
 	if consumer.Resource != "pods" || consumer.APIGroup != "" {
@@ -126,8 +155,22 @@ func (d *Driver) ensureMultusAttachments(ctx context.Context, claim *resourceapi
 	if pod.UID != consumer.UID || pod.Spec.NodeName != d.config.Flags.NodeName || pod.Spec.HostNetwork {
 		return fmt.Errorf("claim consumer must be the reserved non-hostNetwork Pod on this node")
 	}
+	// Validate all requested names before creating any temporary NADs.
+	interfaceNames := make([]string, len(devices))
+	usedNames := map[string]bool{}
+	for i, device := range devices {
+		name, err := multusInterfaceName(device)
+		if err != nil {
+			return err
+		}
+		if name != "" && usedNames[name] {
+			return fmt.Errorf("duplicate requested Multus interface name %q", name)
+		}
+		usedNames[name] = true
+		interfaceNames[i] = name
+	}
 	selections := []*nadv1.NetworkSelectionElement{}
-	for _, device := range devices {
+	for i, device := range devices {
 		if device.Config.Driver == "vfio-pci" {
 			return fmt.Errorf("automatic Multus attachment requires a netdevice VF")
 		}
@@ -166,7 +209,7 @@ func (d *Driver) ensureMultusAttachments(ctx context.Context, claim *resourceapi
 		if !slices.ContainsFunc(shadow.OwnerReferences, func(owner metav1.OwnerReference) bool { return owner.UID == pod.UID }) {
 			return fmt.Errorf("NAD %s is not owned by Pod %s", key, pod.UID)
 		}
-		selections = append(selections, &nadv1.NetworkSelectionElement{Name: key.Name, Namespace: key.Namespace, InterfaceRequest: device.IfName})
+		selections = append(selections, &nadv1.NetworkSelectionElement{Name: key.Name, Namespace: key.Namespace, InterfaceRequest: interfaceNames[i]})
 	}
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current, err := d.client.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
@@ -184,6 +227,15 @@ func (d *Driver) ensureMultusAttachments(ctx context.Context, claim *resourceapi
 			return err
 		}
 		for _, selection := range selections {
+			for _, existing := range merged {
+				sameAttachment := existing.Name == selection.Name && existing.Namespace == selection.Namespace
+				if sameAttachment && existing.InterfaceRequest != selection.InterfaceRequest {
+					return fmt.Errorf("Multus attachment %s already requests interface %q, wanted %q; recreate the Pod to change interface naming", selection.Name, existing.InterfaceRequest, selection.InterfaceRequest)
+				}
+				if !sameAttachment && selection.InterfaceRequest != "" && existing.InterfaceRequest == selection.InterfaceRequest {
+					return fmt.Errorf("Multus interface name %q is already requested by attachment %s", selection.InterfaceRequest, existing.Name)
+				}
+			}
 			if !slices.ContainsFunc(merged, func(existing *nadv1.NetworkSelectionElement) bool {
 				return existing.Name == selection.Name && existing.Namespace == selection.Namespace
 			}) {

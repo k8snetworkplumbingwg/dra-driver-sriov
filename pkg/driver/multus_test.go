@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
@@ -190,5 +191,110 @@ func TestEnsureMultusAttachments(t *testing.T) {
 	}
 	if err := objects.List(ctx, shadows, client.MatchingLabels{attachmentClaimLabel: string(claim.UID)}); err != nil || len(shadows.Items) != 0 {
 		t.Fatalf("temporary NAD not deleted: %v", err)
+	}
+}
+
+func TestMultusInterfaceName(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		prefix         *resourceapi.DeviceAttribute
+		vfID           resourceapi.DeviceAttribute
+		explicit, want string
+		wantErr        bool
+	}{
+		{name: "disabled"},
+		{name: "disabled-keeps-explicit", explicit: "custom0", want: "custom0"},
+		{name: "disabled-ignores-vfID", vfID: resourceapi.DeviceAttribute{IntValue: ptr.To(int64(-1))}},
+		{name: "rail-zero", prefix: &resourceapi.DeviceAttribute{StringValue: ptr.To("net0")}, vfID: resourceapi.DeviceAttribute{IntValue: ptr.To(int64(0))}, want: "net0vf0"},
+		{name: "rail-seven-vf-one", prefix: &resourceapi.DeviceAttribute{StringValue: ptr.To("net7")}, vfID: resourceapi.DeviceAttribute{IntValue: ptr.To(int64(1))}, want: "net7vf1"},
+		{name: "multi-digit-vf", prefix: &resourceapi.DeviceAttribute{StringValue: ptr.To("net7")}, vfID: resourceapi.DeviceAttribute{IntValue: ptr.To(int64(123))}, want: "net7vf123"},
+		{name: "maximum-length", prefix: &resourceapi.DeviceAttribute{StringValue: ptr.To("abcdefghijkl")}, vfID: resourceapi.DeviceAttribute{IntValue: ptr.To(int64(0))}, want: "abcdefghijklvf0"},
+		{name: "too-long", prefix: &resourceapi.DeviceAttribute{StringValue: ptr.To("abcdefghijklm")}, vfID: resourceapi.DeviceAttribute{IntValue: ptr.To(int64(0))}, wantErr: true},
+		{name: "empty-prefix", prefix: &resourceapi.DeviceAttribute{StringValue: ptr.To("")}, wantErr: true},
+		{name: "wrong-prefix-type", prefix: &resourceapi.DeviceAttribute{IntValue: ptr.To(int64(7))}, wantErr: true},
+		{name: "missing-vfID", prefix: &resourceapi.DeviceAttribute{StringValue: ptr.To("net7")}, wantErr: true},
+		{name: "wrong-vfID-type", prefix: &resourceapi.DeviceAttribute{StringValue: ptr.To("net7")}, vfID: resourceapi.DeviceAttribute{StringValue: ptr.To("1")}, wantErr: true},
+		{name: "negative-vfID", prefix: &resourceapi.DeviceAttribute{StringValue: ptr.To("net7")}, vfID: resourceapi.DeviceAttribute{IntValue: ptr.To(int64(-1))}, wantErr: true},
+		{name: "space", prefix: &resourceapi.DeviceAttribute{StringValue: ptr.To("net 7")}, vfID: resourceapi.DeviceAttribute{IntValue: ptr.To(int64(0))}, wantErr: true},
+		{name: "slash", prefix: &resourceapi.DeviceAttribute{StringValue: ptr.To("net/7")}, vfID: resourceapi.DeviceAttribute{IntValue: ptr.To(int64(0))}, wantErr: true},
+		{name: "colon", prefix: &resourceapi.DeviceAttribute{StringValue: ptr.To("net:7")}, vfID: resourceapi.DeviceAttribute{IntValue: ptr.To(int64(0))}, wantErr: true},
+		{name: "nul", prefix: &resourceapi.DeviceAttribute{StringValue: ptr.To("net\x007")}, vfID: resourceapi.DeviceAttribute{IntValue: ptr.To(int64(0))}, wantErr: true},
+		{name: "explicit-match", prefix: &resourceapi.DeviceAttribute{StringValue: ptr.To("net7")}, vfID: resourceapi.DeviceAttribute{IntValue: ptr.To(int64(0))}, explicit: "net7vf0", want: "net7vf0"},
+		{name: "explicit-conflict", prefix: &resourceapi.DeviceAttribute{StringValue: ptr.To("net7")}, vfID: resourceapi.DeviceAttribute{IntValue: ptr.To(int64(0))}, explicit: "custom0", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			device := &types.PreparedDevice{IfName: tc.explicit, DeviceAttributes: map[string]resourceapi.DeviceAttribute{consts.AttributeVFID: tc.vfID}}
+			if tc.prefix != nil {
+				device.DeviceAttributes[string(attributeIfName)] = *tc.prefix
+			}
+			got, err := multusInterfaceName(device)
+			if (err != nil) != tc.wantErr || got != tc.want {
+				t.Fatalf("got %q, %v; want %q, error=%v", got, err, tc.want, tc.wantErr)
+			}
+			if device.IfName != tc.explicit {
+				t.Fatal("prepared device was mutated")
+			}
+		})
+	}
+}
+
+func TestEnsureMultusNamedAttachments(t *testing.T) {
+	for _, mode := range []string{"same-pf-two-vfs", "duplicate-name", "existing-interface-collision", "existing-attachment-name-change"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "workload", Namespace: "test", UID: "pod-uid"}, Spec: corev1.PodSpec{NodeName: "node"}}
+			if mode == "existing-interface-collision" {
+				pod.Annotations = map[string]string{networksAnnotation: `[{"name":"user-network","namespace":"test","interface":"net7vf0"}]`}
+			}
+			claim := &resourceapi.ResourceClaim{ObjectMeta: metav1.ObjectMeta{Name: "claim", Namespace: "test", UID: "claim-uid"}, Status: resourceapi.ResourceClaimStatus{ReservedFor: []resourceapi.ResourceClaimConsumerReference{{Resource: "pods", Name: pod.Name, UID: pod.UID}}}}
+			source := &nadv1.NetworkAttachmentDefinition{ObjectMeta: metav1.ObjectMeta{Name: "template", Namespace: "test"}, Spec: nadv1.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion":"1.0.0","name":"rail7","plugins":[{"type":"sriov"},{"type":"sbr"}]}`}}
+			scheme := runtime.NewScheme()
+			if err := nadv1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			objects := fake.NewClientBuilder().WithScheme(scheme).WithObjects(source).Build()
+			core := k8sfake.NewClientset(pod)
+			d := &Driver{client: core, config: &types.Config{Flags: &types.Flags{NodeName: "node"}, K8sClient: flags.ClientSets{Interface: core, Client: objects}}}
+			devices := types.PreparedDevices{}
+			for i := range 2 {
+				id := int64(i)
+				if mode == "duplicate-name" {
+					id = 0
+				}
+				devices = append(devices, &types.PreparedDevice{Device: drapbv1.Device{PoolName: "node", DeviceName: fmt.Sprintf("vf%d", i)}, Config: &configapi.VfConfig{NetAttachDefName: "template"}, PciAddress: fmt.Sprintf("0000:15:10.%d", i), DeviceAttributes: map[string]resourceapi.DeviceAttribute{string(attributeIfName): {StringValue: ptr.To("net7")}, consts.AttributeVFID: {IntValue: ptr.To(id)}}})
+			}
+			if mode == "duplicate-name" || mode == "existing-interface-collision" {
+				if err := d.ensureMultusAttachments(ctx, claim, devices); err == nil {
+					t.Fatal("accepted interface collision")
+				}
+				return
+			}
+			for range 2 {
+				if err := d.ensureMultusAttachments(ctx, claim, devices); err != nil {
+					t.Fatal(err)
+				}
+			}
+			updated, err := core.CoreV1().Pods("test").Get(ctx, pod.Name, metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var selections []nadv1.NetworkSelectionElement
+			if err := json.Unmarshal([]byte(updated.Annotations[networksAnnotation]), &selections); err != nil {
+				t.Fatal(err)
+			}
+			if len(selections) != 2 || selections[0].InterfaceRequest != "net7vf0" || selections[1].InterfaceRequest != "net7vf1" {
+				t.Fatalf("incorrect names: %+v", selections)
+			}
+			if mode == "existing-attachment-name-change" {
+				devices[0].DeviceAttributes[string(attributeIfName)] = resourceapi.DeviceAttribute{StringValue: ptr.To("net8")}
+				if err := d.ensureMultusAttachments(ctx, claim, devices); err == nil {
+					t.Fatal("accepted changing an existing attachment's name")
+				}
+			}
+			shadows := &nadv1.NetworkAttachmentDefinitionList{}
+			if err := objects.List(ctx, shadows); err != nil || len(shadows.Items) != 3 {
+				t.Fatalf("expected source + two generated NADs: %v, %v", shadows.Items, err)
+			}
+		})
 	}
 }

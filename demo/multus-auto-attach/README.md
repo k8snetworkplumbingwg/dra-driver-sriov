@@ -82,3 +82,28 @@ Recovery workers, protection finalizers, admission guards, and
 operator changes from the full design are omitted. Normal unprepare deletes
 the generated NADs, and Pod ownership also permits garbage collection. Keep
 Multus's delegate cache available until CNI DEL finishes.
+
+### Optional PF-based interface names
+
+To opt into deterministic interface naming, publish a nonempty string device
+attribute `sriovnetwork.k8snetworkplumbingwg.io/ifName` through `DeviceAttributes`.
+Its value is a prefix: `net7` combined with the allocated device's integer
+`sriovnetwork.k8snetworkplumbingwg.io/vfID` of `0` requests `net7vf0` in the
+generated Multus network selection. VF 1 from the same PF requests `net7vf1`,
+including when both VFs are attached to one Pod. Prefixes can be assigned centrally
+per PF/rail; consuming Pods and claims need no rail references.
+
+```yaml
+spec:
+  attributes:
+    sriovnetwork.k8snetworkplumbingwg.io/ifName:
+      string: net7
+```
+
+Without the attribute, existing `VfConfig.ifName` and Multus default naming remain
+unchanged. An empty or non-string prefix, missing/invalid VF index, a generated
+name over Linux's 15-byte limit or containing invalid characters, a conflicting
+explicit `VfConfig.ifName`, or duplicate requested interface names fails preparation.
+Use distinct prefixes for PFs that may be allocated together. Recreate Pods after
+changing naming attributes; existing attachments are not renamed in place.
+This feature applies to MULTUS automatic attachment only.
