@@ -113,6 +113,12 @@ func newApp() *cli.App {
 			Destination: &flagsOptions.ConfigurationMode,
 			EnvVars:     []string{"CONFIGURATION_MODE"},
 		},
+		&cli.BoolFlag{
+			Name:        "multus-auto-attach",
+			Usage:       "Create device-bound NADs and Pod network selections in MULTUS mode (POC).",
+			Destination: &flagsOptions.MultusAutoAttach,
+			EnvVars:     []string{"MULTUS_AUTO_ATTACH"},
+		},
 	}
 	cliFlags = append(cliFlags, flagsOptions.KubeClientConfig.Flags()...)
 	cliFlags = append(cliFlags, flagsOptions.LoggingConfig.Flags()...)
@@ -150,6 +156,9 @@ func newApp() *cli.App {
 
 // RunPlugin initializes and runs the sriov DRA plugin stack.
 func RunPlugin(ctx context.Context, config *types.Config) error {
+	if config.Flags.MultusAutoAttach && config.Flags.ConfigurationMode != string(consts.ConfigurationModeMultus) {
+		return fmt.Errorf("multus-auto-attach requires MULTUS configuration mode")
+	}
 	// set the loggers
 	logger := klog.FromContext(ctx)
 	ctrl.SetLogger(logger)

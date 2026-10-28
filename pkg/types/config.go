@@ -20,6 +20,7 @@ type Flags struct {
 	MetricsBindAddress            string
 	DefaultInterfacePrefix        string
 	ConfigurationMode             string
+	MultusAutoAttach              bool
 	EnableDeviceMetadata          bool
 }
 

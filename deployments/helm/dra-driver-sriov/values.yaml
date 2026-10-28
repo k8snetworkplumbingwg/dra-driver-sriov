@@ -59,6 +59,7 @@ kubeletPlugin:
   nriPluginIndex: 42
   defaultInterfacePrefix: vfnet
   configurationMode: STANDALONE
+  multusAutoAttach: false
   enableDeviceMetadata: false
   # Host path for CNI plugin binaries. Could also be /var/lib/cni/bin.
   cniBinHostPath: /opt/cni/bin

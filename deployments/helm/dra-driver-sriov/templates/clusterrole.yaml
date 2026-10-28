@@ -22,7 +22,14 @@ rules:
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 - apiGroups: ["k8s.cni.cncf.io"]
   resources: ["network-attachment-definitions"]
+  {{- if .Values.kubeletPlugin.multusAutoAttach }}
+  verbs: ["get", "list", "create", "delete"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "patch"]
+  {{- else }}
   verbs: ["get"]
+  {{- end }}
 - apiGroups: ["sriovnetwork.k8snetworkplumbingwg.io"]
   resources: ["sriovresourcepolicies"]
   verbs: ["get", "list", "watch"]
