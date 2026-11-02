@@ -37,6 +37,10 @@ type Plugin struct {
 
 // NewNRIPlugin creates a new NRI plugin.
 func NewNRIPlugin(config *types.Config, podManager *podmanager.PodManager, cniRuntime cni.Interface, metadataUpdater types.MetadataUpdater) (*Plugin, error) {
+	return newNRIPlugin(config, podManager, cniRuntime, metadataUpdater)
+}
+
+func newNRIPlugin(config *types.Config, podManager *podmanager.PodManager, cniRuntime cni.Interface, metadataUpdater types.MetadataUpdater, options ...stub.Option) (*Plugin, error) {
 	p := &Plugin{
 		podManager:                  podManager,
 		cniRuntime:                  cniRuntime,
@@ -48,16 +52,19 @@ func NewNRIPlugin(config *types.Config, podManager *podmanager.PodManager, cniRu
 	}
 	var err error
 	// register the NRI plugin
-	nriOpts := []stub.Option{
+	options = append(options,
+		// Supporting runtimes fail timed-out requests but keep the plugin registered.
+		// Actual connection loss still invokes WithOnClose below.
+		stub.WithFailurePolicy(&api.FailurePolicy{FailRequest: true, KeepConnected: true}),
 		// https://github.com/containerd/nri/pull/173
 		// Otherwise it silently exits the program
 		stub.WithOnClose(func() {
 			klog.Infof("%s NRI plugin closed canceling context", consts.DriverName)
 			config.CancelMainCtx(fmt.Errorf("NRI plugin closed"))
 		}),
-	}
+	)
 
-	p.stub, err = stub.New(p, nriOpts...)
+	p.stub, err = stub.New(p, options...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create plugin stub: %w", err)
 	}

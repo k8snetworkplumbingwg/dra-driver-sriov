@@ -4,7 +4,8 @@ go 1.26.0
 
 require (
 	github.com/Mellanox/rdmamap v1.2.0
-	github.com/containerd/nri v0.12.3
+	github.com/containerd/nri v0.12.4
+	github.com/containerd/ttrpc v1.2.7
 	github.com/containernetworking/cni v1.3.1
 	github.com/jaypipes/ghw v0.26.0
 	github.com/jaypipes/pcidb v1.1.1
@@ -37,7 +38,6 @@ require (
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
-	github.com/containerd/ttrpc v1.2.7 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect

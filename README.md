@@ -111,6 +111,18 @@ The driver supports two networking modes controlled by `kubeletPlugin.configurat
 - If `ifName` is not provided, the driver auto-generates interface names using `kubeletPlugin.defaultInterfacePrefix` (for example `vfnet0`, `vfnet1`).
 - KEP-5304 DRA device metadata via CDI-mounted files is supported in this mode, including static attributes such as PCI bus ID (attribute key `resource.kubernetes.io/pciBusID`) exposed to workloads.
 
+With a runtime embedding NRI v0.12.4 or newer, the plugin requests that NRI
+fail pod/container requests on timeout or connection loss, preventing sandbox
+startup with only part of the requested networking. After a timeout the plugin
+stays registered to handle later requests. A lost connection still cancels the
+driver; this policy does not reconnect it.
+
+Older runtimes ignore these options and retain their previous timeout behavior.
+Updating the driver's NRI dependency does not upgrade the runtime's embedded NRI.
+The default NRI `plugin_request_timeout` is `2s`; increase it in the container
+runtime's NRI configuration if legitimate CNI operations (for example, attaching
+many VFs) need longer. These changes apply only to `STANDALONE` mode.
+
 References:
 - Kubernetes KEP-5304 (DRA device metadata): https://github.com/kubernetes/enhancements/blob/master/keps/sig-node/5304-dra-attributes-downward-api/README.md
 - Kubernetes docs - Access DRA Device Metadata: https://kubernetes.io/docs/tasks/configure-pod-container/assign-resources/access-dra-device-metadata/
