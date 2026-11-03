@@ -35,8 +35,9 @@ runs:
       shell: bash
       run: |
         sudo apt-get update
+        # qemu-kvm is virtual on Ubuntu 26.04; install the concrete QEMU package.
         sudo apt-get install -y --no-install-recommends \
-          qemu-kvm qemu-system-x86 qemu-utils \
+          qemu-system-x86 qemu-utils \
           libvirt-daemon-system libvirt-clients \
           virtinst bridge-utils \
           libguestfs-tools genisoimage \
