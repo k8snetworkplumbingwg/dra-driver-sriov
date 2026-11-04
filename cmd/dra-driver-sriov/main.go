@@ -182,16 +182,21 @@ func RunPlugin(ctx context.Context, config *types.Config) error {
 		return fmt.Errorf("unable to create CDI handler: %v", err)
 	}
 
-	// create device state manager
-	deviceStateManager, err := devicestate.NewManager(config, cdiHandler, devicestate.NewDeviceInfoStore())
-	if err != nil {
-		return err
-	}
-
 	// create pod manager
 	podManager, err := podmanager.NewPodManager(config)
 	if err != nil {
 		return err
+	}
+
+	// create device state manager
+	deviceStateManager, err := devicestate.NewManager(config, cdiHandler, devicestate.NewDeviceInfoStore(), podManager)
+	if err != nil {
+		return err
+	}
+	// Reconcile durable host mutations before publishing devices. Continuing
+	// after an incomplete rollback could expose a device with stale state.
+	if err := deviceStateManager.ReconcilePendingPrepares(); err != nil {
+		return fmt.Errorf("unable to reconcile pending prepares: %w", err)
 	}
 
 	// start driver
