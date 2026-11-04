@@ -278,10 +278,12 @@ The resource filtering system supports multiple filtering criteria that can be c
 - **vendors**: Filter by PCI vendor ID (e.g., "8086" for Intel)
 - **devices**: Filter by PCI device ID 
 - **pciAddresses**: Filter by specific PCI addresses
-- **pfNames**: Filter by Physical Function name (e.g., "eth0", "eth1")
+- **pfNames**: Filter by Physical Function name (e.g., `"eno1"` selects all its VFs) or by an inclusive zero-based VF range (e.g., `"eno1#0-2"` selects VF IDs 0, 1, and 2)
 - **pfPciAddresses**: Filter by Physical Function PCI address
 - **drivers**: Filter by bound driver name (e.g., "vfio-pci", "igb_uio")
 - **linkType**: Filter by NIC link type. Accepted values: "eth", "ib", "ethernet", "infiniband" (case-insensitive)
+
+A `pfNames` entry can be a plain PF name to select every VF on that PF, or `PF#start-end` to select an inclusive, zero-based VF ID range. For example, `pfNames: ["eno1#0-2"]` selects only VF IDs 0 through 2; `pfNames: ["eno1#3-3"]` selects VF 3. Multiple entries are unioned, so `pfNames: ["eno1", "eno2#0-2"]` selects all VFs on `eno1` plus VF IDs 0 through 2 on `eno2`. Malformed range entries match no devices; valid sibling entries can still match. Another matching config, resource filter, or policy can independently advertise a device.
 
 ### Node Selection
 
