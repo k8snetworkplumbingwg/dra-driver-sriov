@@ -30,6 +30,8 @@ RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} make PREFIX=/artifacts cmds
 # Final stage using target architecture
 FROM --platform=$TARGETPLATFORM ${BASE_IMAGE}
 
+ARG TARGETARCH
+
 LABEL org.opencontainers.image.source=https://github.com/k8snetworkplumbingwg/dra-driver-sriov
 LABEL org.opencontainers.image.description="Dynamic Resource Allocation (DRA) resource driver for SR-IOV devices"
 LABEL org.opencontainers.image.licenses=Apache-2.0
@@ -47,5 +49,10 @@ LABEL release="N/A"
 LABEL summary="Dynamic Resource Allocation (DRA) resource driver for SR-IOV devices"
 LABEL description="See summary"
 
-RUN yum -y install hwdata pciutils delve && yum clean all
+# CentOS Stream 9 does not provide delve for s390x.
+RUN if [ "${TARGETARCH}" = "s390x" ]; then \
+        yum -y install hwdata pciutils; \
+    else \
+        yum -y install hwdata pciutils delve; \
+    fi && yum clean all
 COPY --from=build /artifacts/dra-driver-sriov /usr/bin/dra-driver-sriov

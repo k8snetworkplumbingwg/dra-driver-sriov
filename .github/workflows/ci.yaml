@@ -113,7 +113,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [amd64, arm64]
+        arch: [amd64, arm64, s390x, ppc64le]
     # Only build on pull requests, not on pushes to main
     # (main pushes are handled by release.yaml with multi-arch builds)
     if: github.event_name == 'pull_request'
@@ -153,6 +153,8 @@ jobs:
           case "$EXPECTED_ARCH" in
             amd64) machine="Advanced Micro Devices X86-64" ;;
             arm64) machine="AArch64" ;;
+            s390x) machine="IBM S/390" ;;
+            ppc64le) machine="PowerPC64" ;;
           esac
           readelf -h ./dra-driver-sriov
           readelf -h ./dra-driver-sriov | grep -E "Machine: +$machine$"
