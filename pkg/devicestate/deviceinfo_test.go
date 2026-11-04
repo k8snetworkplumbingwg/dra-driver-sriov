@@ -13,7 +13,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1beta1"
-	"k8s.io/utils/ptr"
 
 	netattdefv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -276,9 +275,9 @@ var _ = Describe("DeviceInfo compatibility", Serial, func() {
 				"device1": {
 					Name: "device1",
 					Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-						consts.AttributePciAddress:         {StringValue: ptr.To("0000:01:00.1")},
-						consts.AttributeMultusResourceName: {StringValue: ptr.To("intel.com/sriov")},
-						consts.AttributeMultusDeviceID:     {StringValue: ptr.To("0000:01:00.1")},
+						consts.AttributePciAddress:         {StringValue: new("0000:01:00.1")},
+						consts.AttributeMultusResourceName: {StringValue: new("intel.com/sriov")},
+						consts.AttributeMultusDeviceID:     {StringValue: new("0000:01:00.1")},
 					},
 				},
 			},
@@ -357,9 +356,9 @@ var _ = Describe("DeviceInfo compatibility", Serial, func() {
 				"device1": {
 					Name: "device1",
 					Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-						consts.AttributePciAddress:         {StringValue: ptr.To("0000:01:00.1")},
-						consts.AttributeMultusResourceName: {StringValue: ptr.To("intel.com/sriov")},
-						consts.AttributeMultusDeviceID:     {StringValue: ptr.To("0000:01:00.1")},
+						consts.AttributePciAddress:         {StringValue: new("0000:01:00.1")},
+						consts.AttributeMultusResourceName: {StringValue: new("intel.com/sriov")},
+						consts.AttributeMultusDeviceID:     {StringValue: new("0000:01:00.1")},
 					},
 				},
 			},

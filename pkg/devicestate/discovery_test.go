@@ -8,7 +8,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"go.uber.org/mock/gomock"
-	"k8s.io/utils/ptr"
 
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host"
@@ -88,25 +87,25 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			// Check first VF
 			dev1 := devices["0000-01-00-1"]
 			Expect(dev1.Name).To(Equal("0000-01-00-1"))
-			Expect(dev1.Attributes[consts.AttributeVendorID].StringValue).To(Equal(ptr.To("8086")))
-			Expect(dev1.Attributes[consts.AttributeDeviceID].StringValue).To(Equal(ptr.To("154c")))
-			Expect(dev1.Attributes[consts.AttributePFDeviceID].StringValue).To(Equal(ptr.To("1572")))
-			Expect(dev1.Attributes[consts.AttributePciAddress].StringValue).To(Equal(ptr.To("0000:01:00.1")))
-			Expect(dev1.Attributes[consts.AttributePFName].StringValue).To(Equal(ptr.To("eth0")))
-			Expect(dev1.Attributes[consts.AttributeEswitchMode].StringValue).To(Equal(ptr.To(consts.EswitchModeLegacy)))
-			Expect(dev1.Attributes[consts.AttributeVFID].IntValue).To(Equal(ptr.To(int64(0))))
-			Expect(dev1.Attributes[consts.AttributePCIeRoot].StringValue).To(Equal(ptr.To("pci0000:00")))
-			Expect(dev1.Attributes[consts.AttributePfPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.0")))
-			Expect(dev1.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.1")))
-			Expect(dev1.Attributes[consts.AttributeLinkType].StringValue).To(Equal(ptr.To(consts.LinkTypeEthernet)))
+			Expect(dev1.Attributes[consts.AttributeVendorID].StringValue).To(Equal(new("8086")))
+			Expect(dev1.Attributes[consts.AttributeDeviceID].StringValue).To(Equal(new("154c")))
+			Expect(dev1.Attributes[consts.AttributePFDeviceID].StringValue).To(Equal(new("1572")))
+			Expect(dev1.Attributes[consts.AttributePciAddress].StringValue).To(Equal(new("0000:01:00.1")))
+			Expect(dev1.Attributes[consts.AttributePFName].StringValue).To(Equal(new("eth0")))
+			Expect(dev1.Attributes[consts.AttributeEswitchMode].StringValue).To(Equal(new(consts.EswitchModeLegacy)))
+			Expect(dev1.Attributes[consts.AttributeVFID].IntValue).To(Equal(new(int64(0))))
+			Expect(dev1.Attributes[consts.AttributePCIeRoot].StringValue).To(Equal(new("pci0000:00")))
+			Expect(dev1.Attributes[consts.AttributePfPciAddress].StringValue).To(Equal(new("0000:01:00.0")))
+			Expect(dev1.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(new("0000:01:00.1")))
+			Expect(dev1.Attributes[consts.AttributeLinkType].StringValue).To(Equal(new(consts.LinkTypeEthernet)))
 			// Compatibility attributes
-			Expect(dev1.Attributes[consts.AttributeNUMANode].IntValue).To(Equal(ptr.To(int64(0))))
+			Expect(dev1.Attributes[consts.AttributeNUMANode].IntValue).To(Equal(new(int64(0))))
 
 			// Check second VF
 			dev2 := devices["0000-01-00-2"]
 			Expect(dev2.Name).To(Equal("0000-01-00-2"))
-			Expect(dev2.Attributes[consts.AttributeVFID].IntValue).To(Equal(ptr.To(int64(1))))
-			Expect(dev2.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.2")))
+			Expect(dev2.Attributes[consts.AttributeVFID].IntValue).To(Equal(new(int64(1))))
+			Expect(dev2.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(new("0000:01:00.2")))
 		})
 
 		It("should discover multiple PFs with VFs", func() {
@@ -163,25 +162,25 @@ var _ = Describe("DiscoverSriovDevices", func() {
 
 			// Check Intel VF
 			dev1 := devices["0000-01-00-1"]
-			Expect(dev1.Attributes[consts.AttributeVendorID].StringValue).To(Equal(ptr.To("8086")))
-			Expect(dev1.Attributes[consts.AttributePFName].StringValue).To(Equal(ptr.To("eth0")))
-			Expect(dev1.Attributes[consts.AttributeEswitchMode].StringValue).To(Equal(ptr.To(consts.EswitchModeLegacy)))
-			Expect(dev1.Attributes[consts.AttributePCIeRoot].StringValue).To(Equal(ptr.To("pci0000:00")))
-			Expect(dev1.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.1")))
-			Expect(dev1.Attributes[consts.AttributeLinkType].StringValue).To(Equal(ptr.To(consts.LinkTypeEthernet)))
+			Expect(dev1.Attributes[consts.AttributeVendorID].StringValue).To(Equal(new("8086")))
+			Expect(dev1.Attributes[consts.AttributePFName].StringValue).To(Equal(new("eth0")))
+			Expect(dev1.Attributes[consts.AttributeEswitchMode].StringValue).To(Equal(new(consts.EswitchModeLegacy)))
+			Expect(dev1.Attributes[consts.AttributePCIeRoot].StringValue).To(Equal(new("pci0000:00")))
+			Expect(dev1.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(new("0000:01:00.1")))
+			Expect(dev1.Attributes[consts.AttributeLinkType].StringValue).To(Equal(new(consts.LinkTypeEthernet)))
 			// Compatibility attributes
-			Expect(dev1.Attributes[consts.AttributeNUMANode].IntValue).To(Equal(ptr.To(int64(0))))
+			Expect(dev1.Attributes[consts.AttributeNUMANode].IntValue).To(Equal(new(int64(0))))
 
 			// Check Mellanox VF
 			dev2 := devices["0000-02-00-1"]
-			Expect(dev2.Attributes[consts.AttributeVendorID].StringValue).To(Equal(ptr.To("15b3")))
-			Expect(dev2.Attributes[consts.AttributePFName].StringValue).To(Equal(ptr.To("eth1")))
-			Expect(dev2.Attributes[consts.AttributeEswitchMode].StringValue).To(Equal(ptr.To(consts.EswitchModeSwitchdev)))
-			Expect(dev2.Attributes[consts.AttributePCIeRoot].StringValue).To(Equal(ptr.To("pci0000:00")))
-			Expect(dev2.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(ptr.To("0000:02:00.1")))
-			Expect(dev2.Attributes[consts.AttributeLinkType].StringValue).To(Equal(ptr.To(consts.LinkTypeInfiniband)))
+			Expect(dev2.Attributes[consts.AttributeVendorID].StringValue).To(Equal(new("15b3")))
+			Expect(dev2.Attributes[consts.AttributePFName].StringValue).To(Equal(new("eth1")))
+			Expect(dev2.Attributes[consts.AttributeEswitchMode].StringValue).To(Equal(new(consts.EswitchModeSwitchdev)))
+			Expect(dev2.Attributes[consts.AttributePCIeRoot].StringValue).To(Equal(new("pci0000:00")))
+			Expect(dev2.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(new("0000:02:00.1")))
+			Expect(dev2.Attributes[consts.AttributeLinkType].StringValue).To(Equal(new(consts.LinkTypeInfiniband)))
 			// Compatibility attributes
-			Expect(dev2.Attributes[consts.AttributeNUMANode].IntValue).To(Equal(ptr.To(int64(1))))
+			Expect(dev2.Attributes[consts.AttributeNUMANode].IntValue).To(Equal(new(int64(1))))
 		})
 
 		It("should set PF PCI address on VF devices", func() {
@@ -215,8 +214,8 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			Expect(devices).To(HaveLen(1))
 
 			dev := devices["0000-01-00-1"]
-			Expect(dev.Attributes[consts.AttributePfPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.0")))
-			Expect(dev.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.1")))
+			Expect(dev.Attributes[consts.AttributePfPciAddress].StringValue).To(Equal(new("0000:01:00.0")))
+			Expect(dev.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(new("0000:01:00.1")))
 		})
 
 		It("should handle link type detection failure with unknown", func() {
@@ -251,11 +250,11 @@ var _ = Describe("DiscoverSriovDevices", func() {
 
 			// Link type should default to "unknown"
 			dev := devices["0000-01-00-1"]
-			Expect(dev.Attributes[consts.AttributeLinkType].StringValue).To(Equal(ptr.To(consts.LinkTypeUnknown)))
+			Expect(dev.Attributes[consts.AttributeLinkType].StringValue).To(Equal(new(consts.LinkTypeUnknown)))
 			// Other attributes should still be set correctly
-			Expect(dev.Attributes[consts.AttributeVendorID].StringValue).To(Equal(ptr.To("8086")))
-			Expect(dev.Attributes[consts.AttributePFName].StringValue).To(Equal(ptr.To("eth0")))
-			Expect(dev.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.1")))
+			Expect(dev.Attributes[consts.AttributeVendorID].StringValue).To(Equal(new("8086")))
+			Expect(dev.Attributes[consts.AttributePFName].StringValue).To(Equal(new("eth0")))
+			Expect(dev.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(new("0000:01:00.1")))
 		})
 
 		Context("RDMA Capability", func() {
@@ -322,26 +321,26 @@ var _ = Describe("DiscoverSriovDevices", func() {
 				// Check first VF (RDMA-capable)
 				dev1 := devices["0000-01-00-1"]
 				Expect(dev1.Name).To(Equal("0000-01-00-1"))
-				Expect(dev1.Attributes[consts.AttributeVendorID].StringValue).To(Equal(ptr.To("15b3")))
-				Expect(dev1.Attributes[consts.AttributeDeviceID].StringValue).To(Equal(ptr.To("1018")))
-				Expect(dev1.Attributes[consts.AttributePFDeviceID].StringValue).To(Equal(ptr.To("1017")))
-				Expect(dev1.Attributes[consts.AttributePciAddress].StringValue).To(Equal(ptr.To("0000:01:00.1")))
-				Expect(dev1.Attributes[consts.AttributePFName].StringValue).To(Equal(ptr.To("ib0")))
-				Expect(dev1.Attributes[consts.AttributeEswitchMode].StringValue).To(Equal(ptr.To(consts.EswitchModeSwitchdev)))
-				Expect(dev1.Attributes[consts.AttributeVFID].IntValue).To(Equal(ptr.To(int64(0))))
-				Expect(dev1.Attributes[consts.AttributePCIeRoot].StringValue).To(Equal(ptr.To("pci0000:00")))
-				Expect(dev1.Attributes[consts.AttributePfPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.0")))
-				Expect(dev1.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(ptr.To("0000:01:00.1")))
+				Expect(dev1.Attributes[consts.AttributeVendorID].StringValue).To(Equal(new("15b3")))
+				Expect(dev1.Attributes[consts.AttributeDeviceID].StringValue).To(Equal(new("1018")))
+				Expect(dev1.Attributes[consts.AttributePFDeviceID].StringValue).To(Equal(new("1017")))
+				Expect(dev1.Attributes[consts.AttributePciAddress].StringValue).To(Equal(new("0000:01:00.1")))
+				Expect(dev1.Attributes[consts.AttributePFName].StringValue).To(Equal(new("ib0")))
+				Expect(dev1.Attributes[consts.AttributeEswitchMode].StringValue).To(Equal(new(consts.EswitchModeSwitchdev)))
+				Expect(dev1.Attributes[consts.AttributeVFID].IntValue).To(Equal(new(int64(0))))
+				Expect(dev1.Attributes[consts.AttributePCIeRoot].StringValue).To(Equal(new("pci0000:00")))
+				Expect(dev1.Attributes[consts.AttributePfPciAddress].StringValue).To(Equal(new("0000:01:00.0")))
+				Expect(dev1.Attributes[consts.AttributeStandardPciAddress].StringValue).To(Equal(new("0000:01:00.1")))
 				// RDMA-specific attributes
-				Expect(dev1.Attributes[consts.AttributeRDMACapable].BoolValue).To(Equal(ptr.To(true)))
+				Expect(dev1.Attributes[consts.AttributeRDMACapable].BoolValue).To(Equal(new(true)))
 				// Compatibility attributes
-				Expect(dev1.Attributes[consts.AttributeNUMANode].IntValue).To(Equal(ptr.To(int64(1))))
+				Expect(dev1.Attributes[consts.AttributeNUMANode].IntValue).To(Equal(new(int64(1))))
 
 				// Check second VF (not RDMA-capable)
 				dev2 := devices["0000-01-00-2"]
 				Expect(dev2.Name).To(Equal("0000-01-00-2"))
-				Expect(dev2.Attributes[consts.AttributeVFID].IntValue).To(Equal(ptr.To(int64(1))))
-				Expect(dev2.Attributes[consts.AttributeRDMACapable].BoolValue).To(Equal(ptr.To(false)))
+				Expect(dev2.Attributes[consts.AttributeVFID].IntValue).To(Equal(new(int64(1))))
+				Expect(dev2.Attributes[consts.AttributeRDMACapable].BoolValue).To(Equal(new(false)))
 			})
 
 			It("should handle RDMA capability check errors gracefully", func() {
@@ -355,7 +354,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 
 				// Should default to not RDMA capable
 				dev := devices["0000-01-00-1"]
-				Expect(dev.Attributes[consts.AttributeRDMACapable].BoolValue).To(Equal(ptr.To(false)))
+				Expect(dev.Attributes[consts.AttributeRDMACapable].BoolValue).To(Equal(new(false)))
 			})
 		})
 	})
