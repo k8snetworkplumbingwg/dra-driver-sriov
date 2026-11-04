@@ -21,6 +21,7 @@ type Flags struct {
 	DefaultInterfacePrefix        string
 	ConfigurationMode             string
 	EnableDeviceMetadata          bool
+	EnableNUMAListAttributes      bool
 }
 
 type Config struct {

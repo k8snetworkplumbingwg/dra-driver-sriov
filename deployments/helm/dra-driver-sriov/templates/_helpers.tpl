@@ -5,6 +5,15 @@ Expand the name of the chart.
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+{{/* Render feature gates deterministically for the driver's --feature-gates flag. */}}
+{{- define "dra-driver-sriov.featureGates" -}}
+{{- $parts := list -}}
+{{- range $name := keys . | sortAlpha -}}
+{{- $parts = append $parts (printf "%s=%t" $name (index $ $name)) -}}
+{{- end -}}
+{{- join "," $parts -}}
+{{- end -}}
+
 {{/*
 Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
