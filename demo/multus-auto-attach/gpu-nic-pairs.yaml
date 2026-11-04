@@ -1,0 +1,140 @@
+# Apply single-vf.yaml first. These administrator mappings replace its policy.
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: DeviceAttributes
+metadata:
+  name: auto-attach-rail-a
+  namespace: dra-driver-sriov
+  labels:
+    auto-attach-poc: rail-a
+spec:
+  attributes:
+    sriovnetwork.k8snetworkplumbingwg.io/netAttachDefName:
+      string: rail-a
+---
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: DeviceAttributes
+metadata:
+  name: auto-attach-rail-b
+  namespace: dra-driver-sriov
+  labels:
+    auto-attach-poc: rail-b
+spec:
+  attributes:
+    sriovnetwork.k8snetworkplumbingwg.io/netAttachDefName:
+      string: rail-b
+---
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: SriovResourcePolicy
+metadata:
+  name: 00-auto-attach-poc
+  namespace: dra-driver-sriov
+spec:
+  configs:
+  - deviceAttributesSelector:
+      matchLabels:
+        auto-attach-poc: rail-a
+    resourceFilters:
+    - pfNames: [eth1]
+      linkType: eth
+  - deviceAttributesSelector:
+      matchLabels:
+        auto-attach-poc: rail-b
+    resourceFilters:
+    - pfNames: [eth0]
+      linkType: eth
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rail-a
+  namespace: dra-multus-poc
+spec:
+  config: |-
+    {
+      "cniVersion": "1.0.0",
+      "name": "poc-rail-a",
+      "type": "sriov",
+      "ipam": {"type": "host-local", "subnet": "192.0.2.0/24"}
+    }
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rail-b
+  namespace: dra-multus-poc
+spec:
+  config: |-
+    {
+      "cniVersion": "1.0.0",
+      "name": "poc-rail-b",
+      "type": "sriov",
+      "ipam": {"type": "host-local", "subnet": "198.51.100.0/24"}
+    }
+---
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: auto-attach-pcie
+spec:
+  selectors:
+  - cel:
+      expression: >-
+        device.driver == "sriovnetwork.k8snetworkplumbingwg.io" &&
+        "resource.kubernetes.io" in device.attributes &&
+        "pcieRoot" in device.attributes["resource.kubernetes.io"] &&
+        device.attributes["resource.kubernetes.io"].pcieRoot != ""
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: gpu-nic-pairs
+  namespace: dra-multus-poc
+spec:
+  spec:
+    devices:
+      requests:
+      - name: gpu-0
+        exactly:
+          deviceClassName: gpu.example.com
+          count: 1
+      - name: nic-0
+        exactly:
+          deviceClassName: auto-attach-pcie
+          count: 1
+      - name: gpu-1
+        exactly:
+          deviceClassName: gpu.example.com
+          count: 1
+      - name: nic-1
+        exactly:
+          deviceClassName: auto-attach-pcie
+          count: 1
+      constraints:
+      - requests: [gpu-0, nic-0]
+        matchAttribute: resource.kubernetes.io/pcieRoot
+      - requests: [gpu-1, nic-1]
+        matchAttribute: resource.kubernetes.io/pcieRoot
+      - requests: [gpu-0, gpu-1]
+        distinctAttribute: resource.kubernetes.io/pcieRoot
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: workload2
+  namespace: dra-multus-poc
+spec:
+  terminationGracePeriodSeconds: 2
+  containers:
+  - name: workload
+    image: quay.io/schseba/toolbox:latest
+    command: ["/bin/bash", "-c", "sleep infinity"]
+    securityContext:
+      runAsUser: 0
+      capabilities:
+        add: [NET_ADMIN, NET_RAW]
+    resources:
+      claims:
+      - name: devices
+  resourceClaims:
+  - name: devices
+    resourceClaimTemplateName: gpu-nic-pairs

@@ -253,7 +253,8 @@ After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/bash -c "ethtool --offload  eth1  rx off  tx off && ethtool -K eth1 gso off"
+ExecStartPre=/usr/bin/bash -c "for i in {1..30}; do ip link show eth1 >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1"
+ExecStart=/usr/bin/bash -c "ethtool --offload eth1 rx off tx off && ethtool -K eth1 gso off"
 StandardOutput=journal+console
 StandardError=journal+console
 

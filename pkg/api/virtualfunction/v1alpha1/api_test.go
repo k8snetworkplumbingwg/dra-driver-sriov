@@ -350,7 +350,7 @@ var _ = Describe("VfConfig", func() {
 				Expect(base.Driver).To(Equal("netdevice"))
 			})
 
-			It("should not affect NetAttachDefNamespace field", func() {
+			It("should replace the NAD name and namespace together", func() {
 				base := &VfConfig{
 					Driver:                "vfio-pci",
 					NetAttachDefName:      "net1",
@@ -364,9 +364,10 @@ var _ = Describe("VfConfig", func() {
 
 				base.Override(other)
 
-				// NetAttachDefNamespace should remain unchanged
-				Expect(base.NetAttachDefNamespace).To(Equal("default"))
+				Expect(base.NetAttachDefNamespace).To(Equal("other-namespace"))
 				Expect(base.Driver).To(Equal("netdevice"))
+				base.Override(&VfConfig{NetAttachDefName: "pod-local"})
+				Expect(base.NetAttachDefNamespace).To(BeEmpty())
 			})
 		})
 	})
