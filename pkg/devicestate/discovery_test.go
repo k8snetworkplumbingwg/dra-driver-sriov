@@ -79,6 +79,8 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
 			mockHost.EXPECT().VerifyRDMACapability("0000:01:00.2").Return(false)
+			mockHost.EXPECT().HasCxiDevice("0000:01:00.1").Return(false)
+			mockHost.EXPECT().HasCxiDevice("0000:01:00.2").Return(false)
 
 			devices, err := DiscoverSriovDevices()
 			Expect(err).NotTo(HaveOccurred())
@@ -153,8 +155,10 @@ var _ = Describe("DiscoverSriovDevices", func() {
 
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList1, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
+			mockHost.EXPECT().HasCxiDevice("0000:01:00.1").Return(false)
 			mockHost.EXPECT().GetVFList("0000:02:00.0").Return(vfList2, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:02:00.1").Return(false)
+			mockHost.EXPECT().HasCxiDevice("0000:02:00.1").Return(false)
 
 			devices, err := DiscoverSriovDevices()
 			Expect(err).NotTo(HaveOccurred())
@@ -208,6 +212,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
+			mockHost.EXPECT().HasCxiDevice("0000:01:00.1").Return(false)
 
 			devices, err := DiscoverSriovDevices()
 			Expect(err).NotTo(HaveOccurred())
@@ -243,6 +248,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return("", fmt.Errorf("lookup failed"))
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
+			mockHost.EXPECT().HasCxiDevice("0000:01:00.1").Return(false)
 
 			devices, err := DiscoverSriovDevices()
 			Expect(err).NotTo(HaveOccurred())
@@ -314,6 +320,9 @@ var _ = Describe("DiscoverSriovDevices", func() {
 				// Second VF is not RDMA-capable
 				mockHost.EXPECT().VerifyRDMACapability("0000:01:00.2").Return(false)
 
+				mockHost.EXPECT().HasCxiDevice("0000:01:00.1").Return(false)
+				mockHost.EXPECT().HasCxiDevice("0000:01:00.2").Return(false)
+
 				devices, err := DiscoverSriovDevices()
 				Expect(err).NotTo(HaveOccurred())
 				Expect(devices).To(HaveLen(2))
@@ -347,6 +356,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 				mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 				// RDMA capability check fails (returns false)
 				mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
+				mockHost.EXPECT().HasCxiDevice("0000:01:00.1").Return(false)
 
 				devices, err := DiscoverSriovDevices()
 				Expect(err).NotTo(HaveOccurred())
@@ -355,6 +365,51 @@ var _ = Describe("DiscoverSriovDevices", func() {
 				// Should default to not RDMA capable
 				dev := devices["0000-01-00-1"]
 				Expect(dev.Attributes[consts.AttributeRDMACapable].BoolValue).To(Equal(new(false)))
+			})
+		})
+
+		Context("CXI Capability", func() {
+			var vfList []host.VFInfo
+
+			BeforeEach(func() {
+				pciInfo := &pci.Info{
+					Devices: []*pci.Device{
+						{
+							Address: "0000:21:00.0",
+							Class:   &pcidb.Class{ID: "02"},
+							Vendor:  &pcidb.Vendor{ID: "1590"},  // HPE
+							Product: &pcidb.Product{ID: "0371"}, // Cassini PF
+						},
+					},
+				}
+
+				vfList = []host.VFInfo{
+					{PciAddress: "0000:21:00.1", VFID: 0, DeviceID: "0372"},
+					{PciAddress: "0000:21:00.2", VFID: 1, DeviceID: "0372"},
+				}
+
+				mockHost.EXPECT().PCI().Return(pciInfo, nil)
+				mockHost.EXPECT().IsSriovVF("0000:21:00.0").Return(false)
+				mockHost.EXPECT().TryGetPFInterfaceName("0000:21:00.0").Return("hsn0")
+				mockHost.EXPECT().GetNicSriovMode("0000:21:00.0").Return(consts.EswitchModeLegacy)
+				mockHost.EXPECT().GetNumaNode("0000:21:00.0").Return("0", nil)
+				mockHost.EXPECT().GetPCIeRoot("0000:21:00.0").Return("pci0000:00", nil)
+				mockHost.EXPECT().GetLinkType("0000:21:00.0").Return(consts.LinkTypeEthernet, nil)
+				mockHost.EXPECT().GetVFList("0000:21:00.0").Return(vfList, nil)
+			})
+
+			It("should set cxiCapable per VF", func() {
+				mockHost.EXPECT().VerifyRDMACapability("0000:21:00.1").Return(false)
+				mockHost.EXPECT().VerifyRDMACapability("0000:21:00.2").Return(false)
+				mockHost.EXPECT().HasCxiDevice("0000:21:00.1").Return(true)
+				mockHost.EXPECT().HasCxiDevice("0000:21:00.2").Return(false)
+
+				devices, err := DiscoverSriovDevices()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(devices).To(HaveLen(2))
+
+				Expect(devices["0000-21-00-1"].Attributes[consts.AttributeCxiCapable].BoolValue).To(Equal(new(true)))
+				Expect(devices["0000-21-00-2"].Attributes[consts.AttributeCxiCapable].BoolValue).To(Equal(new(false)))
 			})
 		})
 	})
@@ -420,6 +475,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:01:00.1").Return(false)
+			mockHost.EXPECT().HasCxiDevice("0000:01:00.1").Return(false)
 
 			// Second device (VF) - should be skipped
 			mockHost.EXPECT().IsSriovVF("0000:01:00.1").Return(true)
@@ -550,6 +606,7 @@ var _ = Describe("DiscoverSriovDevices", func() {
 			mockHost.EXPECT().GetLinkType("0000:01:00.0").Return(consts.LinkTypeEthernet, nil)
 			mockHost.EXPECT().GetVFList("0000:01:00.0").Return(vfList, nil)
 			mockHost.EXPECT().VerifyRDMACapability("0000:af:10.7").Return(false)
+			mockHost.EXPECT().HasCxiDevice("0000:af:10.7").Return(false)
 
 			devices, err := DiscoverSriovDevices()
 			Expect(err).NotTo(HaveOccurred())
