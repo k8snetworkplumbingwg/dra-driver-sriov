@@ -182,6 +182,30 @@ spec:
     resourceClaimTemplateName: sriov-vf
 ```
 
+### ResourceClaim status
+
+The driver writes one entry per allocated VF to the claim's `status.devices`:
+
+- after prepare, `data` holds the `VfConfig` that was applied;
+- in `STANDALONE` mode, after the pod sandbox is up and CNI ADD has run,
+  `networkData` gets the interface name and IPs from the CNI result and
+  `data` becomes `{"vfConfig": ..., "cniConfig": ..., "cniResult": ...}`.
+
+```bash
+kubectl get resourceclaim <name> -o jsonpath='{.status.devices}'
+```
+
+The `STANDALONE` part is written after the sandbox has started, off the NRI
+hook, so CNI ADD does not wait on the API server. A write that fails on
+conflicts or transient errors goes back to the end of the queue, up to three
+times; after that the driver logs `Giving up on claim network data update`.
+If the API server is down long enough for the queue itself to fill up, the
+update for a new pod is dropped and the driver logs
+`Dropping claim status and checkpoint update`. The pod starts with its
+networks attached either way. Entries of other DRA drivers on the same claim
+are left alone, and the API server removes this driver's entries when the
+claim is deallocated.
+
 ## Resource Filtering System
 
 The DRA driver uses an opt-in model where administrators explicitly define which SR-IOV Virtual Functions should be advertised as Kubernetes resources. This system uses Custom Resource Definitions (CRDs) and a Kubernetes controller to manage device advertisement policies based on hardware characteristics.

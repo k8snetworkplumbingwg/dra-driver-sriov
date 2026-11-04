@@ -23,9 +23,15 @@ import (
 	resourceapi "k8s.io/api/resource/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 )
+
+// conflictRetries is how many times a conflict is retried right away within
+// one backoff step. A conflict means another writer got there first, and a
+// refetch usually resolves it; the backoff is for transient errors.
+const conflictRetries = 5
 
 // IsPermanentStatusUpdateError reports whether a failed status update will keep
 // failing the same way, so retrying the same request only burns the backoff and
@@ -49,72 +55,91 @@ type ResourceClaimStatusClient interface {
 	Get(ctx context.Context, name string, opts metav1.GetOptions) (*resourceapi.ResourceClaim, error)
 }
 
-// UpdateClaimStatusWithRetry writes claim.Status, retrying on conflict. Each retry
-// reapplies this driver's device statuses over the refetched list, so an entry
-// another driver wrote during the conflict window survives.
-//
-// It stops rather than burn the backoff on an error that cannot succeed unchanged,
-// or on a claim recreated under the same name, and returns the last API error
-// rather than the backoff timeout. Both pkg/driver and pkg/nri use it.
+// ClaimStatusMutation applies one caller's change to a freshly fetched claim
+// and reports whether it changed anything. It runs once per attempt, so it must
+// be deterministic and must not have side effects outside the claim. An error
+// stops the retry and is returned to the caller as is.
+type ClaimStatusMutation func(claim *resourceapi.ResourceClaim) (changed bool, err error)
+
+// UpdateClaimStatusWithRetry fetches the claim, applies mutate and writes the
+// status back, repeating all three on a conflict (right away, up to
+// conflictRetries times per step) or a transient error (after a backoff step).
+// Applying the mutation to the latest claim, rather than restoring a snapshot,
+// keeps every entry the caller did not touch. It stops on a permanent error,
+// on a claim recreated under the same name and on a mutation error, and once
+// the backoff is exhausted returns the last API error rather than the timeout.
 func UpdateClaimStatusWithRetry(
 	ctx context.Context,
 	claims ResourceClaimStatusClient,
-	claim *resourceapi.ResourceClaim,
-	driverName string,
+	name string,
+	uid k8stypes.UID,
 	backoff wait.Backoff,
+	mutate ClaimStatusMutation,
 ) error {
+	if name == "" || uid == "" {
+		return fmt.Errorf("claim status update needs the claim name and UID, got name %q and UID %q", name, uid)
+	}
+	if mutate == nil {
+		return fmt.Errorf("claim status update for %s needs a mutation", name)
+	}
 	logger := klog.FromContext(ctx).WithName("UpdateClaimStatusWithRetry")
 
-	// Snapshot of this driver's desired device statuses, reapplied on top of the
-	// latest claim on every conflict.
-	desired := claim.Status.Devices
+	var mutationErr error
+	attempt := func(ctx context.Context) error {
+		claim, err := claims.Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		// A claim deleted and recreated under the same name is a different object,
+		// and this driver's status belongs to the one that is gone.
+		if claim.UID != uid {
+			return fmt.Errorf("claim %s was replaced (UID %s is now %s): %w",
+				name, uid, claim.UID,
+				apierrors.NewNotFound(resourceapi.Resource("resourceclaims"), name))
+		}
+
+		changed, err := mutate(claim)
+		if err != nil {
+			mutationErr = err
+			return err
+		}
+		if !changed {
+			logger.V(2).Info("Claim status already up to date", "claim", uid)
+			return nil
+		}
+
+		_, err = claims.UpdateStatus(ctx, claim, metav1.UpdateOptions{})
+		return err
+	}
 
 	var lastErr error
 	err := wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
-		_, updateErr := claims.UpdateStatus(ctx, claim, metav1.UpdateOptions{})
-		if updateErr == nil {
+		var err error
+		for i := 0; ; i++ {
+			err = attempt(ctx)
+			// The conflict retry is for the API's optimistic concurrency; a
+			// mutation is deterministic, so replaying one that failed is futile.
+			if mutationErr != nil || !apierrors.IsConflict(err) || i == conflictRetries-1 {
+				break
+			}
+		}
+		if err == nil {
 			return true, nil
 		}
-
-		if apierrors.IsConflict(updateErr) {
-			lastErr = updateErr
-			logger.V(2).Info("Conflict detected, refreshing claim", "claim", claim.UID)
-
-			freshClaim, fetchErr := claims.Get(ctx, claim.Name, metav1.GetOptions{})
-			if fetchErr != nil {
-				lastErr = fetchErr
-				if IsPermanentStatusUpdateError(fetchErr) {
-					return false, fetchErr
-				}
-				logger.V(2).Info("Failed to fetch fresh claim, retrying", "claim", claim.UID, "error", fetchErr.Error())
-				return false, nil
-			}
-
-			// A claim deleted and recreated under the same name is a different object,
-			// and this driver's status belongs to the one that is gone.
-			if freshClaim.UID != claim.UID {
-				lastErr = fmt.Errorf("claim %s was replaced (UID %s is now %s): %w",
-					claim.Name, claim.UID, freshClaim.UID,
-					apierrors.NewNotFound(resourceapi.Resource("resourceclaims"), claim.Name))
-				return false, lastErr
-			}
-
-			freshClaim.Status.Devices = MergeDeviceStatuses(freshClaim.Status.Devices, desired, driverName)
-			claim = freshClaim
-			logger.V(2).Info("Refreshed claim, retrying status update", "claim", claim.UID)
-			return false, nil
+		// The request itself was cut short; there is nothing left to retry.
+		if ctx.Err() != nil {
+			return false, ctx.Err()
 		}
-
-		lastErr = updateErr
-		if IsPermanentStatusUpdateError(updateErr) {
-			return false, updateErr
+		lastErr = err
+		if mutationErr != nil || IsPermanentStatusUpdateError(err) {
+			return false, err
 		}
-		logger.V(2).Info("Retrying claim status update", "claim", claim.UID, "error", updateErr.Error())
+		logger.V(2).Info("Retrying claim status update", "claim", uid, "error", err.Error())
 		return false, nil
 	})
 
 	// ExponentialBackoff reports its own timeout once the steps are exhausted;
-	// surface the last real API error instead so the caller can see what failed.
+	// surface the last real error instead so the caller can see what failed.
 	// A context cancellation is itself the reason the loop ended (for example the
 	// NRI runner shutting down), so leave it in place rather than masking it.
 	if err != nil && lastErr != nil && ctx.Err() == nil {
