@@ -26,15 +26,36 @@ type PFInfo struct {
 }
 
 func DiscoverSriovDevices() (types.AllocatableDevices, error) {
-	logger := klog.LoggerWithName(klog.Background(), "DiscoverSriovDevices")
+	return discoverSriovDevices(klog.LoggerWithName(klog.Background(), "DiscoverSriovDevices"), false)
+}
+
+// discoverSriovDevices enumerates the SR-IOV VFs. In quiet mode, for periodic rescans, recoverable
+// per-device failures are logged as Info on the given logger and returned failures are left to
+// the caller, so a persistent failure does not produce error logs on every rescan.
+func discoverSriovDevices(logger klog.Logger, quiet bool) (types.AllocatableDevices, error) {
 	pfList := []PFInfo{}
 	resourceList := types.AllocatableDevices{}
+	warn := func(err error, msg string, keysAndValues ...any) {
+		if !quiet {
+			logger.Error(err, msg, keysAndValues...)
+			return
+		}
+		if err != nil {
+			keysAndValues = append(keysAndValues, "err", err)
+		}
+		logger.Info(msg, keysAndValues...)
+	}
+	fail := func(err error, msg string, keysAndValues ...any) {
+		if !quiet {
+			logger.Error(err, msg, keysAndValues...)
+		}
+	}
 
 	logger.Info("Starting SR-IOV device discovery")
 
 	pci, err := host.GetHelpers().PCI()
 	if err != nil {
-		logger.Error(err, "Failed to get PCI info")
+		fail(err, "Failed to get PCI info")
 		return nil, fmt.Errorf("error getting PCI info: %v", err)
 	}
 
@@ -51,7 +72,7 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 
 		devClass, err := strconv.ParseInt(device.Class.ID, 16, 64)
 		if err != nil {
-			logger.Error(err, "Unable to parse device class, skipping device",
+			warn(err, "Unable to parse device class, skipping device",
 				"address", device.Address, "class", device.Class.ID)
 			continue
 		}
@@ -68,7 +89,7 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 
 		pfNetName := host.GetHelpers().TryGetPFInterfaceName(device.Address)
 		if pfNetName == "" {
-			logger.Error(nil, "Unable to get interface name for device, skipping", "address", device.Address)
+			warn(nil, "Unable to get interface name for device, skipping", "address", device.Address)
 			continue
 		}
 
@@ -78,21 +99,21 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 		// -1 indicates NUMA is not supported/enabled (standard Linux convention)
 		numaNode, err := host.GetHelpers().GetNumaNode(device.Address)
 		if err != nil {
-			logger.Error(err, "Failed to get NUMA node, using -1 (not supported)", "address", device.Address)
+			warn(err, "Failed to get NUMA node, using -1 (not supported)", "address", device.Address)
 			numaNode = "-1"
 		}
 
 		// Get PCIe Root Complex information using upstream Kubernetes implementation
 		pcieRoot, err := host.GetHelpers().GetPCIeRoot(device.Address)
 		if err != nil {
-			logger.Error(err, "Failed to get PCIe Root Complex", "address", device.Address)
+			warn(err, "Failed to get PCIe Root Complex", "address", device.Address)
 			pcieRoot = "" // Leave empty if we can't determine it
 		}
 
 		// Get link type (ethernet, infiniband, etc.)
 		linkType, err := host.GetHelpers().GetLinkType(device.Address)
 		if err != nil {
-			logger.Error(err, "Failed to get link type", "address", device.Address)
+			warn(err, "Failed to get link type", "address", device.Address)
 			linkType = consts.LinkTypeUnknown // Default to unknown if we can't determine it
 		}
 
@@ -126,7 +147,7 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 
 		vfList, err := host.GetHelpers().GetVFList(pfInfo.Address)
 		if err != nil {
-			logger.Error(err, "Failed to get VF list for PF", "pf", pfInfo.NetName, "address", pfInfo.Address)
+			fail(err, "Failed to get VF list for PF", "pf", pfInfo.NetName, "address", pfInfo.Address)
 			return nil, fmt.Errorf("error getting VF list: %v", err)
 		}
 
@@ -138,7 +159,7 @@ func DiscoverSriovDevices() (types.AllocatableDevices, error) {
 		numaNodeIntPtr := new(int64(-1))
 		numaNodeInt, err := strconv.ParseInt(pfInfo.NumaNode, 10, 64)
 		if err != nil {
-			logger.Error(err, "Failed to parse NUMA node, defaulting to -1",
+			warn(err, "Failed to parse NUMA node, defaulting to -1",
 				"pf", pfInfo.NetName, "numaNodeStr", pfInfo.NumaNode)
 		} else {
 			*numaNodeIntPtr = numaNodeInt
