@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -16,9 +17,6 @@ import (
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
-// prepareStatusTimeout bounds the claim status writes of one call; tests shorten it.
-var prepareStatusTimeout = 10 * time.Second
-
 // statusWriteReserve is left before the kubelet's deadline for the rest of the call.
 const statusWriteReserve = time.Second
 
@@ -31,7 +29,7 @@ func (d *Driver) PrepareResourceClaims(ctx context.Context, claims []*resourceap
 	logger.V(3).Info("claims", "claims", claims)
 
 	// The claims' status writes share one budget; preparing the devices does not use it.
-	statusBudget := prepareStatusTimeout
+	statusBudget := cmp.Or(d.prepareStatusTimeout, consts.DefaultPrepareStatusTimeout)
 
 	// we share this between all the claims so we can enumerate network interfaces
 	ifNameIndex := 0

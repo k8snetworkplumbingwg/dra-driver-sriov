@@ -50,7 +50,6 @@ var _ = Describe("PrepareResourceClaims status write", func() {
 		mockCtrl    *gomock.Controller
 		mockHost    *mock_host.MockInterface
 		origHelpers host.Interface
-		origTimeout time.Duration
 		bindDelay   time.Duration
 		fake        *k8sfake.Clientset
 		d           *Driver
@@ -103,7 +102,6 @@ var _ = Describe("PrepareResourceClaims status write", func() {
 		_ = host.GetHelpers()
 		origHelpers = host.Helpers
 		host.Helpers = mockHost
-		origTimeout = prepareStatusTimeout
 
 		// Discovery, run once by NewManager.
 		mockHost.EXPECT().PCI().Return(&pci.Info{Devices: []*pci.Device{{
@@ -150,7 +148,6 @@ var _ = Describe("PrepareResourceClaims status write", func() {
 
 	AfterEach(func() {
 		host.Helpers = origHelpers
-		prepareStatusTimeout = origTimeout
 		mockCtrl.Finish()
 	})
 
@@ -189,8 +186,8 @@ var _ = Describe("PrepareResourceClaims status write", func() {
 	})
 
 	It("does not count device preparation against the status-write budget", func() {
-		prepareStatusTimeout = 300 * time.Millisecond
-		bindDelay = 2 * prepareStatusTimeout
+		d.prepareStatusTimeout = 300 * time.Millisecond
+		bindDelay = 2 * d.prepareStatusTimeout
 
 		result, err := d.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{newClaim("claim-a", deviceNames[0])})
 		Expect(err).NotTo(HaveOccurred())
@@ -199,8 +196,8 @@ var _ = Describe("PrepareResourceClaims status write", func() {
 	})
 
 	It("does not count another claim's preparation against the status-write budget", func() {
-		prepareStatusTimeout = 300 * time.Millisecond
-		bindDelay = 2 * prepareStatusTimeout
+		d.prepareStatusTimeout = 300 * time.Millisecond
+		bindDelay = 2 * d.prepareStatusTimeout
 
 		_, err := d.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{
 			newClaim("claim-a", deviceNames[0]),
@@ -227,7 +224,7 @@ var _ = Describe("PrepareResourceClaims status write", func() {
 		// so the second claim's write is not even attempted; with a budget per
 		// claim the call would spend twice as long against the kubelet's
 		// deadline for the whole call.
-		prepareStatusTimeout = 300 * time.Millisecond
+		d.prepareStatusTimeout = 300 * time.Millisecond
 		calls := statusUpdates(apierrors.NewServerTimeout(gr, "update", 1))
 
 		start := time.Now()
@@ -241,6 +238,6 @@ var _ = Describe("PrepareResourceClaims status write", func() {
 		Expect(result["claim-b-uid"].Devices).To(HaveLen(1))
 		Expect(calls["claim-a"].Load()).To(BeNumerically(">=", 1))
 		Expect(calls["claim-b"]).To(BeNil(), "the budget was spent on claim-a, so claim-b's write must not start")
-		Expect(elapsed).To(BeNumerically("<", 2*prepareStatusTimeout))
+		Expect(elapsed).To(BeNumerically("<", 2*d.prepareStatusTimeout))
 	})
 })
