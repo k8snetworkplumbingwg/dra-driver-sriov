@@ -27,16 +27,9 @@ import (
 
 // Plugin represents a NRI plugin catching RunPodSandbox and StopPodSandbox events to
 // call CNI ADD/DEL based on ResourceClaim attached to pods.
-// deviceStore is the part of the pod manager the plugin uses: the devices
-// prepared for a pod, and the network data recorded for one of them.
-type deviceStore interface {
-	GetDevicesByPodUID(podUID k8stypes.UID) (types.PreparedDevices, bool)
-	UpdatePreparedDeviceNetworkData(device *types.PreparedDevice, networkData *resourceapi.NetworkDeviceData, seq uint64) error
-}
-
 type Plugin struct {
 	stub       stub.Stub
-	podManager deviceStore
+	podManager types.DeviceStore
 	cniRuntime cni.Interface
 
 	k8sClient            flags.ClientSets
@@ -69,7 +62,7 @@ var (
 const maxRequeues = 3
 
 // NewNRIPlugin creates a new NRI plugin.
-func NewNRIPlugin(config *types.Config, podManager deviceStore, cniRuntime cni.Interface, metadataUpdater types.MetadataUpdater) (*Plugin, error) {
+func NewNRIPlugin(config *types.Config, podManager types.DeviceStore, cniRuntime cni.Interface, metadataUpdater types.MetadataUpdater) (*Plugin, error) {
 	p := &Plugin{
 		podManager:                  podManager,
 		cniRuntime:                  cniRuntime,

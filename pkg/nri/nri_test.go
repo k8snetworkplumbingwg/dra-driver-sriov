@@ -73,7 +73,7 @@ var _ = Describe("deviceNetworkStatus", func() {
 // checkpointRefuses wraps the pod manager and refuses to record the devices its
 // predicate names, as a checkpoint write that failed for them would.
 type checkpointRefuses struct {
-	deviceStore
+	types.DeviceStore
 	refuse func(*types.PreparedDevice) bool
 }
 
@@ -81,7 +81,7 @@ func (s checkpointRefuses) UpdatePreparedDeviceNetworkData(device *types.Prepare
 	if s.refuse(device) {
 		return errors.New("checkpoint write failed")
 	}
-	return s.deviceStore.UpdatePreparedDeviceNetworkData(device, networkData, seq)
+	return s.DeviceStore.UpdatePreparedDeviceNetworkData(device, networkData, seq)
 }
 
 // deviceNamed refuses one device by name.
@@ -92,7 +92,7 @@ func deviceNamed(name string) func(*types.PreparedDevice) bool {
 // cancelsOnFirstWrite wraps the pod manager and cancels while recording the
 // first device, as a shutdown arriving mid-write would.
 type cancelsOnFirstWrite struct {
-	deviceStore
+	types.DeviceStore
 	cancel context.CancelFunc
 	writes *int
 }
@@ -102,7 +102,7 @@ func (s cancelsOnFirstWrite) UpdatePreparedDeviceNetworkData(device *types.Prepa
 	if *s.writes == 1 {
 		s.cancel()
 	}
-	return s.deviceStore.UpdatePreparedDeviceNetworkData(device, networkData, seq)
+	return s.DeviceStore.UpdatePreparedDeviceNetworkData(device, networkData, seq)
 }
 
 type fakeMetadataUpdater struct {
@@ -793,7 +793,7 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 			return false, nil, nil
 		})
 		plugin := &Plugin{
-			podManager:                  checkpointRefuses{deviceStore: pm, refuse: deviceNamed("dev-a")},
+			podManager:                  checkpointRefuses{DeviceStore: pm, refuse: deviceNamed("dev-a")},
 			k8sClient:                   flags.ClientSets{Interface: fake},
 			statusBackoff:               twoStepBackoff,
 			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
@@ -820,7 +820,7 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 			resourceapi.DeviceRequestAllocationResult{Request: "req-b", Driver: consts.DriverName, Pool: "pool-a", Device: "dev-b"})
 		fake := k8sfake.NewSimpleClientset(claim)
 		plugin := &Plugin{
-			podManager:                  checkpointRefuses{deviceStore: pm, refuse: deviceNamed("dev-a")},
+			podManager:                  checkpointRefuses{DeviceStore: pm, refuse: deviceNamed("dev-a")},
 			k8sClient:                   flags.ClientSets{Interface: fake},
 			statusBackoff:               twoStepBackoff,
 			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
@@ -864,7 +864,7 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 		failingUpdates(fake, 2, &updateCalls)
 		diskDown := false
 		plugin := &Plugin{
-			podManager:                  checkpointRefuses{deviceStore: pm, refuse: func(*types.PreparedDevice) bool { return diskDown }},
+			podManager:                  checkpointRefuses{DeviceStore: pm, refuse: func(*types.PreparedDevice) bool { return diskDown }},
 			k8sClient:                   flags.ClientSets{Interface: fake},
 			statusBackoff:               twoStepBackoff,
 			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
@@ -903,7 +903,7 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 		}
 		Expect(pm.Set(podUID, claimUID, types.PreparedDevices{prepared[0], deviceB})).To(Succeed())
 		plugin := &Plugin{
-			podManager:                  checkpointRefuses{deviceStore: pm, refuse: deviceNamed("dev-a")},
+			podManager:                  checkpointRefuses{DeviceStore: pm, refuse: deviceNamed("dev-a")},
 			k8sClient:                   flags.ClientSets{Interface: fake},
 			statusBackoff:               twoStepBackoff,
 			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
@@ -936,7 +936,7 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 		}
 		Expect(pm.Set(podUID, claimUID, types.PreparedDevices{prepared[0], deviceB})).To(Succeed())
 		plugin := &Plugin{
-			podManager:                  cancelsOnFirstWrite{deviceStore: pm, cancel: cancel, writes: &writes},
+			podManager:                  cancelsOnFirstWrite{DeviceStore: pm, cancel: cancel, writes: &writes},
 			k8sClient:                   flags.ClientSets{Interface: k8sfake.NewSimpleClientset(newClaim())},
 			statusBackoff:               twoStepBackoff,
 			networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 10),
