@@ -115,11 +115,11 @@ func UpdateClaimStatusWithRetry(
 	var lastErr error
 	err := wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
 		var err error
-		for i := 0; ; i++ {
+		for range conflictRetries {
 			err = attempt(ctx)
 			// The conflict retry is for the API's optimistic concurrency; a
 			// mutation is deterministic, so replaying one that failed is futile.
-			if mutationErr != nil || !apierrors.IsConflict(err) || i == conflictRetries-1 {
+			if mutationErr != nil || !apierrors.IsConflict(err) {
 				break
 			}
 		}

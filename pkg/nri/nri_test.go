@@ -732,12 +732,12 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 		// still writing an update.
 		fake := k8sfake.NewSimpleClientset(newClaim())
 		started := make(chan struct{})
-		var once sync.Once
+		closeStarted := sync.OnceFunc(func() { close(started) })
 		fake.PrependReactor("update", "resourceclaims", func(action k8stesting.Action) (bool, runtime.Object, error) {
 			if action.GetSubresource() != "status" {
 				return false, nil, nil
 			}
-			once.Do(func() { close(started) })
+			closeStarted()
 			time.Sleep(150 * time.Millisecond)
 			return false, nil, nil
 		})
@@ -761,9 +761,7 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 		stopped := make(chan bool, 2)
 		var wg sync.WaitGroup
 		for range 2 {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				defer GinkgoRecover()
 				plugin.stopRunner()
 				select {
@@ -772,7 +770,7 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 				default:
 					stopped <- false
 				}
-			}()
+			})
 		}
 		wg.Wait()
 
@@ -1121,7 +1119,7 @@ var _ = Describe("NRI Plugin Start and Stop", func() {
 		Expect(podManager.Set(k8stypes.UID(pod.Uid), k8stypes.UID("claim-1"), prepared)).To(Succeed())
 		mockCNI.EXPECT().
 			AttachNetwork(gomock.Any(), pod, "/proc/123/ns/net", prepared[0]).
-			Return(&resourceapi.NetworkDeviceData{InterfaceName: "net1"}, map[string]interface{}{}, nil).
+			Return(&resourceapi.NetworkDeviceData{InterfaceName: "net1"}, map[string]any{}, nil).
 			AnyTimes()
 
 		plugin, _ := newPlugin(nil)
@@ -1164,7 +1162,7 @@ var _ = Describe("NRI RunPodSandbox backpressure", func() {
 		Expect(podManager.Set(k8stypes.UID(pod.Uid), k8stypes.UID("claim-1"), prepared)).To(Succeed())
 		mockCNI.EXPECT().
 			AttachNetwork(gomock.Any(), pod, "/proc/123/ns/net", prepared[0]).
-			Return(&resourceapi.NetworkDeviceData{InterfaceName: "net1"}, map[string]interface{}{}, nil)
+			Return(&resourceapi.NetworkDeviceData{InterfaceName: "net1"}, map[string]any{}, nil)
 
 		// No runner drains the queue, and it is already full.
 		plugin := &Plugin{
@@ -1351,8 +1349,8 @@ var _ = Describe("NRI updateNetworkDeviceData ordering", func() {
 			{
 				PreparedDevice:    prepared[0],
 				NetworkDeviceData: networkData,
-				CNIConfig:         map[string]interface{}{"type": "sriov"},
-				CNIResult:         map[string]interface{}{"result": "ok"},
+				CNIConfig:         map[string]any{"type": "sriov"},
+				CNIResult:         map[string]any{"result": "ok"},
 			},
 		}
 	}

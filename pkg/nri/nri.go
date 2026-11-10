@@ -1,6 +1,7 @@
 package nri
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -536,16 +537,12 @@ func (p *Plugin) updateClaimNetworkDataWithRetry(ctx context.Context, claimKey n
 		}
 		return patch(claim)
 	}
-	backoff := p.statusBackoff
-	if backoff.Steps == 0 {
-		backoff = consts.Backoff
-	}
 	return types.UpdateClaimStatusWithRetry(
 		ctx,
 		p.k8sClient.ResourceV1().ResourceClaims(claimKey.namespace),
 		claimKey.name,
 		claimKey.uid,
-		backoff,
+		cmp.Or(p.statusBackoff, consts.Backoff),
 		mutate,
 	)
 }
