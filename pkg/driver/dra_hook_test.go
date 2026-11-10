@@ -21,6 +21,7 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
+	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cdi"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/devicestate"
@@ -50,6 +51,7 @@ var _ = Describe("PrepareResourceClaims status write", func() {
 		mockHost    *mock_host.MockInterface
 		origHelpers host.Interface
 		origTimeout time.Duration
+		bindDelay   time.Duration
 		fake        *k8sfake.Clientset
 		d           *Driver
 	)
@@ -122,7 +124,11 @@ var _ = Describe("PrepareResourceClaims status write", func() {
 		}
 		mockHost.EXPECT().IsIommufdAvailable().Return(false)
 		// Prepare binds each VF with the default (empty) driver config.
-		mockHost.EXPECT().BindDeviceDriver(gomock.Any(), gomock.Any()).Return("", nil).AnyTimes()
+		bindDelay = 0
+		mockHost.EXPECT().BindDeviceDriver(gomock.Any(), gomock.Any()).DoAndReturn(func(string, *configapi.VfConfig) (string, error) {
+			time.Sleep(bindDelay)
+			return "", nil
+		}).AnyTimes()
 
 		// MULTUS mode skips the NetworkAttachmentDefinition lookup, which is
 		// the only API access on this path besides the status write.
@@ -180,6 +186,40 @@ var _ = Describe("PrepareResourceClaims status write", func() {
 		Expect(getClaim("claim-a").Status.Devices).To(BeEmpty())
 		_, found := d.podManager.Get(podUID, "claim-a-uid")
 		Expect(found).To(BeTrue())
+	})
+
+	It("does not count device preparation against the status-write budget", func() {
+		prepareStatusTimeout = 300 * time.Millisecond
+		bindDelay = 2 * prepareStatusTimeout
+
+		result, err := d.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{newClaim("claim-a", deviceNames[0])})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result["claim-a-uid"].Devices).To(HaveLen(1))
+		Expect(getClaim("claim-a").Status.Devices).To(HaveLen(1), "a slow bind must not use up the time of the status write")
+	})
+
+	It("does not count another claim's preparation against the status-write budget", func() {
+		prepareStatusTimeout = 300 * time.Millisecond
+		bindDelay = 2 * prepareStatusTimeout
+
+		_, err := d.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{
+			newClaim("claim-a", deviceNames[0]),
+			newClaim("claim-b", deviceNames[1]),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(getClaim("claim-a").Status.Devices).To(HaveLen(1))
+		Expect(getClaim("claim-b").Status.Devices).To(HaveLen(1), "claim-b's bind must not use up its write time")
+	})
+
+	It("stops the status writes in time to answer before the kubelet's deadline", func() {
+		statusUpdates(apierrors.NewServerTimeout(gr, "update", 1))
+		ctx, cancel := context.WithTimeout(context.Background(), statusWriteReserve+300*time.Millisecond)
+		defer cancel()
+
+		result, err := d.PrepareResourceClaims(ctx, []*resourceapi.ResourceClaim{newClaim("claim-a", deviceNames[0])})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result["claim-a-uid"].Devices).To(HaveLen(1))
+		Expect(ctx.Err()).NotTo(HaveOccurred(), "the call must return before the kubelet's deadline")
 	})
 
 	It("shares one status-write budget across the claims of a call", func() {
