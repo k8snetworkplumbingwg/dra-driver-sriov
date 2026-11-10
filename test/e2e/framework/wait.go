@@ -77,10 +77,8 @@ func (c *Clients) WaitForResourceClaimAllocated(ctx context.Context, namespace, 
 	return claim
 }
 
-// WaitForResourceClaimDeviceNetworkData waits until the driver has recorded
-// the network data of a device on the claim: status.devices has an entry for
-// the driver whose networkData names ifName and carries at least one IP, and
-// whose data carries the CNI result next to the VF config.
+// WaitForResourceClaimDeviceNetworkData waits until the claim has this driver's
+// entry with networkData for ifName, an IP, and the CNI result in data.
 func (c *Clients) WaitForResourceClaimDeviceNetworkData(ctx context.Context, namespace, name, ifName string) {
 	Eventually(func(g Gomega) {
 		claim, err := c.Clientset.ResourceV1().ResourceClaims(namespace).Get(ctx, name, metav1.GetOptions{})

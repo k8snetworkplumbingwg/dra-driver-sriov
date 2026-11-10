@@ -25,8 +25,7 @@ import (
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 )
 
-// ErrDeviceNotAllocated is returned by PatchDeviceNetworkStatuses for a device
-// the claim's allocation does not list, or lists under several shares.
+// ErrDeviceNotAllocated means the claim's allocation does not list the device exactly once.
 var ErrDeviceNotAllocated = errors.New("device is not allocated to the claim")
 
 // deviceStatusKey identifies one entry of ResourceClaim.status.devices.
@@ -61,12 +60,9 @@ func indexOf(list []resourceapi.AllocatedDeviceStatus, key deviceStatusKey) int 
 	})
 }
 
-// UpsertDeviceStatuses returns the prepare path's mutation: each status is
-// recorded on the claim, replacing the entry of a device the claim already
-// carries. A prepared device starts over from its configuration, so an entry
-// left by an earlier use of the claim is replaced whole rather than patched.
-// Every other entry, this driver's or another's, is left as it is. The list
-// never ends up with two entries of one key, which the API server rejects.
+// UpsertDeviceStatuses returns the prepare path's mutation: each status replaces
+// the whole entry with its key, since a prepared device starts over, or is
+// appended. Other entries stay as they are, and no key appears twice.
 func UpsertDeviceStatuses(statuses []resourceapi.AllocatedDeviceStatus) ClaimStatusMutation {
 	return func(claim *resourceapi.ResourceClaim) (bool, error) {
 		changed := false
@@ -85,10 +81,8 @@ func UpsertDeviceStatuses(statuses []resourceapi.AllocatedDeviceStatus) ClaimSta
 	}
 }
 
-// allocatedKey resolves update to the key of the allocated device it names.
-// The share ID comes from the allocation when update carries none, so the entry
-// of a shared device is found under its real key. A device the allocation does
-// not list, or lists under several shares update cannot tell apart, has no key.
+// allocatedKey returns the key of the allocated device update names, with the
+// share ID from the allocation. It reports false unless exactly one result matches.
 func allocatedKey(claim *resourceapi.ResourceClaim, update resourceapi.AllocatedDeviceStatus) (deviceStatusKey, bool) {
 	if claim.Status.Allocation == nil {
 		return deviceStatusKey{}, false
@@ -111,13 +105,10 @@ func allocatedKey(claim *resourceapi.ResourceClaim, update resourceapi.Allocated
 	return key, matches == 1
 }
 
-// PatchDeviceNetworkStatuses returns the NRI path's mutation: the network data
-// of each device is set on this driver's entry for it, nothing else on the
-// claim is touched. Only NetworkData (nil clears it) and Data (when set) are
-// taken from an update. A device without an entry gets one, which makes good a
-// status write that failed during prepare. A device the allocation no longer
-// lists stops the mutation with ErrDeviceNotAllocated; the API server would
-// reject its entry anyway.
+// PatchDeviceNetworkStatuses returns the NRI path's mutation: it sets NetworkData
+// (nil clears it) and, when set, Data on this driver's entry for each device,
+// adding the entry if prepare's write was lost. A device the allocation does
+// not list stops it with ErrDeviceNotAllocated.
 func PatchDeviceNetworkStatuses(updates []resourceapi.AllocatedDeviceStatus) ClaimStatusMutation {
 	return func(claim *resourceapi.ResourceClaim) (bool, error) {
 		changed := false

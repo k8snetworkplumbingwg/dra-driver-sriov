@@ -227,10 +227,8 @@ var _ = Describe("Types", func() {
 		})
 
 		It("loads a checkpoint written before ShareID existed", func() {
-			// Render a populated state as the previous on-disk format: the
-			// same JSON without the ShareID key, checksummed over that older
-			// body. After an upgrade the current code must still load and
-			// verify it, or the driver cannot recover its prepared claims.
+			// The format before ShareID: the same JSON without the key, checksummed
+			// over that body. It must still load after an upgrade.
 			podUID := types.UID("pod-1")
 			claimUID := types.UID("claim-1")
 			src := draTypes.NewCheckpoint()

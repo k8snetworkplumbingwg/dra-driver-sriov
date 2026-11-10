@@ -70,8 +70,7 @@ var _ = Describe("PrepareResourceClaims status write", func() {
 			},
 		}
 	}
-	// statusUpdates counts the status updates per claim and lets a test fail
-	// them all with err.
+	// statusUpdates counts status updates per claim and fails each with fail when set.
 	statusUpdates := func(fail error) map[string]*atomic.Int32 {
 		calls := map[string]*atomic.Int32{}
 		fake.PrependReactor("update", "resourceclaims", func(action k8stesting.Action) (bool, runtime.Object, error) {
@@ -128,8 +127,7 @@ var _ = Describe("PrepareResourceClaims status write", func() {
 			return "", nil
 		}).AnyTimes()
 
-		// MULTUS mode skips the NetworkAttachmentDefinition lookup, which is
-		// the only API access on this path besides the status write.
+		// MULTUS mode skips the NetworkAttachmentDefinition lookup, the only other API call.
 		cfg := &types.Config{Flags: &types.Flags{
 			ConfigurationMode:           string(consts.ConfigurationModeMultus),
 			KubeletPluginsDirectoryPath: GinkgoT().TempDir(),
@@ -171,8 +169,7 @@ var _ = Describe("PrepareResourceClaims status write", func() {
 	})
 
 	It("still returns the prepared devices when the status write fails", func() {
-		// The write is best-effort: the devices are prepared and recorded in
-		// the pod manager, so the kubelet gets them.
+		// The write is best-effort, so the kubelet still gets the prepared devices.
 		calls := statusUpdates(apierrors.NewForbidden(gr, "claim-a", errors.New("denied")))
 
 		result, err := d.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{newClaim("claim-a", deviceNames[0])})
@@ -220,10 +217,7 @@ var _ = Describe("PrepareResourceClaims status write", func() {
 	})
 
 	It("shares one status-write budget across the claims of a call", func() {
-		// The API keeps timing out. The first claim's retries use up the budget,
-		// so the second claim's write is not even attempted; with a budget per
-		// claim the call would spend twice as long against the kubelet's
-		// deadline for the whole call.
+		// The API keeps timing out; a budget per claim would double the time the call takes.
 		d.prepareStatusTimeout = 300 * time.Millisecond
 		calls := statusUpdates(apierrors.NewServerTimeout(gr, "update", 1))
 

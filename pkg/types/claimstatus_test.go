@@ -80,8 +80,7 @@ func data(list []resourceapi.AllocatedDeviceStatus, device string) string {
 
 var _ = Describe("UpsertDeviceStatuses", func() {
 	It("keeps an entry another driver wrote during the conflict window", func() {
-		// The latest claim carries an entry this driver never saw; the mutation
-		// only touches its own prepared device, so the entry stays.
+		// The latest claim has an entry this driver never saw; only our device is touched.
 		claim := claimWith(status(foreignDriver, "gpu-pool", "gpu0"))
 
 		changed, err := types.UpsertDeviceStatuses([]resourceapi.AllocatedDeviceStatus{status(ownDriver, "vf-pool", "vf0")})(claim)
@@ -95,8 +94,7 @@ var _ = Describe("UpsertDeviceStatuses", func() {
 	})
 
 	It("keeps this driver's other entries written during the conflict window", func() {
-		// Restoring a pre-conflict snapshot of this driver's entries used to drop
-		// vf2, added by the other status writer, and revert vf1 to a stale value.
+		// The other status writer added vf2 and updated vf1 meanwhile; both must stay.
 		claim := claimWith(
 			statusWithData(ownDriver, "vf-pool", "vf0", `{"v":1}`),
 			statusWithData(ownDriver, "vf-pool", "vf1", `{"v":99}`),
@@ -118,8 +116,7 @@ var _ = Describe("UpsertDeviceStatuses", func() {
 	})
 
 	It("keeps a foreign entry whose device name matches one of ours", func() {
-		// Device names are unique only within a driver's pools, so the key
-		// includes the driver rather than the name alone.
+		// Device names are unique only within a driver's pools, so the key includes the driver.
 		claim := claimWith(status(foreignDriver, "other-pool", "vf0"))
 
 		_, err := types.UpsertDeviceStatuses([]resourceapi.AllocatedDeviceStatus{status(ownDriver, "vf-pool", "vf0")})(claim)
@@ -132,8 +129,7 @@ var _ = Describe("UpsertDeviceStatuses", func() {
 	})
 
 	It("replaces the whole entry of a device the claim already carries", func() {
-		// A prepared device starts over: network data from an earlier use of the
-		// claim describes an attachment that no longer exists.
+		// Network data from an earlier use of the claim describes an attachment that is gone.
 		stale := statusWithData(ownDriver, "vf-pool", "vf0", `{"v":1}`)
 		stale.NetworkData = &resourceapi.NetworkDeviceData{InterfaceName: "eth-old"}
 		claim := claimWith(stale)
@@ -174,8 +170,7 @@ var _ = Describe("UpsertDeviceStatuses", func() {
 	})
 
 	It("never leaves two entries with the same key", func() {
-		// The API server rejects a duplicate key, so a repeated key in the
-		// prepared list keeps the last value rather than doubling the entry.
+		// A repeated key keeps the last value; the API server rejects duplicates.
 		claim := claimWith()
 
 		_, err := types.UpsertDeviceStatuses([]resourceapi.AllocatedDeviceStatus{
@@ -209,8 +204,7 @@ var _ = Describe("PatchDeviceNetworkStatuses", func() {
 		r.ShareID = &id
 		return r
 	}
-	// allocatedClaim is a claim whose allocation lists results and whose
-	// status carries devices, as the API server would hold it.
+	// allocatedClaim is a claim whose allocation lists results and whose status carries devices.
 	allocatedClaim := func(results []resourceapi.DeviceRequestAllocationResult, devices ...resourceapi.AllocatedDeviceStatus) *resourceapi.ResourceClaim {
 		claim := claimWith(devices...)
 		claim.Status.Allocation = &resourceapi.AllocationResult{Devices: resourceapi.DeviceAllocationResult{Results: results}}
@@ -252,8 +246,7 @@ var _ = Describe("PatchDeviceNetworkStatuses", func() {
 	})
 
 	It("adds the entry of an allocated device that has none", func() {
-		// The status write during prepare failed, so the claim carries no entry
-		// for vf0 even though it is allocated; the network data completes it.
+		// Prepare's status write failed, so the allocated vf0 has no entry yet.
 		claim := allocatedClaim(ownAllocation, statusWithData(ownDriver, "vf-pool", "vf1", `{"v":1}`))
 
 		changed, err := types.PatchDeviceNetworkStatuses([]resourceapi.AllocatedDeviceStatus{update("vf0")})(claim)
@@ -266,8 +259,7 @@ var _ = Describe("PatchDeviceNetworkStatuses", func() {
 	})
 
 	It("stops with ErrDeviceNotAllocated for a device the allocation no longer lists", func() {
-		// The API server rejects a status entry for a device that is not
-		// allocated, so nothing is written and the caller gets told why.
+		// The API server rejects an entry for a device that is not allocated.
 		claim := allocatedClaim([]resourceapi.DeviceRequestAllocationResult{allocated(ownDriver, "vf-pool", "vf1")}, statusWithData(ownDriver, "vf-pool", "vf1", `{"v":1}`))
 		before := claim.DeepCopy()
 
@@ -312,8 +304,7 @@ var _ = Describe("PatchDeviceNetworkStatuses", func() {
 	})
 
 	It("finds the entry of a shared device through the allocation", func() {
-		// An update may name the device without a share ID; the allocation then
-		// says which share it is.
+		// An update without a share ID gets it from the allocation.
 		claim := allocatedClaim(
 			[]resourceapi.DeviceRequestAllocationResult{sharedAllocation(ownDriver, "vf-pool", "vf0", "share-a")},
 			sharedStatus(ownDriver, "vf-pool", "vf0", "share-a"),
@@ -345,8 +336,7 @@ var _ = Describe("PatchDeviceNetworkStatuses", func() {
 		}
 		claim := allocatedClaim(twoShares, a, b)
 
-		// Without a share ID the update cannot tell the shares apart, so
-		// neither may be touched.
+		// Without a share ID the update cannot tell the shares apart.
 		_, err := types.PatchDeviceNetworkStatuses([]resourceapi.AllocatedDeviceStatus{update("vf0")})(claim)
 		Expect(errors.Is(err, types.ErrDeviceNotAllocated)).To(BeTrue(), "got %v", err)
 		Expect(claim.Status.Devices).To(Equal([]resourceapi.AllocatedDeviceStatus{a, b}))
@@ -362,11 +352,8 @@ var _ = Describe("PatchDeviceNetworkStatuses", func() {
 
 var _ = Describe("status mutations interleaved at random", func() {
 	// The prepare and NRI mutations run in any order and any number of times
-	// against a claim that other writers change in between. Whatever the
-	// interleaving, the claim never carries two entries with one key, an entry
-	// this driver does not own is never touched, and every mutation is
-	// idempotent, since the retry replays it on a claim it may already have
-	// been applied to.
+	// while other writers change the claim. No key may appear twice, no foreign
+	// entry may change, and each mutation must be idempotent for the retry.
 	It("keeps the claim free of duplicate keys and foreign entries intact", func() {
 		const devices = 4
 		seed := uint64(GinkgoRandomSeed())

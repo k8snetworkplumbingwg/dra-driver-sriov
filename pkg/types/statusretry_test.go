@@ -108,8 +108,7 @@ var _ = Describe("UpdateClaimStatusWithRetry", func() {
 		Expect(err).NotTo(HaveOccurred())
 		return got
 	}
-	// conflictOnce makes the first status update fail with a conflict, as a
-	// concurrent writer would cause, and counts the update attempts.
+	// conflictOnce fails the first status update with a conflict and counts the attempts.
 	conflictOnce := func(fake *k8sfake.Clientset, updateCalls *int) {
 		fake.PrependReactor("update", "resourceclaims", func(action k8stesting.Action) (bool, runtime.Object, error) {
 			if !isStatusUpdate(action) {
@@ -158,8 +157,7 @@ var _ = Describe("UpdateClaimStatusWithRetry", func() {
 	})
 
 	It("preserves another driver's entry written during the conflict window", func() {
-		// The server carries a foreign entry; the conflict stands in for it
-		// having been written after this driver's first read.
+		// The conflict stands in for the foreign entry written after our first read.
 		fake := k8sfake.NewSimpleClientset(newClaim(foreignDevice("dev-foreign"), ownDevice("dev-a", `{"vf":1}`)))
 		updateCalls := 0
 		conflictOnce(fake, &updateCalls)
@@ -176,9 +174,7 @@ var _ = Describe("UpdateClaimStatusWithRetry", func() {
 	})
 
 	It("preserves this driver's own entries written during the conflict window", func() {
-		// Between this driver's first read and its retry, its other status
-		// writer updated dev-b and added dev-c. A retry that restored the
-		// pre-conflict snapshot reverted dev-b and dropped dev-c.
+		// Our other status writer updated dev-b and added dev-c before the retry.
 		fake := k8sfake.NewSimpleClientset(newClaim(ownDevice("dev-a", `{"vf":1}`), ownDevice("dev-b", `{"vf":1}`)))
 
 		updateCalls := 0
@@ -207,8 +203,7 @@ var _ = Describe("UpdateClaimStatusWithRetry", func() {
 	})
 
 	It("retries a burst of conflicts without burning the backoff", func() {
-		// Six conflicts in a row exceed fastBackoff.Steps; a conflict is retried
-		// right away within the step rather than counted as one.
+		// Six conflicts exceed fastBackoff.Steps; conflicts are retried within one step.
 		fake := k8sfake.NewSimpleClientset(newClaim())
 
 		updateCalls := 0
@@ -244,9 +239,7 @@ var _ = Describe("UpdateClaimStatusWithRetry", func() {
 	})
 
 	It("stops instead of writing this driver's status onto a recreated claim", func() {
-		// The claim this driver prepared for is gone and a different object now
-		// holds the name, so the status it saved does not belong to what the
-		// fetch returns.
+		// A different object now holds the claim's name; our status does not belong to it.
 		recreated := newClaim(foreignDevice("dev-foreign"))
 		recreated.UID = k8stypes.UID("claim-a-uid-2")
 		fake := k8sfake.NewSimpleClientset(recreated)
@@ -318,8 +311,7 @@ var _ = Describe("UpdateClaimStatusWithRetry", func() {
 	})
 
 	It("stops on a mutation error that reads as a conflict", func() {
-		// The conflict retry is for the API's optimistic concurrency. A mutation
-		// is deterministic, so replaying one that failed only fails again.
+		// A mutation is deterministic, so retrying a failed one only fails again.
 		fake := k8sfake.NewSimpleClientset(newClaim())
 
 		mutateCalls := 0
@@ -399,9 +391,7 @@ var _ = Describe("UpdateClaimStatusWithRetry", func() {
 	})
 
 	It("reports a request cut short by the context as a failure, not a success", func() {
-		// client-go returns the context's error when a request is cancelled
-		// mid-flight. That has to come back as an error: a prepare-time write
-		// cut off by its deadline is not a success.
+		// client-go returns the context's error for a request cancelled mid-flight.
 		fake := k8sfake.NewSimpleClientset(newClaim())
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()

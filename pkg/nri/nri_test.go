@@ -555,8 +555,7 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 	})
 
 	It("Stop cancels an update stuck on the API and waits for the runner", func() {
-		// The API keeps failing, so the runner sits in the retry backoff; Stop
-		// must cut that short rather than wait for the backoff to run out.
+		// The API keeps failing; Stop must cut the retry backoff short.
 		fake := k8sfake.NewSimpleClientset(newClaim())
 		getCalls := make(chan struct{}, 100)
 		fake.PrependReactor("get", "resourceclaims", func(k8stesting.Action) (bool, runtime.Object, error) {
@@ -581,9 +580,7 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 		Consistently(getCalls, 300*time.Millisecond).ShouldNot(Receive(), "a stopped runner must not keep retrying")
 	})
 
-	// failingUpdates makes the first n status updates fail with a server
-	// timeout and counts every status update; the runner and the spec read
-	// the count concurrently.
+	// failingUpdates fails the first n status updates with a server timeout and counts them all.
 	failingUpdates := func(fake *k8sfake.Clientset, n int32, updateCalls *atomic.Int32) {
 		fake.PrependReactor("update", "resourceclaims", func(action k8stesting.Action) (bool, runtime.Object, error) {
 			if action.GetSubresource() != "status" {
@@ -628,9 +625,7 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 	})
 
 	It("skips a requeued update once a later one for the device was recorded", func() {
-		// The first update fails and goes to the back of the queue, behind a
-		// newer one for the same device. Applying the old one afterwards would
-		// put stale addresses on the claim and in the checkpoint.
+		// The failed update is requeued behind a newer one and must not overwrite it.
 		fake := k8sfake.NewSimpleClientset(newClaim())
 		var updateCalls atomic.Int32
 		failingUpdates(fake, 2, &updateCalls)
@@ -658,10 +653,8 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 	})
 
 	It("keeps the newer CNI result when a requeued update carries the same network data", func() {
-		// Two observations of one device can report the same interface, address
-		// and MAC while their CNI results differ, in the DNS servers or the
-		// routes for instance. The network data alone cannot tell them apart, so
-		// an older update must not be able to put its result back on the claim.
+		// Two observations can carry the same network data and differ in the CNI
+		// result (DNS, routes), so the data alone cannot order them.
 		sameData := func() *resourceapi.NetworkDeviceData {
 			return &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.10/24"}}
 		}
@@ -701,11 +694,8 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 	})
 
 	It("applies a requeued update whose checkpoint had failed", func() {
-		// A checkpoint write that fails leaves the device on its previous network
-		// data, because the pod manager rolls its change back, while the update
-		// travels on with the rest of its claim when a sibling's status write
-		// fails. The store then differs from what the update asks for without any
-		// later observation of the device, and the update is still owed.
+		// The failed checkpoint write rolls the device back, so the store differs
+		// from the update without a later observation; the update is still owed.
 		fake := k8sfake.NewSimpleClientset(newClaim())
 		plugin := &Plugin{
 			podManager:                  pm,
@@ -727,9 +717,7 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 	})
 
 	It("makes every concurrent stop wait for the runner to return", func() {
-		// Stop is exported and documented as doing nothing after the first call,
-		// so a second caller must not be told the runner is done while it is
-		// still writing an update.
+		// A second Stop must not return while the runner is still writing.
 		fake := k8sfake.NewSimpleClientset(newClaim())
 		started := make(chan struct{})
 		closeStarted := sync.OnceFunc(func() { close(started) })
@@ -779,9 +767,7 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 	})
 
 	It("requeues the updates of a claim whose checkpoint could not be written", func() {
-		// Nothing was recorded, so there is no claim status to send either. The
-		// data is still owed, and ending the round here is the only path that
-		// loses it outright.
+		// Nothing was recorded, so no status write goes out; the data is still owed.
 		fake := k8sfake.NewSimpleClientset(newClaim())
 		var updateCalls atomic.Int32
 		fake.PrependReactor("update", "resourceclaims", func(action k8stesting.Action) (bool, runtime.Object, error) {
@@ -810,9 +796,7 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 	})
 
 	It("requeues the update the checkpoint refused while the rest of the claim goes out", func() {
-		// One device's data failing to reach the checkpoint says nothing about
-		// the others in the claim, whose status write still goes out. The one
-		// left out of it is owed a retry all the same.
+		// The other devices' status write goes out; the refused device is retried.
 		claim := newClaim()
 		claim.Status.Allocation.Devices.Results = append(claim.Status.Allocation.Devices.Results,
 			resourceapi.DeviceRequestAllocationResult{Request: "req-b", Driver: consts.DriverName, Pool: "pool-a", Device: "dev-b"})
@@ -854,9 +838,8 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 	})
 
 	It("does not write the checkpoint again when only the claim update is retried", func() {
-		// The first round records the device and the status write fails. By the
-		// retry the API is back but the disk is not, and repeating a write that
-		// already happened must not stop the update reaching the API.
+		// The device is recorded and the status write fails. On the retry the API
+		// is back but the disk is not; the recorded write must not be repeated.
 		fake := k8sfake.NewSimpleClientset(newClaim())
 		var updateCalls atomic.Int32
 		failingUpdates(fake, 2, &updateCalls)
@@ -882,8 +865,7 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 	})
 
 	It("keeps a device's own checkpoint owed when another device's claim update fails for good", func() {
-		// A rejected status write says nothing about the data a sibling still
-		// has to get onto the disk.
+		// A rejected status write does not cancel a sibling's pending checkpoint write.
 		claim := newClaim()
 		claim.Status.Allocation.Devices.Results = append(claim.Status.Allocation.Devices.Results,
 			resourceapi.DeviceRequestAllocationResult{Request: "req-b", Driver: consts.DriverName, Pool: "pool-a", Device: "dev-b"})
@@ -948,9 +930,7 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 	})
 
 	It("retries a device whose real checkpoint write was refused", func() {
-		// A store double cannot show what a failing syncToCheckpoint leaves
-		// behind. A directory where the checkpoint file goes is refused for any
-		// user, which removing write permissions is not.
+		// A directory where the checkpoint file goes fails the real write even as root.
 		cfg := &types.Config{Flags: &types.Flags{KubeletPluginsDirectoryPath: GinkgoT().TempDir()}}
 		store, err := podmanager.NewPodManager(cfg)
 		Expect(err).NotTo(HaveOccurred())
@@ -986,8 +966,7 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 	})
 
 	It("skips an update the device has passed, on a first delivery as well", func() {
-		// The number is taken before the update is queued, so a first delivery
-		// can still reach the runner behind a later observation.
+		// The sequence is taken before queueing, so a first delivery can trail a later observation.
 		fake := k8sfake.NewSimpleClientset(newClaim())
 		plugin := &Plugin{
 			podManager:                  pm,
@@ -1041,8 +1020,7 @@ var _ = Describe("NRI Update Network Device Data Runner", func() {
 	})
 
 	It("keeps the queue open for a hook still in flight after Stop", func() {
-		// The runner is gone, so the update is dropped with the backlog, but
-		// the send must not panic.
+		// The runner is gone, so the update is dropped, but the send must not panic.
 		plugin := &Plugin{networkDeviceDataUpdateChan: make(chan types.NetworkDataChanStructList, 1)}
 		plugin.startRunner(context.Background())
 		plugin.stopRunner()
@@ -1481,8 +1459,7 @@ var _ = Describe("NRI updateNetworkDeviceData ordering", func() {
 	})
 
 	It("skips a claim the pod no longer holds", func() {
-		// The pod released the claim and another pod took it over: the network
-		// data belongs to an attachment of the first pod, not to the claim now.
+		// Another pod took the claim over; the network data belongs to the first pod.
 		released := newClaim()
 		released.Status.ReservedFor = []resourceapi.ResourceClaimConsumerReference{{Resource: "pods", Name: "pod-b", UID: "pod-b-uid"}}
 		plugin := newPlugin(released)
@@ -1500,14 +1477,12 @@ var _ = Describe("NRI updateNetworkDeviceData ordering", func() {
 			k8sClient:  flags.ClientSets{Interface: k8sfake.NewSimpleClientset()},
 		}
 
-		// Nothing to assert on the API; the update must not log an error or
-		// retry to the timeout for a claim that no longer exists.
+		// The claim is gone: no error, and no retrying until the timeout.
 		plugin.updateNetworkDeviceData(context.Background(), networkDataList(&resourceapi.NetworkDeviceData{InterfaceName: "net1"}))
 	})
 
 	It("retries on a conflict without reverting a concurrent same-driver write", func() {
-		// While this update was in flight, prepare recorded dev-b on the claim.
-		// Restoring a pre-conflict snapshot dropped it; the patch keeps it.
+		// Prepare recorded dev-b while this update was in flight; the patch must keep it.
 		claim := newClaim()
 		plugin := newPlugin(claim)
 		fake := plugin.k8sClient.Interface.(*k8sfake.Clientset)

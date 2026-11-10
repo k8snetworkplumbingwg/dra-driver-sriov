@@ -174,9 +174,6 @@ func (d *Driver) prepareResourceClaim(ctx context.Context, statusBudget *time.Du
 		}
 	}
 
-	// Each prepared device's status is derived from the device itself, so the
-	// applied config reaches the claim without a second return from the prepare
-	// path. A device whose config will not marshal is recorded with an empty one.
 	deviceStatuses := make([]resourceapi.AllocatedDeviceStatus, 0, len(preparedDevices))
 	for _, preparedDevice := range preparedDevices {
 		status, statusErr := preparedDevice.AllocatedDeviceStatus()
@@ -186,10 +183,8 @@ func (d *Driver) prepareResourceClaim(ctx context.Context, statusBudget *time.Du
 		deviceStatuses = append(deviceStatuses, status)
 	}
 
-	// Record the applied configuration on the claim. Only the prepared devices
-	// are written, onto the latest claim, so an entry another driver or the NRI
-	// path wrote in the meantime survives a conflict. The write is best-effort:
-	// on failure the devices are still prepared, so log and return them.
+	// Upsert only the prepared devices onto the latest claim, so other entries
+	// survive a conflict. The write is best-effort: on failure, log and go on.
 	timeout := *statusBudget
 	if deadline, ok := ctx.Deadline(); ok {
 		timeout = min(timeout, time.Until(deadline)-statusWriteReserve)

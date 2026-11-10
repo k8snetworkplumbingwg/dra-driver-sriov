@@ -118,9 +118,8 @@ func (s *Manager) isMultusMode() bool {
 	return consts.ConfigurationMode(s.configurationMode) == consts.ConfigurationModeMultus
 }
 
-// PrepareDevicesForClaim prepares the devices for a given claim. It returns the
-// prepared devices and, in the same order, the status entry recording each
-// device's applied configuration for the caller to write onto the claim.
+// PrepareDevicesForClaim prepares the devices for a given claim
+// It will return the prepared devices for the claim
 func (s *Manager) PrepareDevicesForClaim(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim) (drasriovtypes.PreparedDevices, error) {
 	logger := klog.FromContext(ctx).WithName("PrepareDevicesForClaim")
 

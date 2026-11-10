@@ -28,9 +28,7 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// conflictRetries is how many times a conflict is retried right away within
-// one backoff step. A conflict means another writer got there first, and a
-// refetch usually resolves it; the backoff is for transient errors.
+// conflictRetries is how often a conflict is retried at once, within one backoff step.
 const conflictRetries = 5
 
 // IsPermanentStatusUpdateError reports whether a failed status update will keep
@@ -55,19 +53,13 @@ type ResourceClaimStatusClient interface {
 	Get(ctx context.Context, name string, opts metav1.GetOptions) (*resourceapi.ResourceClaim, error)
 }
 
-// ClaimStatusMutation applies one caller's change to a freshly fetched claim
-// and reports whether it changed anything. It runs once per attempt, so it must
-// be deterministic and must not have side effects outside the claim. An error
-// stops the retry and is returned to the caller as is.
+// ClaimStatusMutation changes a fetched claim. It reruns on every attempt, so no side effects.
 type ClaimStatusMutation func(claim *resourceapi.ResourceClaim) (changed bool, err error)
 
-// UpdateClaimStatusWithRetry fetches the claim, applies mutate and writes the
-// status back, repeating all three on a conflict (right away, up to
-// conflictRetries times per step) or a transient error (after a backoff step).
-// Applying the mutation to the latest claim, rather than restoring a snapshot,
-// keeps every entry the caller did not touch. It stops on a permanent error,
-// on a claim recreated under the same name and on a mutation error, and once
-// the backoff is exhausted returns the last API error rather than the timeout.
+// UpdateClaimStatusWithRetry gets the claim, applies mutate and updates the
+// status, retrying a conflict at once and a transient error after a backoff
+// step. It stops on a permanent error, a mutation error or a recreated claim,
+// and returns the last API error rather than the backoff's timeout.
 func UpdateClaimStatusWithRetry(
 	ctx context.Context,
 	claims ResourceClaimStatusClient,
@@ -90,8 +82,7 @@ func UpdateClaimStatusWithRetry(
 		if err != nil {
 			return err
 		}
-		// A claim deleted and recreated under the same name is a different object,
-		// and this driver's status belongs to the one that is gone.
+		// A claim recreated under the same name is a different object.
 		if claim.UID != uid {
 			return fmt.Errorf("claim %s was replaced (UID %s is now %s): %w",
 				name, uid, claim.UID,
@@ -117,8 +108,7 @@ func UpdateClaimStatusWithRetry(
 		var err error
 		for range conflictRetries {
 			err = attempt(ctx)
-			// The conflict retry is for the API's optimistic concurrency; a
-			// mutation is deterministic, so replaying one that failed is futile.
+			// A mutation is deterministic, so a failed one is not retried.
 			if mutationErr != nil || !apierrors.IsConflict(err) {
 				break
 			}

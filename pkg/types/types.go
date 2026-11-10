@@ -33,15 +33,11 @@ type NetworkDataChanStruct struct {
 	NetworkDeviceData *resourceapi.NetworkDeviceData
 	CNIConfig         map[string]interface{}
 	CNIResult         map[string]interface{}
-	// Seq orders the observations of a device. An update is stale once the
-	// device has recorded a later one.
+	// Seq orders the observations of a device; an update is stale once a later one is recorded.
 	Seq uint64
-	// Checkpointed records that this observation reached the checkpoint. The
-	// sequence says which observation this is, not how far it got, and a
-	// retry of the claim status write alone must not repeat the disk write.
+	// Checkpointed is set once the observation is saved, so a status retry skips the disk write.
 	Checkpointed bool
-	// Requeues counts how often the update was put back on the queue after
-	// its claim status write failed.
+	// Requeues counts how often the update was requeued after a failed claim status write.
 	Requeues int
 }
 type NetworkDataChanStructList []*NetworkDataChanStruct
@@ -82,23 +78,17 @@ type PreparedDevice struct {
 	MultusResourceName  string
 	DeviceAttributes    map[string]resourceapi.DeviceAttribute
 	NetworkDeviceData   *resourceapi.NetworkDeviceData
-	// NetworkDataSeq orders the observation NetworkDeviceData came from. A
-	// stored one would outrank every update made after a restart, when the
-	// sequence starts over, so it is left out of the checkpoint.
+	// NetworkDataSeq orders NetworkDeviceData. It restarts with the plugin, so it is not saved.
 	NetworkDataSeq     uint64 `json:"-"`
 	PodUID             string
 	NetAttachDefConfig string
 	OriginalDriver     string // Store original driver for restoration during unprepare
-	// ShareID distinguishes this allocation of the device from another share of
-	// the same device when consumable capacity is in use; nil when allocated
-	// once. omitempty keeps a nil one out of the checkpoint, so a checkpoint
-	// written before this field existed still matches its checksum on load.
+	// ShareID is nil for an unshared device; omitempty keeps old checkpoints verifiable.
 	ShareID *string `json:",omitempty"`
 }
 
-// AllocatedDeviceStatus is the device's entry for ResourceClaim.status.devices,
-// built from the device's own identity, share and applied config. Config
-// marshals to "{}" on error, which is returned so the caller can log it.
+// AllocatedDeviceStatus returns the device's entry for ResourceClaim.status.devices.
+// If Config does not marshal, Data is "{}" and the error is returned for logging.
 func (p *PreparedDevice) AllocatedDeviceStatus() (resourceapi.AllocatedDeviceStatus, error) {
 	status := resourceapi.AllocatedDeviceStatus{
 		Device:  p.Device.GetDeviceName(),

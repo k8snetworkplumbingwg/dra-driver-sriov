@@ -859,8 +859,7 @@ var _ = Describe("Manager", Serial, func() {
 			Expect(devices[0].Device.PoolName).To(Equal("pool1"))
 			Expect(devices[0].Device.RequestNames).To(Equal([]string{"req1"}))
 
-			// The device's status entry carries the applied config for the caller
-			// to write on the claim; the kubelet's copy itself is left untouched.
+			// The status entry carries the applied config; the kubelet's copy is untouched.
 			status, err := devices[0].AllocatedDeviceStatus()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(status.Device).To(Equal("device1"))
