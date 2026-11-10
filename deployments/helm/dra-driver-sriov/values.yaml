@@ -60,6 +60,8 @@ kubeletPlugin:
   defaultInterfacePrefix: vfnet
   configurationMode: STANDALONE
   enableDeviceMetadata: false
+  # Time limit for the ResourceClaim status updates of one prepare request (Go duration).
+  prepareStatusTimeout: 10s
   # Host path for CNI plugin binaries. Could also be /var/lib/cni/bin.
   cniBinHostPath: /opt/cni/bin
   sriovCniInit:

@@ -102,6 +102,8 @@ spec:
           value: {{ .Values.kubeletPlugin.configurationMode | quote }}
         - name: ENABLE_DEVICE_METADATA
           value: {{ .Values.kubeletPlugin.enableDeviceMetadata | quote }}
+        - name: PREPARE_STATUS_TIMEOUT
+          value: {{ .Values.kubeletPlugin.prepareStatusTimeout | quote }}
         - name: NODE_NAME
           valueFrom:
             fieldRef:

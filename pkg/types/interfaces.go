@@ -3,6 +3,7 @@ package types
 import (
 	"context"
 
+	resourceapi "k8s.io/api/resource/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 )
@@ -16,4 +17,10 @@ type MetadataUpdater interface {
 		requestName string,
 		devices []kubeletplugin.Device,
 	) error
+}
+
+// DeviceStore is the part of the pod manager the NRI plugin uses.
+type DeviceStore interface {
+	GetDevicesByPodUID(podUID k8stypes.UID) (PreparedDevices, bool)
+	UpdatePreparedDeviceNetworkData(device *PreparedDevice, networkData *resourceapi.NetworkDeviceData, seq uint64) error
 }
