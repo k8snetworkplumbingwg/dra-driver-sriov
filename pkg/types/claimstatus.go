@@ -23,7 +23,6 @@ import (
 
 	resourceapi "k8s.io/api/resource/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // ErrDeviceNotAllocated is returned by PatchDeviceNetworkStatuses for a device
@@ -86,26 +85,11 @@ func UpsertDeviceStatuses(statuses []resourceapi.AllocatedDeviceStatus) ClaimSta
 	}
 }
 
-// DeviceNetworkStatus is what the NRI path records for one device once its
-// network is attached.
-type DeviceNetworkStatus struct {
-	// Driver, Pool and Device identify the allocated device. ShareID may be
-	// nil: the allocation supplies it when the device is allocated once.
-	Driver  string
-	Pool    string
-	Device  string
-	ShareID *string
-	// NetworkData replaces the entry's NetworkData; nil clears it.
-	NetworkData *resourceapi.NetworkDeviceData
-	// Data replaces the entry's Data when set.
-	Data *runtime.RawExtension
-}
-
 // allocatedKey resolves update to the key of the allocated device it names.
 // The share ID comes from the allocation when update carries none, so the entry
 // of a shared device is found under its real key. A device the allocation does
 // not list, or lists under several shares update cannot tell apart, has no key.
-func allocatedKey(claim *resourceapi.ResourceClaim, update DeviceNetworkStatus) (deviceStatusKey, bool) {
+func allocatedKey(claim *resourceapi.ResourceClaim, update resourceapi.AllocatedDeviceStatus) (deviceStatusKey, bool) {
 	if claim.Status.Allocation == nil {
 		return deviceStatusKey{}, false
 	}
@@ -129,11 +113,12 @@ func allocatedKey(claim *resourceapi.ResourceClaim, update DeviceNetworkStatus) 
 
 // PatchDeviceNetworkStatuses returns the NRI path's mutation: the network data
 // of each device is set on this driver's entry for it, nothing else on the
-// claim is touched. A device without an entry gets one, which makes good a
+// claim is touched. Only NetworkData (nil clears it) and Data (when set) are
+// taken from an update. A device without an entry gets one, which makes good a
 // status write that failed during prepare. A device the allocation no longer
 // lists stops the mutation with ErrDeviceNotAllocated; the API server would
 // reject its entry anyway.
-func PatchDeviceNetworkStatuses(updates []DeviceNetworkStatus) ClaimStatusMutation {
+func PatchDeviceNetworkStatuses(updates []resourceapi.AllocatedDeviceStatus) ClaimStatusMutation {
 	return func(claim *resourceapi.ResourceClaim) (bool, error) {
 		changed := false
 		for _, update := range updates {

@@ -191,8 +191,8 @@ var _ = Describe("UpsertDeviceStatuses", func() {
 
 var _ = Describe("PatchDeviceNetworkStatuses", func() {
 	networkData := &resourceapi.NetworkDeviceData{InterfaceName: "net1", IPs: []string{"10.10.0.10/24"}}
-	update := func(device string) types.DeviceNetworkStatus {
-		return types.DeviceNetworkStatus{
+	update := func(device string) resourceapi.AllocatedDeviceStatus {
+		return resourceapi.AllocatedDeviceStatus{
 			Driver:      ownDriver,
 			Pool:        "vf-pool",
 			Device:      device,
@@ -227,7 +227,7 @@ var _ = Describe("PatchDeviceNetworkStatuses", func() {
 		other := statusWithData(ownDriver, "vf-pool", "vf1", `{"v":1}`)
 		claim := allocatedClaim(ownAllocation, foreign, statusWithData(ownDriver, "vf-pool", "vf0", `{"v":1}`), other)
 
-		changed, err := types.PatchDeviceNetworkStatuses([]types.DeviceNetworkStatus{update("vf0")})(claim)
+		changed, err := types.PatchDeviceNetworkStatuses([]resourceapi.AllocatedDeviceStatus{update("vf0")})(claim)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(changed).To(BeTrue())
 
@@ -242,11 +242,13 @@ var _ = Describe("PatchDeviceNetworkStatuses", func() {
 		entry := statusWithData(ownDriver, "vf-pool", "vf0", `{"v":1}`)
 		entry.Conditions = []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Attached"}}
 		claim := allocatedClaim(ownAllocation, entry)
+		withConditions := update("vf0")
+		withConditions.Conditions = []metav1.Condition{{Type: "Ready", Status: metav1.ConditionFalse, Reason: "Detached"}}
 
-		_, err := types.PatchDeviceNetworkStatuses([]types.DeviceNetworkStatus{update("vf0")})(claim)
+		_, err := types.PatchDeviceNetworkStatuses([]resourceapi.AllocatedDeviceStatus{withConditions})(claim)
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(claim.Status.Devices[0].Conditions).To(Equal(entry.Conditions))
+		Expect(claim.Status.Devices[0].Conditions).To(Equal(entry.Conditions), "the update's conditions are not applied")
 	})
 
 	It("adds the entry of an allocated device that has none", func() {
@@ -254,7 +256,7 @@ var _ = Describe("PatchDeviceNetworkStatuses", func() {
 		// for vf0 even though it is allocated; the network data completes it.
 		claim := allocatedClaim(ownAllocation, statusWithData(ownDriver, "vf-pool", "vf1", `{"v":1}`))
 
-		changed, err := types.PatchDeviceNetworkStatuses([]types.DeviceNetworkStatus{update("vf0")})(claim)
+		changed, err := types.PatchDeviceNetworkStatuses([]resourceapi.AllocatedDeviceStatus{update("vf0")})(claim)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(changed).To(BeTrue())
 
@@ -269,7 +271,7 @@ var _ = Describe("PatchDeviceNetworkStatuses", func() {
 		claim := allocatedClaim([]resourceapi.DeviceRequestAllocationResult{allocated(ownDriver, "vf-pool", "vf1")}, statusWithData(ownDriver, "vf-pool", "vf1", `{"v":1}`))
 		before := claim.DeepCopy()
 
-		_, err := types.PatchDeviceNetworkStatuses([]types.DeviceNetworkStatus{update("vf0")})(claim)
+		_, err := types.PatchDeviceNetworkStatuses([]resourceapi.AllocatedDeviceStatus{update("vf0")})(claim)
 		Expect(errors.Is(err, types.ErrDeviceNotAllocated)).To(BeTrue(), "got %v", err)
 		Expect(err.Error()).To(ContainSubstring("vf-pool/vf0"))
 		Expect(claim).To(Equal(before))
@@ -279,18 +281,18 @@ var _ = Describe("PatchDeviceNetworkStatuses", func() {
 		claim := claimWith(statusWithData(ownDriver, "vf-pool", "vf0", `{"v":1}`))
 		before := claim.DeepCopy()
 
-		_, err := types.PatchDeviceNetworkStatuses([]types.DeviceNetworkStatus{update("vf0")})(claim)
+		_, err := types.PatchDeviceNetworkStatuses([]resourceapi.AllocatedDeviceStatus{update("vf0")})(claim)
 		Expect(errors.Is(err, types.ErrDeviceNotAllocated)).To(BeTrue(), "got %v", err)
 		Expect(claim).To(Equal(before))
 	})
 
 	It("reports no change when the entry already holds the network data", func() {
 		claim := allocatedClaim(ownAllocation, statusWithData(ownDriver, "vf-pool", "vf0", `{"v":1}`))
-		Expect(types.PatchDeviceNetworkStatuses([]types.DeviceNetworkStatus{update("vf0")})(claim)).To(BeTrue())
+		Expect(types.PatchDeviceNetworkStatuses([]resourceapi.AllocatedDeviceStatus{update("vf0")})(claim)).To(BeTrue())
 		before := claim.DeepCopy()
 
 		// The same update built again, as a retry would.
-		changed, err := types.PatchDeviceNetworkStatuses([]types.DeviceNetworkStatus{update("vf0")})(claim)
+		changed, err := types.PatchDeviceNetworkStatuses([]resourceapi.AllocatedDeviceStatus{update("vf0")})(claim)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(changed).To(BeFalse())
 		Expect(claim).To(Equal(before))
@@ -301,7 +303,7 @@ var _ = Describe("PatchDeviceNetworkStatuses", func() {
 		entry.NetworkData = &resourceapi.NetworkDeviceData{InterfaceName: "eth-old"}
 		claim := allocatedClaim(ownAllocation, entry)
 
-		changed, err := types.PatchDeviceNetworkStatuses([]types.DeviceNetworkStatus{{Driver: ownDriver, Pool: "vf-pool", Device: "vf0"}})(claim)
+		changed, err := types.PatchDeviceNetworkStatuses([]resourceapi.AllocatedDeviceStatus{{Driver: ownDriver, Pool: "vf-pool", Device: "vf0"}})(claim)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(changed).To(BeTrue())
 
@@ -317,7 +319,7 @@ var _ = Describe("PatchDeviceNetworkStatuses", func() {
 			sharedStatus(ownDriver, "vf-pool", "vf0", "share-a"),
 		)
 
-		changed, err := types.PatchDeviceNetworkStatuses([]types.DeviceNetworkStatus{update("vf0")})(claim)
+		changed, err := types.PatchDeviceNetworkStatuses([]resourceapi.AllocatedDeviceStatus{update("vf0")})(claim)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(changed).To(BeTrue())
 
@@ -328,7 +330,7 @@ var _ = Describe("PatchDeviceNetworkStatuses", func() {
 	It("adds the entry of a shared device under its share ID", func() {
 		claim := allocatedClaim([]resourceapi.DeviceRequestAllocationResult{sharedAllocation(ownDriver, "vf-pool", "vf0", "share-a")})
 
-		_, err := types.PatchDeviceNetworkStatuses([]types.DeviceNetworkStatus{update("vf0")})(claim)
+		_, err := types.PatchDeviceNetworkStatuses([]resourceapi.AllocatedDeviceStatus{update("vf0")})(claim)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(identities(claim.Status.Devices)).To(Equal([]string{ownDriver + "/vf-pool/vf0#share-a"}))
@@ -345,12 +347,12 @@ var _ = Describe("PatchDeviceNetworkStatuses", func() {
 
 		// Without a share ID the update cannot tell the shares apart, so
 		// neither may be touched.
-		_, err := types.PatchDeviceNetworkStatuses([]types.DeviceNetworkStatus{update("vf0")})(claim)
+		_, err := types.PatchDeviceNetworkStatuses([]resourceapi.AllocatedDeviceStatus{update("vf0")})(claim)
 		Expect(errors.Is(err, types.ErrDeviceNotAllocated)).To(BeTrue(), "got %v", err)
 		Expect(claim.Status.Devices).To(Equal([]resourceapi.AllocatedDeviceStatus{a, b}))
 
 		shareB := "share-b"
-		changed, err := types.PatchDeviceNetworkStatuses([]types.DeviceNetworkStatus{{Driver: ownDriver, Pool: "vf-pool", Device: "vf0", ShareID: &shareB, NetworkData: networkData}})(claim)
+		changed, err := types.PatchDeviceNetworkStatuses([]resourceapi.AllocatedDeviceStatus{{Driver: ownDriver, Pool: "vf-pool", Device: "vf0", ShareID: &shareB, NetworkData: networkData}})(claim)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(changed).To(BeTrue())
 		Expect(claim.Status.Devices[0]).To(Equal(a))
@@ -384,7 +386,7 @@ var _ = Describe("status mutations interleaved at random", func() {
 			device := fmt.Sprintf("vf%d", i)
 			mutations = append(mutations,
 				types.UpsertDeviceStatuses([]resourceapi.AllocatedDeviceStatus{statusWithData(ownDriver, "vf-pool", device, fmt.Sprintf(`{"v":%d}`, i))}),
-				types.PatchDeviceNetworkStatuses([]types.DeviceNetworkStatus{{
+				types.PatchDeviceNetworkStatuses([]resourceapi.AllocatedDeviceStatus{{
 					Driver: ownDriver, Pool: "vf-pool", Device: device,
 					NetworkData: &resourceapi.NetworkDeviceData{InterfaceName: "net" + device},
 					Data:        &runtime.RawExtension{Raw: []byte(fmt.Sprintf(`{"vfConfig":{"v":%d},"cniResult":{}}`, i))},

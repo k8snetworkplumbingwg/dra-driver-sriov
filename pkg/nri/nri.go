@@ -273,7 +273,7 @@ func (p *Plugin) updateNetworkDeviceData(ctx context.Context, networkDataChanStr
 			logger.V(2).Info("Dropping remaining claim network data updates on shutdown", "claim", claimKey.uid)
 			return
 		}
-		updates := make([]types.DeviceNetworkStatus, 0, len(claimUpdates))
+		updates := make([]resourceapi.AllocatedDeviceStatus, 0, len(claimUpdates))
 		// Updates whose data never reached the checkpoint are owed whatever the
 		// claim status write goes on to do, and are requeued on their own.
 		var unrecorded types.NetworkDataChanStructList
@@ -355,10 +355,10 @@ func (p *Plugin) requeue(logger klog.Logger, claimKey networkClaimKey, claimUpda
 // deviceNetworkStatus builds the status the runner records for one device.
 // The retry replays it on every attempt, so it is built once and, unlike the
 // event, shares nothing with the pod manager's PreparedDevice.
-func deviceNetworkStatus(logger klog.Logger, item *types.NetworkDataChanStruct) types.DeviceNetworkStatus {
+func deviceNetworkStatus(logger klog.Logger, item *types.NetworkDataChanStruct) resourceapi.AllocatedDeviceStatus {
 	// ShareID comes from the PreparedDevice so a device allocated more than once
 	// is matched to its own share; it is nil when the device is allocated once.
-	status := types.DeviceNetworkStatus{
+	status := resourceapi.AllocatedDeviceStatus{
 		Driver:      consts.DriverName,
 		Pool:        item.PreparedDevice.Device.PoolName,
 		Device:      item.PreparedDevice.Device.DeviceName,
@@ -530,7 +530,7 @@ func (p *Plugin) buildRequestMetadataUpdates(
 // conflict. Only these devices are patched, on the latest claim, so entries
 // other drivers or the prepare path wrote in the meantime survive. It shares
 // the retry with the prepare path in pkg/driver.
-func (p *Plugin) updateClaimNetworkDataWithRetry(ctx context.Context, claimKey networkClaimKey, updates []types.DeviceNetworkStatus) error {
+func (p *Plugin) updateClaimNetworkDataWithRetry(ctx context.Context, claimKey networkClaimKey, updates []resourceapi.AllocatedDeviceStatus) error {
 	patch := types.PatchDeviceNetworkStatuses(updates)
 	mutate := func(claim *resourceapi.ResourceClaim) (bool, error) {
 		// Once the pod has released the claim its network data describes an
