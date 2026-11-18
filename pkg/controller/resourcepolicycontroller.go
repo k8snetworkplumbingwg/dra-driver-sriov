@@ -18,7 +18,10 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -298,7 +301,33 @@ func (r *SriovResourcePolicyReconciler) deviceMatchesFilter(device resourceapi.D
 		if !exists || pfAttr.StringValue == nil {
 			return false
 		}
-		if !stringSliceContains(filter.PfNames, *pfAttr.StringValue) {
+
+		matched := false
+		for _, selector := range filter.PfNames {
+			pfName, start, end, hasRange, err := parsePFNameSelector(selector)
+			if err != nil {
+				r.log.V(2).Info("Ignoring malformed PF name selector", "selector", selector, "error", err.Error())
+				continue
+			}
+			if pfName != *pfAttr.StringValue {
+				continue
+			}
+			if !hasRange {
+				matched = true
+				break
+			}
+
+			vfAttr, exists := device.Attributes[consts.AttributeVFID]
+			if !exists || vfAttr.IntValue == nil {
+				continue
+			}
+			vfID := *vfAttr.IntValue
+			if vfID >= 0 && vfID >= start && vfID <= end {
+				matched = true
+				break
+			}
+		}
+		if !matched {
 			return false
 		}
 	}
@@ -329,6 +358,47 @@ func (r *SriovResourcePolicyReconciler) deviceMatchesFilter(device resourceapi.D
 	}
 
 	return true
+}
+
+// parsePFNameSelector parses either a plain PF name or a PF name with an inclusive VF range.
+// The range syntax follows the SR-IOV Network Operator: PF#start-end, with decimal endpoints.
+func parsePFNameSelector(selector string) (pfName string, start, end int64, hasRange bool, err error) {
+	if selector == "" {
+		return "", 0, 0, false, fmt.Errorf("PF name must not be empty")
+	}
+
+	pfName, rangeText, hasRange := strings.Cut(selector, "#")
+	if !hasRange {
+		return selector, 0, 0, false, nil
+	}
+	if pfName == "" {
+		return "", 0, 0, false, fmt.Errorf("PF name must not be empty")
+	}
+	if strings.Contains(rangeText, "#") {
+		return "", 0, 0, false, fmt.Errorf("selector must contain exactly one # delimiter")
+	}
+
+	bounds := strings.Split(rangeText, "-")
+	if len(bounds) != 2 || bounds[0] == "" || bounds[1] == "" {
+		return "", 0, 0, false, fmt.Errorf("VF range must contain exactly two endpoints in start-end form")
+	}
+
+	start, err = strconv.ParseInt(bounds[0], 10, 64)
+	if err != nil {
+		return "", 0, 0, false, fmt.Errorf("invalid start VF ID %q: %w", bounds[0], err)
+	}
+	end, err = strconv.ParseInt(bounds[1], 10, 64)
+	if err != nil {
+		return "", 0, 0, false, fmt.Errorf("invalid end VF ID %q: %w", bounds[1], err)
+	}
+	if start < 0 || end < 0 {
+		return "", 0, 0, false, fmt.Errorf("VF range endpoints must be nonnegative")
+	}
+	if start > end {
+		return "", 0, 0, false, fmt.Errorf("VF range start %d exceeds end %d", start, end)
+	}
+
+	return pfName, start, end, true, nil
 }
 
 func stringSliceContains(slice []string, item string) bool {
