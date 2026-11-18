@@ -96,7 +96,7 @@ var _ = Describe("PodManager", func() {
 			pm, err = podmanager.NewPodManager(config)
 			Expect(err).NotTo(HaveOccurred())
 
-			err = pm.Set(podUID, claimUID, devices)
+			err = pm.Set(podUID, claimUID, devices, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Create a new pod manager from the same path - should load existing data
@@ -139,7 +139,7 @@ var _ = Describe("PodManager", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(pm).NotTo(BeNil())
 
-			Expect(pm.Set(podUID, claimUID, devices)).To(Succeed())
+			Expect(pm.Set(podUID, claimUID, devices, nil)).To(Succeed())
 			loaded, found := pm.Get(podUID, claimUID)
 			Expect(found).To(BeTrue())
 			Expect(loaded).To(HaveLen(len(devices)))
@@ -154,7 +154,7 @@ var _ = Describe("PodManager", func() {
 		})
 
 		It("should set and get devices for a pod/claim", func() {
-			err := pm.Set(podUID, claimUID, devices)
+			err := pm.Set(podUID, claimUID, devices, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			retrievedDevices, found := pm.Get(podUID, claimUID)
@@ -170,7 +170,7 @@ var _ = Describe("PodManager", func() {
 		})
 
 		It("should return false for existing pod but non-existent claim", func() {
-			err := pm.Set(podUID, claimUID, devices)
+			err := pm.Set(podUID, claimUID, devices, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			_, found := pm.Get(podUID, types.UID("non-existent-claim"))
@@ -179,7 +179,7 @@ var _ = Describe("PodManager", func() {
 
 		It("should overwrite existing devices when setting again", func() {
 			// Set initial devices
-			err := pm.Set(podUID, claimUID, devices)
+			err := pm.Set(podUID, claimUID, devices, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Set new devices for the same pod/claim
@@ -193,7 +193,7 @@ var _ = Describe("PodManager", func() {
 				},
 			}
 
-			err = pm.Set(podUID, claimUID, newDevices)
+			err = pm.Set(podUID, claimUID, newDevices, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify new devices replaced old ones
@@ -215,10 +215,10 @@ var _ = Describe("PodManager", func() {
 			}
 
 			// Set devices for two different claims under the same pod
-			err := pm.Set(podUID, claimUID, devices)
+			err := pm.Set(podUID, claimUID, devices, nil)
 			Expect(err).NotTo(HaveOccurred())
 
-			err = pm.Set(podUID, claim2UID, devices2)
+			err = pm.Set(podUID, claim2UID, devices2, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify both claims exist
@@ -252,10 +252,10 @@ var _ = Describe("PodManager", func() {
 			}
 
 			// Set devices for two claims
-			err := pm.Set(podUID, claimUID, devices)
+			err := pm.Set(podUID, claimUID, devices, nil)
 			Expect(err).NotTo(HaveOccurred())
 
-			err = pm.Set(podUID, claim2UID, devices2)
+			err = pm.Set(podUID, claim2UID, devices2, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Get all devices for the pod
@@ -293,7 +293,7 @@ var _ = Describe("PodManager", func() {
 		})
 
 		It("should get devices by claim UID", func() {
-			err := pm.Set(podUID, claimUID, devices)
+			err := pm.Set(podUID, claimUID, devices, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			claim := kubeletplugin.NamespacedObject{
@@ -319,10 +319,10 @@ var _ = Describe("PodManager", func() {
 			pod2UID := types.UID("test-pod-uid-54321")
 
 			// Add same claim to two different pods (this might not happen in practice, but test the logic)
-			err := pm.Set(podUID, claimUID, devices)
+			err := pm.Set(podUID, claimUID, devices, nil)
 			Expect(err).NotTo(HaveOccurred())
 
-			err = pm.Set(pod2UID, claimUID, devices[:1]) // Only first device
+			err = pm.Set(pod2UID, claimUID, devices[:1], nil) // Only first device
 			Expect(err).NotTo(HaveOccurred())
 
 			claim := kubeletplugin.NamespacedObject{
@@ -343,7 +343,7 @@ var _ = Describe("PodManager", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Set up test data
-			err = pm.Set(podUID, claimUID, devices)
+			err = pm.Set(podUID, claimUID, devices, nil)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -397,7 +397,7 @@ var _ = Describe("PodManager", func() {
 				ClaimNamespacedName: kubeletplugin.NamespacedObject{UID: otherClaimUID},
 				PciAddress:          "0000:01:00.2",
 			}}
-			Expect(pm.Set(podUID, otherClaimUID, otherDevices)).To(Succeed())
+			Expect(pm.Set(podUID, otherClaimUID, otherDevices, nil)).To(Succeed())
 
 			Expect(pm.DeleteClaim(kubeletplugin.NamespacedObject{UID: claimUID})).To(Succeed())
 
@@ -451,7 +451,7 @@ var _ = Describe("PodManager", func() {
 
 		It("should persist data across operations", func() {
 			// Add data
-			err := pm.Set(podUID, claimUID, devices)
+			err := pm.Set(podUID, claimUID, devices, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Create new manager from same checkpoint
@@ -478,12 +478,12 @@ var _ = Describe("PodManager", func() {
 		It("should handle checkpoint sync errors gracefully", func() {
 			// This is hard to test without mocking the checkpoint manager
 			// For now, we'll test that normal operations work
-			err := pm.Set(podUID, claimUID, devices)
+			err := pm.Set(podUID, claimUID, devices, nil)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("should persist runtime network data updates", func() {
-			err := pm.Set(podUID, claimUID, devices)
+			err := pm.Set(podUID, claimUID, devices, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			networkData := &resourceapi.NetworkDeviceData{
@@ -522,7 +522,7 @@ var _ = Describe("PodManager", func() {
 				for i := 0; i < 10; i++ {
 					testPodUID := types.UID("test-pod-" + string(rune(i)))
 					testClaimUID := types.UID("test-claim-" + string(rune(i)))
-					err := pm.Set(testPodUID, testClaimUID, devices[:1])
+					err := pm.Set(testPodUID, testClaimUID, devices[:1], nil)
 					Expect(err).NotTo(HaveOccurred())
 				}
 				done <- true
@@ -555,7 +555,7 @@ var _ = Describe("PodManager", func() {
 		It("should handle empty devices slice", func() {
 			emptyDevices := draTypes.PreparedDevices{}
 
-			err := pm.Set(podUID, claimUID, emptyDevices)
+			err := pm.Set(podUID, claimUID, emptyDevices, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			retrievedDevices, found := pm.Get(podUID, claimUID)
@@ -566,7 +566,7 @@ var _ = Describe("PodManager", func() {
 		It("should handle nil devices slice", func() {
 			var nilDevices draTypes.PreparedDevices
 
-			err := pm.Set(podUID, claimUID, nilDevices)
+			err := pm.Set(podUID, claimUID, nilDevices, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			retrievedDevices, found := pm.Get(podUID, claimUID)
@@ -575,7 +575,7 @@ var _ = Describe("PodManager", func() {
 		})
 
 		It("should handle empty string UIDs", func() {
-			err := pm.Set(types.UID(""), types.UID(""), devices)
+			err := pm.Set(types.UID(""), types.UID(""), devices, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			retrievedDevices, found := pm.Get(types.UID(""), types.UID(""))

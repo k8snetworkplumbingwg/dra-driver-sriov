@@ -2,6 +2,11 @@
 
 This demo demonstrates the basic scenario of requesting a single SR-IOV Virtual Function for container networking acceleration.
 
+DeviceClass `demo-single-vf` is administrator-owned; workloads contain no SR-IOV
+opaque configuration. Applying the bundle requires permission to manage
+its classes, policies, and NADs; the `dra-driver-sriov` namespace must exist.
+Run the driver in STANDALONE mode with kernel-bound VFs.
+
 ## Overview
 
 This scenario shows:
@@ -20,11 +25,11 @@ This scenario shows:
 ### 2. Single VF Resource Claim
 The `ResourceClaimTemplate` configuration:
 - **count**: Implicitly 1 (single VF request)
-- **deviceClassName**: Uses the default SR-IOV device class
-- **VfConfig parameters**:
+- **deviceClassName**: Selects administrator class `demo-single-vf`
+- **Administrator DeviceClass parameters** (not claim configuration):
   - `ifName: net1`: Network interface name in the container
-  - `netAttachDefName: vf-test1`: References the NetworkAttachmentDefinition
-  - Standard kernel driver (default behavior)
+  - `netAttachDefName: demo-single-vf-net`: References the NetworkAttachmentDefinition
+  - An omitted `driver` preserves the existing binding; this demo requires kernel-bound VFs
 
 ### 3. Pod Deployment
 - Simple toolbox container for testing and validation
@@ -118,3 +123,32 @@ This basic setup serves as foundation for:
 - Performance testing and benchmarking
 - Learning SR-IOV concepts and troubleshooting
 - Building more complex multi-interface configurations
+
+## Cleanup
+
+Delete the demo Pod and its generated claim before the demo-specific template,
+class, and NAD. Do not delete the full bundle: it also contains the potentially
+shared `dra-driver-sriov/all-devices` policy.
+
+```bash
+claim=$(kubectl get pod pod0 -n vf-test1 --ignore-not-found \
+  -o jsonpath='{.status.resourceClaimStatuses[?(@.name=="vf")].resourceClaimName}')
+kubectl delete pod pod0 -n vf-test1 --ignore-not-found --wait=true
+if [ -n "$claim" ]; then
+  kubectl wait --for=delete "resourceclaim/$claim" -n vf-test1 --timeout=180s
+fi
+kubectl delete resourceclaimtemplate single-vf -n vf-test1 --ignore-not-found
+kubectl delete deviceclass demo-single-vf --ignore-not-found
+kubectl delete network-attachment-definition demo-single-vf-net -n dra-driver-sriov --ignore-not-found
+```
+
+Remove `all-devices` only if this setup created it and no other workload depends
+on it. Remove `vf-test1` only if this setup created the namespace and it is not
+shared. Check whether these resources already exist before applying the demo;
+preserve pre-existing or shared resources. Run each optional command only when
+its ownership/dependency condition is satisfied:
+
+```bash
+kubectl delete sriovresourcepolicy all-devices -n dra-driver-sriov --ignore-not-found
+kubectl delete namespace vf-test1 --ignore-not-found
+```

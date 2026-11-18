@@ -2,6 +2,11 @@
 
 This demo shows how one SR-IOV Virtual Function (VF) is allocated with DRA and attached by Multus to a workload.
 
+DeviceClass `demo-multus-single-vf` is administrator-owned; workloads contain no SR-IOV
+opaque configuration. Applying the bundle requires permission to manage
+its classes, policies, and NADs; the `dra-driver-sriov` namespace must exist.
+Multus must allow references to NADs in that namespace.
+
 ## Prerequisite: deploy DRA driver in MULTUS mode
 
 These Multus demos require the DRA driver to run with `kubeletPlugin.configurationMode=MULTUS`.
@@ -25,12 +30,12 @@ The `multus-integration-single-vf.yaml` file creates:
 2. **`SriovResourcePolicy`** (`sriov-nic-1-policy`) in namespace `dra-driver-sriov`
    - Selects the `DeviceAttributes` object by label and advertises matching devices
 3. **Namespace** `vf-test7`
-4. **NetworkAttachmentDefinition** `vf-test1`
+4. **NetworkAttachmentDefinition** `dra-driver-sriov/demo-multus-single-net`
    - Uses annotation `k8s.v1.cni.cncf.io/resourceName: sriov_nic_1`
 5. **`ResourceClaimTemplate`** `vf-test7`
-   - Requests one device from class `sriovnetwork.k8snetworkplumbingwg.io`
+   - Requests one device from class `demo-multus-single-vf`
 6. **Deployment** `pod0`
-   - Consumes the claim and attaches network `vf-test1` via Multus
+   - Consumes the claim and attaches network `dra-driver-sriov/demo-multus-single-net` via Multus
 
 ## Required Multus attributes (resource.k8s.io/v1)
 
@@ -62,7 +67,8 @@ kubectl apply -f multus-integration-single-vf.yaml
 2. Check namespace resources:
 
    ```bash
-   kubectl get net-attach-def,resourceclaimtemplate,resourceclaim,deployment,pod -n vf-test7
+   kubectl get resourceclaimtemplate,resourceclaim,deployment,pod -n vf-test7
+   kubectl get net-attach-def -n dra-driver-sriov demo-multus-single-net
    ```
 
 3. Check pod interfaces:
@@ -93,8 +99,12 @@ kubectl apply -f multus-integration-single-vf.yaml
 
 ## Cleanup
 
+Delete the workload before removing the administrator-owned class and NAD.
+Deleting only the workload namespace leaves those resources behind.
+
 ```bash
-kubectl delete -f multus-integration-single-vf.yaml
+kubectl delete deployment pod0 -n vf-test7 --ignore-not-found --wait=true --cascade=foreground
+kubectl delete -f multus-integration-single-vf.yaml --ignore-not-found
 ```
 
 ## Related demos

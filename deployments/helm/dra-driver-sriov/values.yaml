@@ -9,6 +9,19 @@ selectorLabelsOverride: {}
 
 allowDefaultNamespace: false
 
+# Classes and NADs are administrator-owned. No broad class is installed by default.
+deviceClasses:
+  # Upgrades: set true to retain the historical class until every workload reference migrates.
+  # The historical class has no VfConfig; STANDALONE needs a configured replacement.
+  createDefault: false
+  items: [] # Entries have a unique name and a complete DeviceClass spec.
+
+admission:
+  claimConfiguration:
+    enabled: true
+    # Audit renders Audit/Warn for migration inventory; the driver always rejects overrides.
+    mode: Deny
+
 imagePullSecrets: []
 image:
   repository: ghcr.io/k8snetworkplumbingwg/dra-driver-sriov

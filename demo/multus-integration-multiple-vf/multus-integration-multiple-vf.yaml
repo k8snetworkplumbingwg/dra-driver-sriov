@@ -1,4 +1,8 @@
----
+# Administrator setup: policy, attributes, DeviceClasses and NADs below require
+# administrator credentials. NADs live in the protected dra-driver-sriov namespace.
+# Tenant claims/templates contain requests only; they cannot supply SR-IOV config.
+# The driver release namespace must already exist; adjust admin namespace references
+# together if the driver was installed elsewhere.
 # DeviceAttributes define extra attributes applied to devices matched by a policy config.
 # Policies reference DeviceAttributes via label selectors.
 apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
@@ -37,15 +41,15 @@ metadata:
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
 metadata:
-  name: vf-test1
-  namespace: vf-test8
+  name: "demo-multus-multiple-net"
+  namespace: "dra-driver-sriov"
   annotations:
     k8s.v1.cni.cncf.io/resourceName: sriov_nic_1
 spec:
   config: |-
     {
         "cniVersion": "1.0.0",
-        "name": "vf-test1",
+        "name": "demo-multus-multiple-net",
         "type": "sriov",
         "vlan": 0,
         "spoofchk": "on",
@@ -64,6 +68,18 @@ spec:
         }
     }
 ---
+# Administrator-owned class: tenant claims select this configuration.
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: demo-multus-multiple-vf
+spec:
+  selectors:
+  - cel:
+      expression: device.driver == 'sriovnetwork.k8snetworkplumbingwg.io'
+  - cel:
+      expression: has(device.attributes['k8s.cni.cncf.io'].resourceName) && device.attributes['k8s.cni.cncf.io'].resourceName == 'sriov_nic_1'
+---
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaimTemplate
 metadata:
@@ -75,7 +91,7 @@ spec:
       requests:
       - name: vf
         exactly:
-          deviceClassName: sriovnetwork.k8snetworkplumbingwg.io
+          deviceClassName: "demo-multus-multiple-vf"
           count: 2
 ---
 apiVersion: apps/v1
@@ -95,7 +111,7 @@ spec:
       labels:
         app: pod0
       annotations:
-        k8s.v1.cni.cncf.io/networks: vf-test1,vf-test1
+        k8s.v1.cni.cncf.io/networks: "dra-driver-sriov/demo-multus-multiple-net,dra-driver-sriov/demo-multus-multiple-net"
     spec:
       terminationGracePeriodSeconds: 2
       containers:

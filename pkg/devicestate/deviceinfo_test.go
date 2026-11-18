@@ -327,7 +327,8 @@ var _ = Describe("DeviceInfo compatibility", Serial, func() {
 		}
 
 		ifNameIndex := 0
-		_, err = manager.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+		resolved := mustResolveClaim(claim, string(consts.ConfigurationModeMultus))
+		_, err = manager.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim, resolved)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("unable to create device-info files for claim"))
 	})
@@ -346,7 +347,7 @@ var _ = Describe("DeviceInfo compatibility", Serial, func() {
 			},
 		}
 		k8sClientManager := newTestManagerWithK8sClient(netAttachDef)
-		encodedConfig := []byte(`{"apiVersion":"sriovnetwork.k8snetworkplumbingwg.io/v1alpha1","kind":"VfConfig","netAttachDefName":"test-net"}`)
+		encodedConfig := []byte(`{"apiVersion":"sriovnetwork.k8snetworkplumbingwg.io/v1alpha1","kind":"VfConfig","netAttachDefName":"test-net","netAttachDefNamespace":"test-ns"}`)
 
 		manager := &Manager{
 			k8sClient:         k8sClientManager.k8sClient,
@@ -402,7 +403,8 @@ var _ = Describe("DeviceInfo compatibility", Serial, func() {
 		}
 
 		ifNameIndex := 0
-		_, err = manager.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+		resolved := mustResolveClaim(claim, string(consts.ConfigurationModeStandalone))
+		_, err = manager.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim, resolved)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fakeUtils.saveCalls).To(BeEmpty())
 	})

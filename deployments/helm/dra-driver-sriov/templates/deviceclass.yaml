@@ -1,3 +1,8 @@
+{{- $names := dict }}
+{{- $broad := "sriovnetwork.k8snetworkplumbingwg.io" }}
+{{- $deviceClasses := .Values.deviceClasses | default dict }}
+{{- if $deviceClasses.createDefault }}
+{{- $_ := set $names $broad true }}
 ---
 apiVersion: resource.k8s.io/v1
 kind: DeviceClass
@@ -7,3 +12,18 @@ spec:
   selectors:
   - cel: 
       expression: "device.driver == 'sriovnetwork.k8snetworkplumbingwg.io'"
+{{- end }}
+{{- range $deviceClasses.items }}
+{{- $name := required "deviceClasses.items requires name" .name }}
+{{- if or (hasKey $names $name) (eq $name $broad) }}
+{{- fail (printf "duplicate or reserved DeviceClass name %s" $name) }}
+{{- end }}
+{{- $_ := set $names $name true }}
+---
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: {{ $name | quote }}
+spec:
+{{ toYaml .spec | indent 2 }}
+{{- end }}

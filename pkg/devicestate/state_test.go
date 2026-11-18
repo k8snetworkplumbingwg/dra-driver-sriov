@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -28,6 +29,14 @@ import (
 	mock_host "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/host/mock"
 	drasriovtypes "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
+
+// mustResolveClaim completes a state-test fixture and resolves its trusted configuration.
+func mustResolveClaim(claim *resourceapi.ResourceClaim, mode string) *ResolvedClaimConfiguration {
+	addTestRequests(claim)
+	resolved, err := ResolveClaimConfiguration(claim, configapi.Decoder, mode)
+	Expect(err).NotTo(HaveOccurred())
+	return resolved
+}
 
 func newTestManagerWithK8sClient(objects ...crclient.Object) *Manager {
 	scheme := runtime.NewScheme()
@@ -113,25 +122,25 @@ var _ = Describe("Manager", Serial, func() {
 
 	Context("normalizeConfigurationMode", func() {
 		It("defaults empty mode to STANDALONE", func() {
-			mode, err := normalizeConfigurationMode("")
+			mode, err := NormalizeConfigurationMode("")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(mode).To(Equal(string(consts.ConfigurationModeStandalone)))
 		})
 
 		It("rejects unsupported modes", func() {
-			_, err := normalizeConfigurationMode("UNKNOWN")
+			_, err := NormalizeConfigurationMode("UNKNOWN")
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("unsupported configuration mode"))
 		})
 
 		It("accepts explicit STANDALONE mode", func() {
-			mode, err := normalizeConfigurationMode(string(consts.ConfigurationModeStandalone))
+			mode, err := NormalizeConfigurationMode(string(consts.ConfigurationModeStandalone))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(mode).To(Equal(string(consts.ConfigurationModeStandalone)))
 		})
 
 		It("accepts explicit MULTUS mode", func() {
-			mode, err := normalizeConfigurationMode(string(consts.ConfigurationModeMultus))
+			mode, err := NormalizeConfigurationMode(string(consts.ConfigurationModeMultus))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(mode).To(Equal(string(consts.ConfigurationModeMultus)))
 		})
@@ -354,9 +363,11 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			ifNameIndex := 0
-			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+			_, err = ResolveClaimConfiguration(claim, configapi.Decoder, string(consts.ConfigurationModeStandalone))
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("error creating map of opaque device config"))
+			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim, nil)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("resolved claim configuration is required"))
 		})
 
 		It("should return standalone net-attach-def lookup errors from PrepareDevicesForClaim", func() {
@@ -404,7 +415,7 @@ var _ = Describe("Manager", Serial, func() {
 										Opaque: &resourceapi.OpaqueDeviceConfiguration{
 											Driver: consts.DriverName,
 											Parameters: runtime.RawExtension{
-												Raw: []byte(`{"apiVersion":"sriovnetwork.k8snetworkplumbingwg.io/v1alpha1","kind":"VfConfig","netAttachDefName":"missing-net"}`),
+												Raw: []byte(`{"apiVersion":"sriovnetwork.k8snetworkplumbingwg.io/v1alpha1","kind":"VfConfig","netAttachDefName":"missing-net","netAttachDefNamespace":"test-ns"}`),
 											},
 										},
 									},
@@ -419,9 +430,9 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			ifNameIndex := 0
-			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+			resolved := mustResolveClaim(claim, string(consts.ConfigurationModeStandalone))
+			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim, resolved)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("error applying config on device"))
 			Expect(err.Error()).To(ContainSubstring("error getting net attach def raw config"))
 		})
 
@@ -450,7 +461,8 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			ifNameIndex := 0
-			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+			resolved := mustResolveClaim(claim, string(consts.ConfigurationModeMultus))
+			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim, resolved)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("no prepared devices found for claim"))
 		})
@@ -516,7 +528,8 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			ifNameIndex := 0
-			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+			resolved := mustResolveClaim(claim, string(consts.ConfigurationModeMultus))
+			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim, resolved)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("unable to create device-info files for claim"))
 			Expect(err.Error()).To(ContainSubstring("rollback failed"))
@@ -569,7 +582,8 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			ifNameIndex := 0
-			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+			resolved := mustResolveClaim(claim, string(consts.ConfigurationModeMultus))
+			_, err = m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim, resolved)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("unable to create device-info files for claim"))
 			Expect(err.Error()).To(ContainSubstring("cleanup after device-info sync failure failed"))
@@ -637,7 +651,8 @@ var _ = Describe("Manager", Serial, func() {
 			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", gomock.Any()).Return("", nil)
 
 			ifNameIndex := 0
-			prepared, err := m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim)
+			resolved := mustResolveClaim(claim, string(consts.ConfigurationModeMultus))
+			prepared, err := m.PrepareDevicesForClaim(context.Background(), &ifNameIndex, claim, resolved)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(prepared).To(HaveLen(1))
 			Expect(prepared[0].NetAttachDefConfig).To(BeEmpty())
@@ -671,12 +686,12 @@ var _ = Describe("Manager", Serial, func() {
 				},
 			}
 
-			resultsConfig := map[string]*configapi.VfConfig{
+			resolved := testResolvedFromRequestConfigs(claim, map[string]*configapi.VfConfig{
 				"req1": vfConfig,
-			}
+			}, string(consts.ConfigurationModeMultus))
 
 			ifNameIndex := 0
-			devices, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resultsConfig)
+			devices, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resolved)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(devices).To(HaveLen(0))
 		})
@@ -725,14 +740,12 @@ var _ = Describe("Manager", Serial, func() {
 				},
 			}
 
-			resultsConfig := map[string]*configapi.VfConfig{
-				// Missing req1
-			}
+			resolved := testResolvedFromRequestConfigs(claim, map[string]*configapi.VfConfig{}, string(consts.ConfigurationModeMultus))
 
 			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", gomock.Any()).Return("", nil)
 
 			ifNameIndex := 0
-			prepared, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resultsConfig)
+			prepared, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resolved)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(prepared).To(HaveLen(1))
 			Expect(prepared[0].IfName).To(Equal(""))
@@ -774,14 +787,14 @@ var _ = Describe("Manager", Serial, func() {
 				},
 			}
 
-			resultsConfig := map[string]*configapi.VfConfig{
+			resolved := testResolvedFromRequestConfigs(claim, map[string]*configapi.VfConfig{
 				"req1": vfConfig,
-			}
+			}, string(consts.ConfigurationModeMultus))
 
 			ifNameIndex := 0
-			_, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resultsConfig)
+			_, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resolved)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("error applying config on device"))
+			Expect(err.Error()).To(ContainSubstring("device device1 not found"))
 		})
 
 		It("should successfully prepare devices and populate claim status", func() {
@@ -813,7 +826,8 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			vfConfig := &configapi.VfConfig{
-				NetAttachDefName: "test-net",
+				NetAttachDefName:      "test-net",
+				NetAttachDefNamespace: "test-ns",
 			}
 
 			claim := &resourceapi.ResourceClaim{
@@ -841,14 +855,14 @@ var _ = Describe("Manager", Serial, func() {
 				},
 			}
 
-			resultsConfig := map[string]*configapi.VfConfig{
+			resolved := testResolvedFromRequestConfigs(claim, map[string]*configapi.VfConfig{
 				"req1": vfConfig,
-			}
+			}, string(consts.ConfigurationModeStandalone))
 
 			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", vfConfig).Return("", nil)
 
 			ifNameIndex := 0
-			devices, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resultsConfig)
+			devices, err := m.prepareDevices(context.Background(), &ifNameIndex, claim, resolved)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(devices).To(HaveLen(1))
 
@@ -888,7 +902,7 @@ var _ = Describe("Manager", Serial, func() {
 			}
 
 			ifNameIndex := 0
-			_, err := m.applyConfigOnDevice(context.Background(), &ifNameIndex, claim, config, result)
+			_, err := m.applyTestConfig(context.Background(), &ifNameIndex, claim, config, result)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("device nonexistent not found"))
 		})
@@ -944,7 +958,7 @@ var _ = Describe("Manager", Serial, func() {
 			mockHost.EXPECT().BindDeviceDriver("0000:01:00.1", config).Return("", nil)
 
 			ifNameIndex := 0
-			preparedDevice, err := m.applyConfigOnDevice(context.Background(), &ifNameIndex, claim, config, result)
+			preparedDevice, err := m.applyTestConfig(context.Background(), &ifNameIndex, claim, config, result)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(preparedDevice).NotTo(BeNil())
 			Expect(preparedDevice.PciAddress).To(Equal("0000:01:00.1"))
@@ -996,7 +1010,7 @@ var _ = Describe("Manager", Serial, func() {
 				}
 
 				ifNameIndex := 0
-				preparedDevice, err := m.applyConfigOnDevice(context.Background(), &ifNameIndex, claim, config, result)
+				preparedDevice, err := m.applyTestConfig(context.Background(), &ifNameIndex, claim, config, result)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(preparedDevice).NotTo(BeNil())
 
@@ -1065,7 +1079,7 @@ var _ = Describe("Manager", Serial, func() {
 			mockHost.EXPECT().RestoreDeviceDriver("0000:01:00.1", "ixgbevf").Return(nil)
 
 			ifNameIndex := 0
-			_, err := m.applyConfigOnDevice(context.Background(), &ifNameIndex, claim, config, result)
+			_, err := m.applyTestConfig(context.Background(), &ifNameIndex, claim, config, result)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("error getting VFIO cdev"))
 		})
@@ -1108,7 +1122,7 @@ var _ = Describe("Manager", Serial, func() {
 			mockHost.EXPECT().RestoreDeviceDriver("0000:01:00.1", "ixgbevf").Return(nil)
 
 			ifNameIndex := 0
-			_, err := m.applyConfigOnDevice(context.Background(), &ifNameIndex, claim, config, result)
+			_, err := m.applyTestConfig(context.Background(), &ifNameIndex, claim, config, result)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("error getting VFIO device file"))
 		})
@@ -1503,6 +1517,41 @@ var _ = Describe("Manager", Serial, func() {
 		})
 	})
 
+	It("plans automatic names around saved and future fixed names without changing trusted configs", func() {
+		nad := &netattdefv1.NetworkAttachmentDefinition{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "admin", Name: "blue-net"},
+			Spec:       netattdefv1.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion":"1.0.0","type":"sriov","name":"blue-net"}`},
+		}
+		m := newTestManagerWithK8sClient(nad)
+		m.configurationMode = string(consts.ConfigurationModeStandalone)
+		m.defaultInterfacePrefix = "vfnet"
+		m.allocatable = drasriovtypes.AllocatableDevices{}
+		claim := &resourceapi.ResourceClaim{ObjectMeta: metav1.ObjectMeta{UID: "new-claim"}, Status: resourceapi.ResourceClaimStatus{
+			Allocation: &resourceapi.AllocationResult{Devices: resourceapi.DeviceAllocationResult{Results: []resourceapi.DeviceRequestAllocationResult{
+				{Request: "vf", Driver: consts.DriverName, Pool: "node-a", Device: "dev1"},
+				{Request: "vf", Driver: consts.DriverName, Pool: "node-a", Device: "dev2"},
+			}}},
+		}}
+		for i, result := range claim.Status.Allocation.Devices.Results {
+			m.allocatable[result.Device] = resourceapi.Device{Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+				consts.AttributePciAddress: {StringValue: ptr.To(fmt.Sprintf("0000:01:00.%d", i+1))},
+			}}
+		}
+		cfg := &configapi.VfConfig{NetAttachDefName: "blue-net", NetAttachDefNamespace: "admin"}
+		resolved := testResolvedFromRequestConfigs(claim, map[string]*configapi.VfConfig{"vf": cfg}, m.configurationMode)
+		resolved.ExistingIfNames = map[string]k8stypes.UID{"vfnet0": "future-fixed", "vfnet2": "saved-claim"}
+		index := 0
+		inputs, err := m.preflightDevices(context.Background(), &index, claim, resolved)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(inputs[allocationKeyFromResult(&claim.Status.Allocation.Devices.Results[0])].ifName).To(Equal("vfnet1"))
+		Expect(inputs[allocationKeyFromResult(&claim.Status.Allocation.Devices.Results[1])].ifName).To(Equal("vfnet3"))
+		Expect(index).To(Equal(4))
+		Expect(cfg.IfName).To(BeEmpty())
+		for _, entry := range resolved.ByKey {
+			Expect(entry.Config.IfName).To(BeEmpty())
+		}
+	})
+
 	Context("MULTUS/STANDALONE behavior", func() {
 		It("skips ifName generation and NetAttachDef fetch in MULTUS", func() {
 			tmp, err := os.MkdirTemp("", "cdi-root")
@@ -1536,7 +1585,7 @@ var _ = Describe("Manager", Serial, func() {
 			res := &resourceapi.DeviceRequestAllocationResult{Device: "devA", Pool: "pool1", Request: "req1"}
 			mockHost.EXPECT().BindDeviceDriver("0000:00:00.1", cfg).Return("", nil)
 
-			pd, err := s.applyConfigOnDevice(context.Background(), &ifIndex, claim, cfg, res)
+			pd, err := s.applyTestConfig(context.Background(), &ifIndex, claim, cfg, res)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(pd).ToNot(BeNil())
 			// ifName should remain empty and index unchanged
@@ -1549,3 +1598,39 @@ var _ = Describe("Manager", Serial, func() {
 })
 
 func strPtr(s string) *string { return &s }
+
+// applyTestConfig adapts device-operation fixtures to the preflight/apply split.
+func (s *Manager) applyTestConfig(ctx context.Context, index *int, claim *resourceapi.ResourceClaim, cfg *configapi.VfConfig, result *resourceapi.DeviceRequestAllocationResult) (*drasriovtypes.PreparedDevice, error) {
+	raw, err := s.preflightDevice(ctx, cfg, result)
+	if err != nil {
+		return nil, err
+	}
+	name := cfg.IfName
+	if s.isStandaloneMode() && name == "" && raw != "" {
+		name = fmt.Sprintf("%s%d", s.defaultInterfacePrefix, *index)
+		*index++
+	}
+	return s.applyConfigOnDevice(ctx, claim, cfg, result, devicePreparationInput{networkConfig: raw, ifName: name})
+}
+
+// addTestRequests fills missing request definitions in allocation-only fixtures.
+func addTestRequests(claim *resourceapi.ResourceClaim) {
+	if len(claim.Spec.Devices.Requests) != 0 || claim.Status.Allocation == nil {
+		return
+	}
+	seen := map[string]bool{}
+	for _, result := range claim.Status.Allocation.Devices.Results {
+		if seen[result.Request] {
+			continue
+		}
+		seen[result.Request] = true
+		parent, sub, _ := strings.Cut(result.Request, "/")
+		request := resourceapi.DeviceRequest{Name: parent}
+		if sub == "" {
+			request.Exactly = &resourceapi.ExactDeviceRequest{DeviceClassName: "test-class"}
+		} else {
+			request.FirstAvailable = []resourceapi.DeviceSubRequest{{Name: sub, DeviceClassName: "test-class"}}
+		}
+		claim.Spec.Devices.Requests = append(claim.Spec.Devices.Requests, request)
+	}
+}
