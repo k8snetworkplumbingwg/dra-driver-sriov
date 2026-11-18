@@ -15,6 +15,6 @@ podman rmi -fi ${SRIOV_DRIVER_IMAGE}
 # Deploy the dra driver via helm
 export PATH=${root}/bin/:$PATH
 make helm
-${root}/bin/helm upgrade -i dra-driver-sriov deployments/helm/dra-driver-sriov/ --namespace dra-driver-sriov --create-namespace --set kubeletPlugin.configurationMode=${DRA_DRIVER_MODE} --set image.repository=${SRIOV_DRIVER_IMAGE}
+${root}/bin/helm upgrade -i dra-driver-sriov deployments/helm/dra-driver-sriov/ --namespace dra-driver-sriov --create-namespace --reuse-values --set image.repository=${SRIOV_DRIVER_IMAGE}
 
 kubectl -n ${NAMESPACE} delete po --all
