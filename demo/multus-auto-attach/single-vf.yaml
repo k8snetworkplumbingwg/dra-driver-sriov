@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dra-multus-poc
+---
+apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+kind: SriovResourcePolicy
+metadata:
+  name: 00-auto-attach-poc
+  namespace: dra-driver-sriov
+spec:
+  configs:
+  - resourceFilters:
+    - vendors: ["8086"]
+      linkType: eth
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: single-network
+  namespace: dra-multus-poc
+spec:
+  config: |-
+    {
+      "cniVersion": "1.0.0",
+      "type": "sriov",
+      "ipam": {"type": "host-local", "subnet": "10.30.0.0/24"}
+    }
+---
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: auto-attach-single
+spec:
+  selectors:
+  - cel:
+      expression: device.driver == "sriovnetwork.k8snetworkplumbingwg.io"
+  config:
+  - opaque:
+      driver: sriovnetwork.k8snetworkplumbingwg.io
+      parameters:
+        apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+        kind: VfConfig
+        netAttachDefName: single-network
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: single-vf
+  namespace: dra-multus-poc
+spec:
+  spec:
+    devices:
+      requests:
+      - name: nic
+        exactly:
+          deviceClassName: auto-attach-single
+          count: 1
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: workload1
+  namespace: dra-multus-poc
+spec:
+  terminationGracePeriodSeconds: 2
+  containers:
+  - name: workload
+    image: quay.io/schseba/toolbox:latest
+    command: ["/bin/bash", "-c", "sleep infinity"]
+    securityContext:
+      runAsUser: 0
+      capabilities:
+        add: [NET_ADMIN, NET_RAW]
+    resources:
+      claims:
+      - name: devices
+  resourceClaims:
+  - name: devices
+    resourceClaimTemplateName: single-vf

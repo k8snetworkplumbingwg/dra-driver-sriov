@@ -71,6 +71,9 @@ func (c *VfConfig) Override(other *VfConfig) {
 	}
 	if other.NetAttachDefName != "" {
 		c.NetAttachDefName = other.NetAttachDefName
+		c.NetAttachDefNamespace = other.NetAttachDefNamespace
+	} else if other.NetAttachDefNamespace != "" {
+		c.NetAttachDefNamespace = other.NetAttachDefNamespace
 	}
 }
 
