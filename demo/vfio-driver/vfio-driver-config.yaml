@@ -1,4 +1,5 @@
----
+# Administrator setup: the vf-test2 DeviceClass owns VFIO/vhost configuration.
+# Tenant claims/templates contain requests only. No CNI/NAD is used for this VF.
 # Advertise all SR-IOV devices on all nodes (required for device discovery).
 # Adjust namespace to match the driver's Helm release namespace.
 apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
@@ -10,56 +11,28 @@ spec:
   configs:
   - {}
 ---
+# Administrator-owned class: tenant claims select this configuration.
 apiVersion: resource.k8s.io/v1
 kind: DeviceClass
 metadata:
   name: vf-test2
 spec:
   selectors:
-    - cel:
-        expression: "device.driver == 'sriovnetwork.k8snetworkplumbingwg.io'"
+  - cel:
+      expression: device.driver == 'sriovnetwork.k8snetworkplumbingwg.io'
   config:
-    - opaque:
-        driver: sriovnetwork.k8snetworkplumbingwg.io
-        parameters:
-          apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
-          kind: VfConfig
-          ifName: test
-          netAttachDefName: vf-test
-          driver: "default"
+  - opaque:
+      driver: sriovnetwork.k8snetworkplumbingwg.io
+      parameters:
+        apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+        kind: VfConfig
+        driver: vfio-pci
+        addVhostMount: true
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: vf-test2
----
-apiVersion: k8s.cni.cncf.io/v1
-kind: NetworkAttachmentDefinition
-metadata:
-  name: vf-test
-  namespace: vf-test2
-spec:
-  config: |-
-    {
-        "cniVersion": "1.0.0",
-        "name": "vf-test2",
-        "type": "sriov",
-        "vlan": 0,
-        "spoofchk": "on",
-        "trust": "on",
-        "vlanQoS": 0,
-        "logLevel": "info",
-        "ipam": {
-            "type": "host-local",
-            "ranges": [
-                [
-                    {
-                        "subnet": "10.0.1.0/24"
-                    }
-                ]
-            ]
-        }
-    }
 ---
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaimTemplate
@@ -72,18 +45,7 @@ spec:
       requests:
       - name: vf
         exactly:
-          deviceClassName: vf-test2
-      config:
-      - requests: ["vf"]
-        opaque:
-          driver: sriovnetwork.k8snetworkplumbingwg.io
-          parameters:
-            apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
-            kind: VfConfig
-            ifName: net1
-            netAttachDefName: vf-test
-            driver: vfio-pci
-            addVhostMount: true
+          deviceClassName: "vf-test2"
 ---
 apiVersion: v1
 kind: Pod

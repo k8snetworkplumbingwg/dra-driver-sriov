@@ -2,6 +2,7 @@ package podmanager
 
 import (
 	"fmt"
+	"maps"
 	"sync"
 
 	resourceapi "k8s.io/api/resource/v1"
@@ -18,9 +19,17 @@ import (
 // across multiple Pods. It is indexed by the Pod's UID, and for each Pod, it maps
 // claim IDs to their specific PreparedDevices.
 type PodManager struct {
-	mu                     sync.RWMutex
-	preparedClaimsByPodUID drasriovtypes.PreparedClaimsByPodUID
-	checkpointManager      checkpointmanager.CheckpointManager
+	mu                      sync.RWMutex
+	preparedClaimsByPodUID  drasriovtypes.PreparedClaimsByPodUID
+	preparedClaimProvenance drasriovtypes.PreparedClaimProvenanceByPodUID
+	checkpointManager       checkpointmanager.CheckpointManager
+}
+
+// GetClaimsByPodUID returns a shallow claim map copy; shared device records still require verification.
+func (s *PodManager) GetClaimsByPodUID(podUID types.UID) drasriovtypes.PreparedDevicesByClaimID {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return maps.Clone(s.preparedClaimsByPodUID[podUID])
 }
 
 func NewPodManager(config *drasriovtypes.Config) (*PodManager, error) {
@@ -37,6 +46,7 @@ func NewPodManagerWithCheckpointManager(checkpointManager checkpointmanager.Chec
 	return newPodManager(checkpointManager)
 }
 
+// newPodManager loads devices and provenance, leaving records without provenance cleanup-only.
 func newPodManager(checkpointManager checkpointmanager.CheckpointManager) (*PodManager, error) {
 	checkpoints, err := checkpointManager.ListCheckpoints()
 	if err != nil {
@@ -44,9 +54,10 @@ func newPodManager(checkpointManager checkpointmanager.CheckpointManager) (*PodM
 	}
 
 	podmManager := &PodManager{
-		mu:                     sync.RWMutex{},
-		checkpointManager:      checkpointManager,
-		preparedClaimsByPodUID: make(drasriovtypes.PreparedClaimsByPodUID),
+		mu:                      sync.RWMutex{},
+		checkpointManager:       checkpointManager,
+		preparedClaimsByPodUID:  make(drasriovtypes.PreparedClaimsByPodUID),
+		preparedClaimProvenance: make(drasriovtypes.PreparedClaimProvenanceByPodUID),
 	}
 
 	for _, c := range checkpoints {
@@ -57,6 +68,9 @@ func newPodManager(checkpointManager checkpointmanager.CheckpointManager) (*PodM
 				return nil, fmt.Errorf("unable to load checkpoint: %v", err)
 			}
 			podmManager.preparedClaimsByPodUID = checkpoint.V1.PreparedClaimsByPodUID
+			if checkpoint.V1.PreparedClaimProvenance != nil {
+				podmManager.preparedClaimProvenance = checkpoint.V1.PreparedClaimProvenance
+			}
 			klog.Infof("Loaded checkpoint with %d pods", len(podmManager.preparedClaimsByPodUID))
 			return podmManager, nil
 		}
@@ -71,11 +85,8 @@ func newPodManager(checkpointManager checkpointmanager.CheckpointManager) (*PodM
 	return podmManager, nil
 }
 
-// Set stores the configuration for all prepared devices under a given Pod UID.
-// If a configuration for the Pod UID or claim ID already exists, it will be overwritten.
-// When the checkpoint cannot be written the store is left as it was, so a
-// claim whose devices the caller then unprepares is not reported as prepared.
-func (s *PodManager) Set(podUID types.UID, claimID types.UID, preparedDevices drasriovtypes.PreparedDevices) error {
+// Set checkpoints devices and provenance, restoring both on failure; nil metadata leaves state unverified.
+func (s *PodManager) Set(podUID types.UID, claimID types.UID, preparedDevices drasriovtypes.PreparedDevices, meta *drasriovtypes.PreparedClaimMeta) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	claims, hadPod := s.preparedClaimsByPodUID[podUID]
@@ -86,6 +97,26 @@ func (s *PodManager) Set(podUID types.UID, claimID types.UID, preparedDevices dr
 	previous, hadClaim := claims[claimID]
 	claims[claimID] = preparedDevices
 
+	// Copy the claim metadata map so persistence failure can restore it intact.
+	previousProvenance := s.preparedClaimProvenance[podUID]
+	provenance := maps.Clone(previousProvenance)
+	if meta == nil {
+		delete(provenance, claimID)
+	} else {
+		if provenance == nil {
+			provenance = make(drasriovtypes.PreparedClaimProvenanceByClaim)
+		}
+		provenance[claimID] = *meta
+	}
+	if len(provenance) == 0 {
+		delete(s.preparedClaimProvenance, podUID)
+	} else {
+		if s.preparedClaimProvenance == nil {
+			s.preparedClaimProvenance = make(drasriovtypes.PreparedClaimProvenanceByPodUID)
+		}
+		s.preparedClaimProvenance[podUID] = provenance
+	}
+
 	if err := s.syncToCheckpoint(); err != nil {
 		switch {
 		case hadClaim:
@@ -95,9 +126,35 @@ func (s *PodManager) Set(podUID types.UID, claimID types.UID, preparedDevices dr
 		default:
 			delete(s.preparedClaimsByPodUID, podUID)
 		}
+		if previousProvenance == nil {
+			delete(s.preparedClaimProvenance, podUID)
+		} else {
+			s.preparedClaimProvenance[podUID] = previousProvenance
+		}
 		return err
 	}
 	return nil
+}
+
+// ClaimProvenance returns saved metadata or identifies existing records without it as cleanup-only.
+func (s *PodManager) ClaimProvenance(podUID, claimID types.UID) (drasriovtypes.PreparedClaimMeta, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	podProv, ok := s.preparedClaimProvenance[podUID]
+	if !ok {
+		if _, prepared := s.preparedClaimsByPodUID[podUID][claimID]; prepared {
+			return drasriovtypes.PreparedClaimMeta{LegacyCleanupOnly: true}, true
+		}
+		return drasriovtypes.PreparedClaimMeta{}, false
+	}
+	meta, ok := podProv[claimID]
+	if !ok {
+		if _, prepared := s.preparedClaimsByPodUID[podUID][claimID]; prepared {
+			return drasriovtypes.PreparedClaimMeta{LegacyCleanupOnly: true}, true
+		}
+		return drasriovtypes.PreparedClaimMeta{}, false
+	}
+	return meta, true
 }
 
 // Get retrieves the configuration for a specific claim under a given Pod UID.
@@ -128,15 +185,20 @@ func (s *PodManager) GetDevicesByPodUID(podUID types.UID) (drasriovtypes.Prepare
 	return preparedDevices, true
 }
 
-// DeletePod removes all configurations associated with a given Pod UID.
+// DeletePod removes devices and provenance, restoring them if checkpoint persistence fails.
 func (s *PodManager) DeletePod(podUID types.UID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	claims, found := s.preparedClaimsByPodUID[podUID]
+	provenance := s.preparedClaimProvenance[podUID]
 	delete(s.preparedClaimsByPodUID, podUID)
+	delete(s.preparedClaimProvenance, podUID)
 	if err := s.syncToCheckpoint(); err != nil {
 		if found {
 			s.preparedClaimsByPodUID[podUID] = claims
+		}
+		if provenance != nil {
+			s.preparedClaimProvenance[podUID] = provenance
 		}
 		return err
 	}
@@ -177,9 +239,7 @@ func (s *PodManager) UpdatePreparedDeviceNetworkData(preparedDevice *drasriovtyp
 	return nil
 }
 
-// DeleteClaim removes the prepared devices of a claim. The pod's other claims
-// are kept, and the pod itself is removed once it has no claim left.
-// NOTE: for now we only support one pod per claim as VFs are not shared between pods
+// DeleteClaim removes a saved claim and its provenance, restoring both if checkpoint persistence fails.
 func (s *PodManager) DeleteClaim(claim kubeletplugin.NamespacedObject) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -188,13 +248,24 @@ func (s *PodManager) DeleteClaim(claim kubeletplugin.NamespacedObject) error {
 		if !found {
 			continue
 		}
+		provenance := maps.Clone(s.preparedClaimProvenance[podUID])
 		delete(claims, claim.UID)
+		if podProv, ok := s.preparedClaimProvenance[podUID]; ok {
+			delete(podProv, claim.UID)
+			if len(podProv) == 0 {
+				delete(s.preparedClaimProvenance, podUID)
+			}
+		}
 		if len(claims) == 0 {
 			delete(s.preparedClaimsByPodUID, podUID)
+			delete(s.preparedClaimProvenance, podUID)
 		}
 		if err := s.syncToCheckpoint(); err != nil {
 			claims[claim.UID] = devices
 			s.preparedClaimsByPodUID[podUID] = claims
+			if provenance != nil {
+				s.preparedClaimProvenance[podUID] = provenance
+			}
 			return err
 		}
 		return nil
@@ -202,9 +273,11 @@ func (s *PodManager) DeleteClaim(claim kubeletplugin.NamespacedObject) error {
 	return nil
 }
 
+// syncToCheckpoint persists devices and provenance while the caller holds the write lock.
 func (s *PodManager) syncToCheckpoint() error {
 	checkpoint := drasriovtypes.NewCheckpoint()
 	checkpoint.V1.PreparedClaimsByPodUID = s.preparedClaimsByPodUID
+	checkpoint.V1.PreparedClaimProvenance = s.preparedClaimProvenance
 	if err := s.checkpointManager.CreateCheckpoint(consts.DriverPluginCheckpointFile, checkpoint); err != nil {
 		return fmt.Errorf("unable to sync to checkpoint: %v", err)
 	}

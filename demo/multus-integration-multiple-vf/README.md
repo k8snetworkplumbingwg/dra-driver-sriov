@@ -2,6 +2,11 @@
 
 This demo allocates two SR-IOV Virtual Functions from a single `ResourceClaimTemplate` and attaches both through Multus.
 
+DeviceClass `demo-multus-multiple-vf` is administrator-owned; workloads contain no SR-IOV
+opaque configuration. Applying the bundle requires permission to manage
+its classes, policies, and NADs; the `dra-driver-sriov` namespace must exist.
+Multus must allow references to NADs in that namespace.
+
 ## Prerequisite: deploy DRA driver in MULTUS mode
 
 These Multus demos require the DRA driver to run with `kubeletPlugin.configurationMode=MULTUS`.
@@ -31,11 +36,11 @@ Based on the Multus DRA integration update in [multus-cni PR #1492](https://gith
 `multus-integration-multiple-vf.yaml` creates:
 
 1. Namespace `vf-test8`
-2. NAD `vf-test1` with `k8s.v1.cni.cncf.io/resourceName: sriov_nic_1`
+2. NAD `dra-driver-sriov/demo-multus-multiple-net` with `k8s.v1.cni.cncf.io/resourceName: sriov_nic_1`
 3. `ResourceClaimTemplate` `vf-test8`
-   - Requests `count: 2` from device class `sriovnetwork.openshift.io`
+   - Requests `count: 2` from administrator class `demo-multus-multiple-vf`
 4. Deployment `pod0`
-   - Uses Multus networks annotation `vf-test1,vf-test1`
+   - Uses Multus networks annotation `dra-driver-sriov/demo-multus-multiple-net,dra-driver-sriov/demo-multus-multiple-net`
    - Consumes a single claim named `sriov`
 
 ## Deploy
@@ -49,7 +54,8 @@ kubectl apply -f multus-integration-multiple-vf.yaml
 1. Check resources:
 
    ```bash
-   kubectl get net-attach-def,resourceclaimtemplate,resourceclaim,deployment,pod -n vf-test8
+   kubectl get resourceclaimtemplate,resourceclaim,deployment,pod -n vf-test8
+   kubectl get net-attach-def -n dra-driver-sriov demo-multus-multiple-net
    ```
 
 2. Verify two interfaces in the pod:
@@ -71,7 +77,7 @@ kubectl apply -f multus-integration-multiple-vf.yaml
 
 - **Only one VF appears**
   - Confirm claim allocation includes two devices
-  - Confirm pod annotation repeats the NAD twice (`vf-test1,vf-test1`)
+  - Confirm pod annotation repeats the NAD twice (`dra-driver-sriov/demo-multus-multiple-net,dra-driver-sriov/demo-multus-multiple-net`)
 - **No secondary interfaces**
   - Ensure NAD `resourceName` equals device `k8s.cni.cncf.io/resourceName`
   - Verify Multus and SR-IOV CNI on the worker node
@@ -81,8 +87,12 @@ kubectl apply -f multus-integration-multiple-vf.yaml
 
 ## Cleanup
 
+Delete the workload before removing the administrator-owned class and NAD.
+Deleting only the workload namespace leaves those resources behind.
+
 ```bash
-kubectl delete -f multus-integration-multiple-vf.yaml
+kubectl delete deployment pod0 -n vf-test8 --ignore-not-found --wait=true --cascade=foreground
+kubectl delete -f multus-integration-multiple-vf.yaml --ignore-not-found
 ```
 
 ## Related demos

@@ -2,6 +2,11 @@
 
 This demo demonstrates using a static ResourceClaim for SR-IOV Virtual Function allocation, as opposed to the dynamic ResourceClaimTemplate approach.
 
+DeviceClass `demo-resourceclaim` is administrator-owned; workloads contain no SR-IOV
+opaque configuration. Applying the bundle requires permission to manage
+its classes, policies, and NADs; the `dra-driver-sriov` namespace must exist.
+Run the driver in STANDALONE mode with kernel-bound VFs.
+
 ## Overview
 
 This scenario shows:
@@ -29,7 +34,7 @@ This scenario shows:
 ## Components
 
 ### 1. Networking Setup
-- Creates dedicated namespace (`vf-resourceclaim-test`)
+- Creates dedicated namespace (`vf-test7`)
 - NetworkAttachmentDefinition with SR-IOV CNI plugin configuration
 - IPAM setup using host-local plugin with subnet `10.0.3.0/24`
 - Standard SR-IOV network settings (VLAN 0, spoofchk on, trust on)
@@ -39,11 +44,12 @@ The `ResourceClaim` configuration:
 - **Pre-created**: Exists before any pods are scheduled
 - **Independent**: Not tied to specific pod lifecycle
 - **Reusable**: Can be referenced by different pods (sequentially)
+- **deviceClassName**: Selects administrator class `demo-resourceclaim`
 - **Explicit**: Direct control over resource allocation timing
-- **VfConfig parameters**:
+- **Administrator DeviceClass parameters** (not claim configuration):
   - `ifName: net1`: Network interface name in the container
-  - `netAttachDefName: vf-resourceclaim-test`: References the NetworkAttachmentDefinition
-  - Standard kernel driver (default behavior)
+  - `netAttachDefName: demo-resourceclaim-net`: References the NetworkAttachmentDefinition
+  - An omitted `driver` preserves the existing binding; this demo requires kernel-bound VFs
 
 ### 3. Pod Deployment
 - Simple toolbox container for testing and validation
@@ -75,7 +81,7 @@ Same as dynamic ResourceClaimTemplate:
 
 ## Allocation Process
 
-1. **Pre-allocation**: ResourceClaim is created and allocated independently
+1. **Claim creation**: ResourceClaim exists before the Pod; allocation occurs during scheduling
 2. **Resource Discovery**: DRA driver finds and reserves available VF
 3. **Pod Creation**: Pod references existing ResourceClaim by name
 4. **Claim Binding**: Pod binds to pre-existing resource claim
@@ -92,35 +98,35 @@ Same as dynamic ResourceClaimTemplate:
 
 2. Verify resource claim allocation:
    ```bash
-   kubectl get resourceclaims -n vf-resourceclaim-test
-   kubectl describe resourceclaim static-vf-claim -n vf-resourceclaim-test
+   kubectl get resourceclaims -n vf-test7
+   kubectl describe resourceclaim static-vf-claim -n vf-test7
    ```
 
 3. Verify pod deployment:
    ```bash
-   kubectl get pods -n vf-resourceclaim-test
-   kubectl describe pod pod0 -n vf-resourceclaim-test
+   kubectl get pods -n vf-test7
+   kubectl describe pod pod0 -n vf-test7
    ```
 
 4. Check network configuration:
    ```bash
    # List interfaces
-   kubectl exec -n vf-resourceclaim-test pod0 -- ip link show
+   kubectl exec -n vf-test7 pod0 -- ip link show
    
    # Check IP addresses
-   kubectl exec -n vf-resourceclaim-test pod0 -- ip addr show
+   kubectl exec -n vf-test7 pod0 -- ip addr show
    
    # Verify SR-IOV interface
-   kubectl exec -n vf-resourceclaim-test pod0 -- ip addr show net1
+   kubectl exec -n vf-test7 pod0 -- ip addr show net1
    ```
 
 5. Test network connectivity:
    ```bash
    # Test cluster networking (eth0)
-   kubectl exec -n vf-resourceclaim-test pod0 -- ping kubernetes.default.svc.cluster.local
+   kubectl exec -n vf-test7 pod0 -- ping kubernetes.default.svc.cluster.local
    
    # Test SR-IOV interface (net1) - requires target IP
-   kubectl exec -n vf-resourceclaim-test pod0 -- ping -I net1 <target-ip>
+   kubectl exec -n vf-test7 pod0 -- ping -I net1 <target-ip>
    ```
 
 ## Resource Lifecycle Management
@@ -128,17 +134,17 @@ Same as dynamic ResourceClaimTemplate:
 ### Reusing Claims
 ```bash
 # Delete the pod but keep the ResourceClaim
-kubectl delete pod pod0 -n vf-resourceclaim-test
+kubectl delete pod pod0 -n vf-test7
 
 # The ResourceClaim remains available
-kubectl get resourceclaims -n vf-resourceclaim-test
+kubectl get resourceclaims -n vf-test7
 
 # Create a new pod that uses the same claim
 kubectl apply -f - <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  namespace: vf-resourceclaim-test
+  namespace: vf-test7
   name: pod1
 spec:
   containers:
@@ -157,10 +163,10 @@ EOF
 ### Claim Status Monitoring
 ```bash
 # Monitor claim status
-kubectl get resourceclaims -n vf-resourceclaim-test -w
+kubectl get resourceclaims -n vf-test7 -w
 
 # Detailed claim information
-kubectl describe resourceclaim static-vf-claim -n vf-resourceclaim-test
+kubectl describe resourceclaim static-vf-claim -n vf-test7
 ```
 
 ## Performance Characteristics
@@ -218,3 +224,27 @@ This static claim setup serves as foundation for:
 - Development and testing environments
 - Building custom resource management workflows
 - Understanding DRA resource lifecycle mechanics
+
+## Cleanup
+
+Delete the demo Pods and direct claim before the demo-specific class and NAD.
+Do not delete the full bundle: it also contains the potentially shared
+`dra-driver-sriov/all-devices` policy.
+
+```bash
+kubectl delete pod pod0 pod1 -n vf-test7 --ignore-not-found --wait=true
+kubectl delete resourceclaim static-vf-claim -n vf-test7 --ignore-not-found --wait=true
+kubectl delete deviceclass demo-resourceclaim --ignore-not-found
+kubectl delete network-attachment-definition demo-resourceclaim-net -n dra-driver-sriov --ignore-not-found
+```
+
+Remove `all-devices` only if this setup created it and no other workload depends
+on it. Remove `vf-test7` only if this setup created the namespace and it is not
+shared. Check whether these resources already exist before applying the demo;
+preserve pre-existing or shared resources. Run each optional command only when
+its ownership/dependency condition is satisfied:
+
+```bash
+kubectl delete sriovresourcepolicy all-devices -n dra-driver-sriov --ignore-not-found
+kubectl delete namespace vf-test7 --ignore-not-found
+```

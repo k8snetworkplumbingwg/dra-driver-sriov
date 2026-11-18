@@ -1,3 +1,8 @@
+# Administrator setup: policy, attributes, DeviceClasses and NADs below require
+# administrator credentials. NADs live in the protected dra-driver-sriov namespace.
+# Tenant claims/templates contain requests only; they cannot supply SR-IOV config.
+# The driver release namespace must already exist; adjust admin namespace references
+# together if the driver was installed elsewhere.
 # DeviceAttributes for Multus: resourceName must match the NAD annotation.
 apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
 kind: DeviceAttributes
@@ -32,15 +37,15 @@ metadata:
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
 metadata:
-  name: vf-test1
-  namespace: vf-test10
+  name: "demo-multus-alignment-net"
+  namespace: "dra-driver-sriov"
   annotations:
     k8s.v1.cni.cncf.io/resourceName: sriov_nic_align
 spec:
   config: |-
     {
         "cniVersion": "1.0.0",
-        "name": "vf-test1",
+        "name": "demo-multus-alignment-net",
         "type": "sriov",
         "vlan": 0,
         "spoofchk": "on",
@@ -59,6 +64,18 @@ spec:
         }
     }
 ---
+# Administrator-owned class: tenant claims select this configuration.
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: demo-multus-alignment
+spec:
+  selectors:
+  - cel:
+      expression: device.driver == 'sriovnetwork.k8snetworkplumbingwg.io'
+  - cel:
+      expression: has(device.attributes['k8s.cni.cncf.io'].resourceName) && device.attributes['k8s.cni.cncf.io'].resourceName == 'sriov_nic_align'
+---
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaimTemplate
 metadata:
@@ -70,7 +87,7 @@ spec:
       requests:
       - name: vf
         exactly:
-          deviceClassName: sriovnetwork.k8snetworkplumbingwg.io
+          deviceClassName: "demo-multus-alignment"
       - name: gpu
         exactly:
           deviceClassName: gpu.example.com
@@ -86,7 +103,7 @@ metadata:
   labels:
     app: pod
   annotations:
-    k8s.v1.cni.cncf.io/networks: vf-test1
+    k8s.v1.cni.cncf.io/networks: "dra-driver-sriov/demo-multus-alignment-net"
 spec:
   terminationGracePeriodSeconds: 2
   containers:

@@ -35,12 +35,16 @@ type NetworkDataChanStruct struct {
 }
 type NetworkDataChanStructList []*NetworkDataChanStruct
 
-// AddDeviceIDToNetConf adds the deviceID (PCI address) to the netconf
+// AddDeviceIDToNetConf inserts the allocated PCI address into CNI JSON, rejecting null or non-object input.
 func AddDeviceIDToNetConf(originalConfig, deviceID string) (string, error) {
 	// Unmarshal the existing configuration into a raw map
 	var rawConfig map[string]interface{}
 	if err := json.Unmarshal([]byte(originalConfig), &rawConfig); err != nil {
 		return "", fmt.Errorf("failed to unmarshal existing config: %w", err)
+	}
+
+	if rawConfig == nil {
+		return "", fmt.Errorf("network configuration must be a JSON object")
 	}
 
 	// Set the deviceID (PCI address)
@@ -74,6 +78,12 @@ type PreparedDevice struct {
 	PodUID              string
 	NetAttachDefConfig  string
 	OriginalDriver      string // Store original driver for restoration during unprepare
+	ShareID             string `json:"shareID,omitempty"`
+}
+
+// IsVFIOWithoutCNI reports explicit vfio-pci configuration without saved CNI configuration.
+func (p *PreparedDevice) IsVFIOWithoutCNI() bool {
+	return p.NetAttachDefConfig == "" && p.Config != nil && p.Config.Driver == "vfio-pci"
 }
 
 func (p *PreparedDevice) ToKubeletPluginDevice(networkData *resourceapi.NetworkDeviceData) kubeletplugin.Device {
@@ -109,15 +119,34 @@ type Checkpoint struct {
 	V1       *CheckpointV1     `json:"v1,omitempty"`
 }
 
-type CheckpointV1 struct {
-	PreparedClaimsByPodUID PreparedClaimsByPodUID `json:"preparedClaimsByPodUID,omitempty"`
+// PreparedClaimMeta records provenance for a prepared claim checkpoint entry.
+type PreparedClaimMeta struct {
+	ConfigPolicyVersion string `json:"configPolicyVersion,omitempty"`
+	ConfigFingerprint   string `json:"configFingerprint,omitempty"`
+	LegacyCleanupOnly   bool   `json:"legacyCleanupOnly,omitempty"`
 }
 
+// PreparedClaimProvenanceByClaim maps claim UID to provenance metadata.
+type PreparedClaimProvenanceByClaim map[k8stypes.UID]PreparedClaimMeta
+
+// PreparedClaimProvenanceByPodUID maps pod UID to per-claim provenance.
+// Downgrading to a driver without this metadata requires all claims to be cleaned
+// up first: older readers drop the field and cannot verify its checksum while provenance remains.
+type PreparedClaimProvenanceByPodUID map[k8stypes.UID]PreparedClaimProvenanceByClaim
+
+type CheckpointV1 struct {
+	PreparedClaimsByPodUID PreparedClaimsByPodUID `json:"preparedClaimsByPodUID,omitempty"`
+	// Omitted after all claims are cleaned up, allowing the previous driver to verify the empty checkpoint.
+	PreparedClaimProvenance PreparedClaimProvenanceByPodUID `json:"preparedClaimProvenance,omitempty"`
+}
+
+// NewCheckpoint initializes the checkpoint envelope with empty device and provenance maps.
 func NewCheckpoint() *Checkpoint {
 	pc := &Checkpoint{
 		Checksum: 0,
 		V1: &CheckpointV1{
-			PreparedClaimsByPodUID: make(PreparedClaimsByPodUID),
+			PreparedClaimsByPodUID:  make(PreparedClaimsByPodUID),
+			PreparedClaimProvenance: make(PreparedClaimProvenanceByPodUID),
 		},
 	}
 	return pc
