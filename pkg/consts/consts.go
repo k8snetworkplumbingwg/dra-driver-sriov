@@ -40,6 +40,7 @@ const (
 	AttributeResourceName       = DriverName + "/resourceName"
 	AttributeLinkType           = DriverName + "/linkType"
 	AttributeRDMACapable        = DriverName + "/rdmaCapable"
+	AttributeCxiCapable         = DriverName + "/cxiCapable"
 	AttributeInterfaceName      = DriverName + "/interfaceName"
 	AttributeMultusDeviceID     = MultusAttributePrefix + "/deviceID"
 	AttributeMultusResourceName = MultusAttributePrefix + "/resourceName"
@@ -69,6 +70,10 @@ const (
 
 	// RDMA device constants
 	SysClassInfiniband = "/sys/class/infiniband"
+
+	// CXI (Slingshot Cassini) device constants
+	SysBusPciCxiDir = "cxi"
+	DevDir          = "/dev"
 )
 
 // Kubernetes standard attributes
@@ -94,6 +99,7 @@ var ReservedAttributes = map[resourceapi.QualifiedName]bool{
 	AttributeStandardPciAddress: true,
 	AttributeLinkType:           true,
 	AttributeRDMACapable:        true,
+	AttributeCxiCapable:         true,
 	AttributeNUMANode:           true,
 }
 

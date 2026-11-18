@@ -113,6 +113,21 @@ func (mr *MockInterfaceMockRecorder) EnsureVhostModulesLoaded() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureVhostModulesLoaded", reflect.TypeOf((*MockInterface)(nil).EnsureVhostModulesLoaded))
 }
 
+// GetCxiDeviceFile mocks base method.
+func (m *MockInterface) GetCxiDeviceFile(pciAddr string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetCxiDeviceFile", pciAddr)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetCxiDeviceFile indicates an expected call of GetCxiDeviceFile.
+func (mr *MockInterfaceMockRecorder) GetCxiDeviceFile(pciAddr any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCxiDeviceFile", reflect.TypeOf((*MockInterface)(nil).GetCxiDeviceFile), pciAddr)
+}
+
 // GetDriverByBusAndDevice mocks base method.
 func (m *MockInterface) GetDriverByBusAndDevice(device string) (string, error) {
 	m.ctrl.T.Helper()
@@ -260,6 +275,20 @@ func (m *MockInterface) GetVFList(pfPciAddress string) ([]host.VFInfo, error) {
 func (mr *MockInterfaceMockRecorder) GetVFList(pfPciAddress any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetVFList", reflect.TypeOf((*MockInterface)(nil).GetVFList), pfPciAddress)
+}
+
+// HasCxiDevice mocks base method.
+func (m *MockInterface) HasCxiDevice(pciAddr string) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HasCxiDevice", pciAddr)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// HasCxiDevice indicates an expected call of HasCxiDevice.
+func (mr *MockInterfaceMockRecorder) HasCxiDevice(pciAddr any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HasCxiDevice", reflect.TypeOf((*MockInterface)(nil).HasCxiDevice), pciAddr)
 }
 
 // IsDpdkDriver mocks base method.
