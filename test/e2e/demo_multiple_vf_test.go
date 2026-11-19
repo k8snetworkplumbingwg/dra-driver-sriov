@@ -13,6 +13,7 @@ var _ = Describe("demo/multiple-vf-claim", Label(framework.LabelStandalone), Ser
 	const (
 		ns        = "vf-test3"
 		podName   = "pod0"
+		podClaim  = "vf"
 		container = "ctr0"
 	)
 
@@ -36,10 +37,17 @@ var _ = Describe("demo/multiple-vf-claim", Label(framework.LabelStandalone), Ser
 		Expect(err).NotTo(HaveOccurred())
 
 		By("waiting for pod Ready")
-		clients.WaitForPodReady(ctx, ns, podName)
+		pod := clients.WaitForPodReady(ctx, ns, podName)
 
 		By("checking SR-IOV interfaces exists")
 		// multi-VF demo omits ifName; driver auto-names interfaces vfnet0, vfnet1
 		clients.ExpectPodLinkInterfacesExact(ctx, ns, podName, container, "lo", "eth0", "vfnet0", "vfnet1")
+
+		claimName := framework.ResourceClaimNameForPodClaim(pod, podClaim)
+		Expect(claimName).NotTo(BeEmpty(), "pod %s has no ResourceClaim for %s", podName, podClaim)
+
+		By("waiting for the driver to record the network data of both VFs on the ResourceClaim")
+		clients.WaitForResourceClaimDeviceNetworkData(ctx, ns, claimName, "vfnet0")
+		clients.WaitForResourceClaimDeviceNetworkData(ctx, ns, claimName, "vfnet1")
 	})
 })

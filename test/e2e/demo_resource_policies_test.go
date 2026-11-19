@@ -13,6 +13,7 @@ var _ = Describe("demo/resource-policies", Label(framework.LabelResourcePolicy, 
 	const (
 		ns        = "vf-test4"
 		podName   = "pod0"
+		podClaim  = "vf"
 		container = "ctr0"
 		ifName    = "net1"
 		// Matches DeviceAttributes / CEL in demo/resource-policies/resource-policy.yaml
@@ -48,9 +49,15 @@ var _ = Describe("demo/resource-policies", Label(framework.LabelResourcePolicy, 
 		clients.WaitForDeviceAttributeString(ctx, resourceNameAttr, eth1Resource)
 
 		By("waiting for pod Ready")
-		clients.WaitForPodReady(ctx, ns, podName)
+		pod := clients.WaitForPodReady(ctx, ns, podName)
 
 		By("checking SR-IOV interface has an address")
 		clients.ExpectInterfaceHasAddress(ctx, ns, podName, container, ifName)
+
+		claimName := framework.ResourceClaimNameForPodClaim(pod, podClaim)
+		Expect(claimName).NotTo(BeEmpty(), "pod %s has no ResourceClaim for %s", podName, podClaim)
+
+		By("waiting for the driver to record the network data on the ResourceClaim")
+		clients.WaitForResourceClaimDeviceNetworkData(ctx, ns, claimName, ifName)
 	})
 })
