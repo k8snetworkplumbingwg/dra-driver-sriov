@@ -2,6 +2,11 @@
 
 This demo shows how to request multiple SR-IOV Virtual Functions in a single resource claim for applications requiring multiple network interfaces.
 
+DeviceClass `demo-multiple-vf` is administrator-owned; workloads contain no SR-IOV
+opaque configuration. Applying the bundle requires permission to manage
+its classes, policies, and NADs; the `dra-driver-sriov` namespace must exist.
+Run the driver in STANDALONE mode with kernel-bound VFs.
+
 ## Overview
 
 This scenario demonstrates:
@@ -20,9 +25,9 @@ This scenario demonstrates:
 ### 2. Multi-VF Resource Claim
 The `ResourceClaimTemplate` requests multiple resources:
 - **count: 2**: Requests exactly 2 Virtual Functions
-- **deviceClassName**: Uses the standard SR-IOV device class
-- **config**: Single configuration applied to all allocated VFs
-- **VfConfig**: Specifies network attachment definition for all interfaces
+- **deviceClassName**: Selects administrator class `demo-multiple-vf`
+- The claim contains no driver configuration
+- **DeviceClass VfConfig**: Supplies the administrator NAD for all allocated VFs
 
 ### 3. Pod Deployment
 - Toolbox container for testing and debugging
@@ -42,8 +47,8 @@ Multiple VF allocation is beneficial for:
 ## Network Interface Behavior
 
 When multiple VFs are allocated:
-1. **Automatic Naming**: Interfaces are typically named `net1`, `net2`, etc.
-2. **Individual Configuration**: Each VF gets its own network namespace setup
+1. **Automatic Naming**: With the default prefix, interfaces are named `vfnet0`, `vfnet1`, etc.
+2. **Individual Configuration**: Each VF gets a distinct interface in the same Pod network namespace
 3. **Shared NetworkAttachmentDefinition**: All VFs use the same CNI configuration
 4. **Independent Operation**: Each interface operates independently
 
@@ -78,8 +83,8 @@ When multiple VFs are allocated:
 Inside the pod, you should see:
 - `lo`: Loopback interface
 - `eth0`: Default pod network interface
-- `net1`: First SR-IOV interface
-- `net2`: Second SR-IOV interface (if more than 1 VF requested)
+- `vfnet0`: First SR-IOV interface
+- `vfnet1`: Second SR-IOV interface (if more than 1 VF requested)
 
 ## Configuration Considerations
 
@@ -94,3 +99,13 @@ Inside the pod, you should see:
 - Sufficient resources available on target nodes
 - SR-IOV Network Operator properly configured
 - DRA-enabled Kubernetes cluster
+
+## Cleanup
+
+Delete the workload before removing the administrator-owned class and NAD.
+Deleting only the workload namespace leaves those resources behind.
+
+```bash
+kubectl delete pod pod0 -n vf-test3 --ignore-not-found --wait=true
+kubectl delete -f multiple-vf-one-claim.yaml --ignore-not-found
+```

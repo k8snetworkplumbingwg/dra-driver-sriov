@@ -1,0 +1,48 @@
+{{- $admission := .Values.admission | default dict }}
+{{- $claimConfiguration := $admission.claimConfiguration | default dict }}
+{{- $enabled := true }}
+{{- if hasKey $claimConfiguration "enabled" }}
+{{- $enabled = $claimConfiguration.enabled }}
+{{- end }}
+{{- $mode := "Deny" }}
+{{- if hasKey $claimConfiguration "mode" }}
+{{- $mode = $claimConfiguration.mode }}
+{{- end }}
+{{- if $enabled }}
+{{- if not (has $mode (list "Deny" "Audit")) }}
+{{- fail "admission.claimConfiguration.mode must be Deny or Audit" }}
+{{- end }}
+{{- range $resource, $path := dict "resourceclaims" "object.spec.devices" "resourceclaimtemplates" "object.spec.spec.devices" }}
+{{- $name := printf "%s-%s-config" (include "dra-driver-sriov.fullname" $) $resource }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $name }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+    - apiGroups: [resource.k8s.io]
+      apiVersions: ["*"]
+      operations: [CREATE, UPDATE]
+      resources: [{{ $resource }}]
+  validations:
+  - expression: >-
+      (request.operation == 'UPDATE' && object.spec == oldObject.spec) ||
+      !has({{ $path }}.config) ||
+      {{ $path }}.config.all(c,
+        !has(c.opaque) || c.opaque.driver != 'sriovnetwork.k8snetworkplumbingwg.io')
+    message: SR-IOV configuration must be supplied by an administrator-managed DeviceClass; remove SR-IOV opaque configuration from the claim or template.
+    reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $name }}
+spec:
+  policyName: {{ $name }}
+  validationActions: {{ if eq $mode "Audit" }}[Audit, Warn]{{ else }}[Deny]{{ end }}
+{{- end }}
+{{- end }}

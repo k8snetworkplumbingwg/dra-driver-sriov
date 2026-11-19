@@ -73,6 +73,64 @@ helm install -n dra-driver-sriov --create-namespace --wait dra-driver-sriov ./de
 kubectl -n dra-driver-sriov get pods
 ```
 
+The chart creates no DeviceClass by default. Install administrator-managed
+classes and protected NADs separately, or provide classes with `deviceClasses.items`.
+
+For upgrades from a release that created the historical
+`sriovnetwork.k8snetworkplumbingwg.io` DeviceClass, explicitly set
+`deviceClasses.createDefault=true` to retain it, or migrate **every** workload
+reference to approved classes before Helm removes it. The historical class has
+no `VfConfig`; STANDALONE requires a configured replacement class with the
+appropriate NAD settings, or explicit VFIO-without-CNI configuration.
+
+1. Install the approved classes and protected NADs before creating replacement
+   claims/templates. Use new template names for configuration-free requests;
+   ResourceClaimTemplate specs are immutable, and replacing a template does not
+   update ResourceClaims already owned by existing Pods.
+2. Record the original replica counts and suspend HPA, GitOps, operator, or other
+   automation that could restore replicas or recreate affected workloads. Scale
+   affected Deployments and StatefulSets to zero before any manual Pod deletion
+   or legacy-state cleanup; pausing a Deployment rollout alone is insufficient.
+   Keep the old driver running until old Pods, generated ResourceClaims, and
+   prepared state are removed; release unused direct claims separately. Include
+   **all workloads with legacy prepared state**, even if their claims contain no
+   SR-IOV override. Do not upgrade until cleanup finishes successfully.
+3. While workloads remain scaled to zero, update their claim/template references
+   and upgrade the driver with the chosen class-retention setting. Only after
+   references are updated and the driver upgrade succeeds, restore the recorded
+   replica counts and resume automation with its desired references and replica
+   settings updated. Fresh Pods and claims must use the new policy. Retire old
+   templates/classes only after no workloads reference them.
+
+Downgrading to a driver that predates DeviceClass provenance requires cleaning
+up **all prepared claims on every node before replacing the current driver**.
+The checkpoint checksum includes `preparedClaimProvenance`; an older driver
+discards that unknown field and fails checksum verification while metadata
+remains. Suspend replica-restoring automation and scale affected workloads to
+zero as above, then let the current driver complete normal unprepare. Retry
+failed unprepare operations until cleanup succeeds and verify the affected host
+artifacts. ResourceClaim deletion alone is not proof of cleanup.
+On each node, verify both checkpoint maps are empty (adjust the plugin path if
+configured differently):
+
+```bash
+sudo jq -e '
+  ((.v1.preparedClaimsByPodUID // {}) | length) == 0 and
+  ((.v1.preparedClaimProvenance // {}) | length) == 0
+' /var/lib/kubelet/plugins/sriovnetwork.k8snetworkplumbingwg.io/checkpoint.json
+```
+
+Only after cleanup succeeds and the check prints `true` on every node may the
+driver be downgraded. Restore workload manifests supported by the target driver
+before restoring replicas and automation. If a downgrade was attempted early and
+the old driver cannot load the checkpoint, restore the newer driver with its
+previous configuration, finish cleanup, and retry the downgrade. Do not delete
+or edit checkpoints or bypass checksum verification to force a downgrade.
+
+Use the same cleanup-first procedure when switching development builds with
+different checkpoint metadata. Earlier development builds that persisted extra
+lifecycle metadata must finish cleanup before moving to this build.
+
 In the case that [Pod Security Admission](https://kubernetes.io/docs/concepts/security/pod-security-admission/) is enabled, the driver namespace will require a security level of 'privileged'
 ```bash
 kubectl label ns dra-driver-sriov pod-security.kubernetes.io/enforce=privileged
@@ -109,6 +167,44 @@ the following chart parameters are available.
 | `selectorLabelsOverride` | object | `{}` | Override selector labels |
 | `allowDefaultNamespace` | bool | `false` | Allow deployment in the default namespace |
 | `imagePullSecrets` | list | `[]` | Image pull secrets for private registries |
+
+### DeviceClass and admission parameters
+
+| Name | Default | Description |
+| ---- | ------- | ----------- |
+| `deviceClasses.createDefault` | `false` | Explicitly create the historical class selecting all advertised SR-IOV devices. Restrict or remove it in multi-tenant clusters. |
+| `deviceClasses.items` | `[]` | Administrator-managed entries with unique `name` and complete `spec`. The historical broad class name is reserved. Empty permits externally managed classes. |
+| `admission.claimConfiguration.enabled` | `true` | Render claim/template validation policies and bindings. Hardened deployments disabling this require equivalent external policies. |
+| `admission.claimConfiguration.mode` | `Deny` | `Deny` rejects claim configuration; `Audit` renders Audit/Warn for migration inventory. The binary always rejects claim overrides. |
+
+For example, to install an approved VFIO class without CNI:
+
+```yaml
+deviceClasses:
+  items:
+  - name: sriov-vfio
+    spec:
+      selectors:
+      - cel:
+          expression: device.driver == 'sriovnetwork.k8snetworkplumbingwg.io'
+      config:
+      - opaque:
+          driver: sriovnetwork.k8snetworkplumbingwg.io
+          parameters:
+            apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+            kind: VfConfig
+            driver: vfio-pci
+```
+
+Narrow selectors and apply administrator-owned namespace ResourceQuotas for the
+intended deployment. Check installed policy bindings, not only rendered output.
+
+The installer needs permission to manage DeviceClasses and admission policies;
+the node driver's service account receives no additional class-write or binding
+permissions. Class-write RBAC does not restrict which namespaces may request a
+class: configure namespace admission and per-class ResourceQuotas separately.
+Hardened multi-tenant deployments must also verify Kubernetes 1.36 granular
+claim-status authorization; the chart's 1.34 version floor alone is insufficient.
 
 ### Image Parameters
 

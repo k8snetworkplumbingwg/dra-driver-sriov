@@ -2,6 +2,11 @@
 
 This demo showcases how to use `SriovResourcePolicy` to control which SR-IOV Virtual Functions are advertised as Kubernetes resources based on various hardware and configuration criteria.
 
+DeviceClass `demo-resource-policies` is administrator-owned; workloads contain no SR-IOV
+opaque configuration. Applying the bundle requires permission to manage
+its classes, policies, and NADs; the `dra-driver-sriov` namespace must exist.
+Run the driver in STANDALONE mode with kernel-bound VFs.
+
 ## Overview
 
 This scenario demonstrates:
@@ -29,8 +34,8 @@ The `SriovResourcePolicy` resource defines which SR-IOV devices should be advert
 
 ### 3. Resource Allocation
 - ResourceClaimTemplate requests exactly 1 VF from `eth1_resource`
-- Uses CEL (Common Expression Language) to filter devices by resource name
-- Specifies VfConfig with interface name and network attachment
+- The administrator DeviceClass uses CEL to require `eth1_resource`
+- Selects `demo-resource-policies`; its administrator VfConfig supplies the interface name and protected NAD
 
 ### 4. Pod Deployment
 - Deploys a toolbox pod with network capabilities
@@ -39,13 +44,26 @@ The `SriovResourcePolicy` resource defines which SR-IOV devices should be advert
 
 ## Usage
 
-1. Remove any catch-all policy that would otherwise claim the same VFs first.
+1. Save and remove any catch-all policy that would otherwise claim the same VFs first.
    Policy evaluation is first-match (policies sorted by name), so something like
    `all-devices` prevents `eth0_resource` / `eth1_resource` attributes from being stamped:
 
    ```bash
-   kubectl -n dra-driver-sriov delete sriovresourcepolicy all-devices --ignore-not-found
+   POLICY_BACKUP_DIR=$(mktemp -d)
+   if kubectl -n dra-driver-sriov get sriovresourcepolicy all-devices \
+     --ignore-not-found -o json > "$POLICY_BACKUP_DIR/original.json"; then
+     jq 'del(.metadata.uid, .metadata.resourceVersion, .metadata.creationTimestamp,
+             .metadata.generation, .metadata.managedFields, .status)' \
+       "$POLICY_BACKUP_DIR/original.json" > "$POLICY_BACKUP_DIR/all-devices.json" &&
+       kubectl -n dra-driver-sriov delete sriovresourcepolicy all-devices --ignore-not-found
+   fi
+   printf 'Policy backup directory: %s\n' "$POLICY_BACKUP_DIR"
    ```
+
+   These commands use `jq` to save a restorable policy without server metadata.
+   Stop if backup/removal fails. Keep the backup directory and use the same Bash
+   session for cleanup, or reset `POLICY_BACKUP_DIR` to the printed path. If no
+   original policy existed, the backup is empty and cleanup must not create one.
 
 2. Apply the resource policy to advertise SR-IOV resources:
    ```bash
@@ -72,3 +90,22 @@ The `SriovResourcePolicy` resource defines which SR-IOV devices should be advert
 - SR-IOV capable hardware
 - SR-IOV Network Operator installed
 - Physical Functions (eth0, eth1) configured on target nodes
+
+## Cleanup
+
+Delete the workload before removing the administrator-owned class and NAD.
+Deleting only the workload namespace leaves those resources behind.
+
+```bash
+kubectl delete pod pod0 -n vf-test4 --ignore-not-found --wait=true
+kubectl delete -f resource-policy.yaml --ignore-not-found
+```
+
+After removing the temporary `example-resource-policy`, restore the saved
+original policy. Skip restoration if none existed before setup:
+
+```bash
+if [ -s "$POLICY_BACKUP_DIR/all-devices.json" ]; then
+  kubectl apply -f "$POLICY_BACKUP_DIR/all-devices.json"
+fi
+```

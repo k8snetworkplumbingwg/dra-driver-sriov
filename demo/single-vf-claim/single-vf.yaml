@@ -1,4 +1,8 @@
----
+# Administrator setup: policy, attributes, DeviceClasses and NADs below require
+# administrator credentials. NADs live in the protected dra-driver-sriov namespace.
+# Tenant claims/templates contain requests only; they cannot supply SR-IOV config.
+# The driver release namespace must already exist; adjust admin namespace references
+# together if the driver was installed elsewhere.
 # Advertise all SR-IOV devices on all nodes (required for device discovery).
 # Adjust namespace to match the driver's Helm release namespace.
 apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
@@ -18,13 +22,13 @@ metadata:
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
 metadata:
-  name: vf-test1
-  namespace: vf-test1
+  name: "demo-single-vf-net"
+  namespace: "dra-driver-sriov"
 spec:
   config: |-
     {
         "cniVersion": "1.0.0",
-        "name": "vf-test1",
+        "name": "demo-single-vf-net",
         "type": "sriov",
         "vlan": 0,
         "spoofchk": "on",
@@ -43,6 +47,25 @@ spec:
         }
     }
 ---
+# Administrator-owned class: tenant claims select this configuration.
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: demo-single-vf
+spec:
+  selectors:
+  - cel:
+      expression: device.driver == 'sriovnetwork.k8snetworkplumbingwg.io'
+  config:
+  - opaque:
+      driver: sriovnetwork.k8snetworkplumbingwg.io
+      parameters:
+        apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
+        kind: VfConfig
+        ifName: net1
+        netAttachDefName: demo-single-vf-net
+        netAttachDefNamespace: dra-driver-sriov
+---
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaimTemplate
 metadata:
@@ -54,17 +77,7 @@ spec:
       requests:
       - name: vf
         exactly:
-          deviceClassName: sriovnetwork.k8snetworkplumbingwg.io
-      config:
-      - requests: ["vf"]
-        opaque:
-          driver: sriovnetwork.k8snetworkplumbingwg.io
-          parameters:
-            apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
-            kind: VfConfig
-            ifName: net1
-            netAttachDefName: vf-test1
-
+          deviceClassName: "demo-single-vf"
 ---
 apiVersion: v1
 kind: Pod

@@ -7,9 +7,14 @@ attached through the driver **NRI** path (`VfConfig`: `ifName`, `netAttachDefNam
 For the same alignment constraint with **Multus** attach, see
 [`../multus-integration-resource-alignment/`](../multus-integration-resource-alignment/).
 
+DeviceClass `demo-resource-alignment` is administrator-owned; workloads contain no SR-IOV
+opaque configuration. Applying the bundle requires permission to manage
+its classes, policies, and NADs; the `dra-driver-sriov` namespace must exist.
+Run the driver in STANDALONE mode with kernel-bound VFs.
+
 ## Prerequisite: deploy DRA SR-IOV driver in STANDALONE mode
 
-This fixture uses opaque `VfConfig` on the ResourceClaim. The driver must run with
+This fixture uses opaque `VfConfig` on DeviceClass `demo-resource-alignment`. The claim contains requests and constraints only. The driver must run with
 `kubeletPlugin.configurationMode=STANDALONE` (NRI enabled).
 
 From the repository root on a virtual cluster:
@@ -48,15 +53,19 @@ overlap what the SR-IOV driver publishes so `matchAttribute` can succeed.
 The `resource-alignment.yaml` file creates:
 
 1. **`SriovResourcePolicy`** (`all-devices`) in namespace `dra-driver-sriov`
-   - Advertises SR-IOV devices with an empty config (all devices on the node)
+   - Advertises all discovered SR-IOV VFs using an empty policy config
 2. **Namespace** `vf-test5`
-3. **NetworkAttachmentDefinition** `vf-test1`
+3. **NetworkAttachmentDefinition** `demo-alignment-net` in namespace `dra-driver-sriov`
    - SR-IOV CNI config with IPAM subnet `10.0.1.0/24`
-4. **`ResourceClaimTemplate`** `resource-alignment`
-   - Requests one VF (`sriovnetwork.k8snetworkplumbingwg.io`) and one GPU (`gpu.example.com`)
+4. **`DeviceClass`** `demo-resource-alignment`
+   - Selects VFs from `sriovnetwork.k8snetworkplumbingwg.io`
+   - **`VfConfig`**: `ifName: net1`, `netAttachDefName: demo-alignment-net`
+   - **`netAttachDefNamespace`**: `dra-driver-sriov`
+5. **`ResourceClaimTemplate`** `resource-alignment`
+   - Requests one VF (`demo-resource-alignment`) and one GPU (`gpu.example.com`)
    - **`matchAttribute`**: `resource.kubernetes.io/pcieRoot`
-   - **`VfConfig`**: `ifName: net1`, `netAttachDefName: vf-test1`
-5. **Pod** `pod0`
+   - References the administrator-managed class without claim-level `VfConfig`
+6. **Pod** `pod0`
    - Consumes the claim via `resourceClaimTemplateName: resource-alignment`
 
 ## Deploy
@@ -76,7 +85,8 @@ kubectl apply -f resource-alignment.yaml
 2. Check namespace resources and claim allocation:
 
    ```bash
-   kubectl get sriovresourcepolicy,net-attach-def,resourceclaimtemplate,resourceclaim,pod -n vf-test5
+   kubectl get resourceclaimtemplate,resourceclaim,pod -n vf-test5
+   kubectl get net-attach-def -n dra-driver-sriov demo-alignment-net
    ```
 
 3. Wait for the pod and inspect interfaces:
@@ -102,12 +112,16 @@ make e2e-workloads E2E_LABEL_FILTER='Standalone && Alignment'
 - **Pod pending**
   - Check `ResourceClaim` events; ensure `all-devices` policy is applied and VFs exist.
 - **No `net1` in pod**
-  - Driver must be STANDALONE; verify `VfConfig` and NAD namespace match the claim.
+  - Driver must be STANDALONE; verify the DeviceClass VfConfig references the protected NAD namespace.
 
 ## Cleanup
 
+Delete the workload before removing the administrator-owned class and NAD.
+Deleting only the workload namespace leaves those resources behind.
+
 ```bash
-kubectl delete -f resource-alignment.yaml
+kubectl delete pod pod0 -n vf-test5 --ignore-not-found --wait=true
+kubectl delete -f resource-alignment.yaml --ignore-not-found
 ```
 
 ## Related demos

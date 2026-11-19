@@ -12,6 +12,7 @@ import (
 	"github.com/containerd/nri/pkg/api"
 	resourceapi "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
@@ -19,8 +20,10 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
 	ctrlclientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 	cnimock "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cni/mock"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/devicestate"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/podmanager"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
@@ -91,7 +94,7 @@ var _ = Describe("NRI Plugin", func() {
 
 		flags := &types.Flags{
 			DefaultInterfacePrefix:      "vfnet",
-			KubeletPluginsDirectoryPath: "/tmp",
+			KubeletPluginsDirectoryPath: GinkgoT().TempDir(),
 		}
 		cfg = &types.Config{Flags: flags}
 
@@ -133,7 +136,7 @@ var _ = Describe("NRI Plugin", func() {
 				PodUID:             pod.Uid,
 			},
 		}
-		Expect(podManager.Set(k8stypes.UID(pod.Uid), k8stypes.UID("claim-1"), prepared)).To(Succeed())
+		storeTrustedNRIClaim(plugin, pod, prepared)
 
 		mockCNI.EXPECT().
 			AttachNetwork(gomock.Any(), pod, "/proc/123/ns/net", prepared[0]).
@@ -141,6 +144,33 @@ var _ = Describe("NRI Plugin", func() {
 
 		// The goroutine uses a channel to update claim status; we don't rely on it here
 		Expect(plugin.RunPodSandbox(ctx, pod)).To(Succeed())
+	})
+
+	DescribeTable("rejects unverified saved state before any CNI attachment", func(legacy bool) {
+		prepared := types.PreparedDevices{{IfName: "vfnet0", PciAddress: "0000:00:00.1"}}
+		claim := storeTrustedNRIClaim(plugin, pod, prepared)
+		var provenance *types.PreparedClaimMeta
+		if !legacy {
+			meta, found := podManager.ClaimProvenance(k8stypes.UID(pod.Uid), claim.UID)
+			Expect(found).To(BeTrue())
+			meta.ConfigFingerprint = "mismatch"
+			provenance = &meta
+		}
+		Expect(podManager.Set(k8stypes.UID(pod.Uid), claim.UID, prepared, provenance)).To(Succeed())
+		// No AttachNetwork expectation: any CNI call before rejection fails the spec.
+		Expect(plugin.RunPodSandbox(ctx, pod)).To(MatchError(ContainSubstring("migration")))
+		Expect(plugin.networkDeviceDataUpdateChan).To(BeEmpty())
+		_, found := podManager.Get(k8stypes.UID(pod.Uid), claim.UID)
+		Expect(found).To(BeTrue(), "unverified state must remain available for cleanup")
+	}, Entry("legacy record", true), Entry("fingerprint mismatch", false))
+
+	It("skips CNI ADD and DEL for trusted VFIO without a NAD", func() {
+		prepared := types.PreparedDevices{{Config: &configapi.VfConfig{Driver: "vfio-pci"}}}
+		storeTrustedNRIClaim(plugin, pod, prepared)
+		// No CNI expectations: this mode exposes devices without attaching a network.
+		Expect(plugin.RunPodSandbox(ctx, pod)).To(Succeed())
+		Expect(plugin.StopPodSandbox(ctx, pod)).To(Succeed())
+		Expect(prepared[0].NetAttachDefConfig).To(BeEmpty())
 	})
 
 	It("returns error when CNI attach fails", func() {
@@ -152,7 +182,7 @@ var _ = Describe("NRI Plugin", func() {
 				PodUID:             pod.Uid,
 			},
 		}
-		Expect(podManager.Set(k8stypes.UID(pod.Uid), k8stypes.UID("claim-1"), prepared)).To(Succeed())
+		storeTrustedNRIClaim(plugin, pod, prepared)
 
 		mockCNI.EXPECT().
 			AttachNetwork(gomock.Any(), pod, "/proc/123/ns/net", prepared[0]).
@@ -206,7 +236,7 @@ var _ = Describe("NRI Plugin", func() {
 				},
 			},
 		}
-		Expect(podManager.Set(k8stypes.UID(pod.Uid), claimUID, prepared)).To(Succeed())
+		storeTrustedNRIClaim(plugin, pod, prepared)
 
 		expectedNetworkData := &resourceapi.NetworkDeviceData{
 			InterfaceName: "net1",
@@ -256,7 +286,7 @@ var _ = Describe("NRI Plugin", func() {
 				},
 			},
 		}
-		Expect(podManager.Set(k8stypes.UID(pod.Uid), claimUID, prepared)).To(Succeed())
+		storeTrustedNRIClaim(plugin, pod, prepared)
 
 		mockCNI.EXPECT().
 			AttachNetwork(gomock.Any(), pod, "/proc/123/ns/net", prepared[0]).
@@ -276,7 +306,7 @@ var _ = Describe("NRI Plugin", func() {
 				PodUID:             pod.Uid,
 			},
 		}
-		Expect(podManager.Set(k8stypes.UID(pod.Uid), k8stypes.UID("claim-1"), prepared)).To(Succeed())
+		Expect(podManager.Set(k8stypes.UID(pod.Uid), k8stypes.UID("claim-1"), prepared, nil)).To(Succeed())
 
 		mockCNI.EXPECT().
 			DetachNetwork(gomock.Any(), pod, "/proc/123/ns/net", prepared[0]).
@@ -294,7 +324,7 @@ var _ = Describe("NRI Plugin", func() {
 				PodUID:             pod.Uid,
 			},
 		}
-		Expect(podManager.Set(k8stypes.UID(pod.Uid), k8stypes.UID("claim-1"), prepared)).To(Succeed())
+		Expect(podManager.Set(k8stypes.UID(pod.Uid), k8stypes.UID("claim-1"), prepared, nil)).To(Succeed())
 
 		// Pod without network namespace
 		podNoNetNS := &api.PodSandbox{
@@ -332,7 +362,7 @@ var _ = Describe("NRI Plugin", func() {
 				PodUID:             pod.Uid,
 			},
 		}
-		Expect(podManager.Set(k8stypes.UID(pod.Uid), k8stypes.UID("claim-1"), prepared)).To(Succeed())
+		Expect(podManager.Set(k8stypes.UID(pod.Uid), k8stypes.UID("claim-1"), prepared, nil)).To(Succeed())
 
 		mockCNI.EXPECT().
 			DetachNetwork(gomock.Any(), pod, "/proc/123/ns/net", prepared[0]).
@@ -348,7 +378,7 @@ var _ = Describe("NRI Plugin Creation", func() {
 	It("creates a new NRI plugin successfully", func() {
 		flags := &types.Flags{
 			DefaultInterfacePrefix:      "net",
-			KubeletPluginsDirectoryPath: "/tmp",
+			KubeletPluginsDirectoryPath: GinkgoT().TempDir(),
 		}
 		cfg := &types.Config{
 			Flags: flags,
@@ -546,7 +576,7 @@ var _ = Describe("NRI updateNetworkDeviceData ordering", func() {
 				},
 			},
 		}
-		Expect(pm.Set(podUID, claimUID, prepared)).To(Succeed())
+		Expect(pm.Set(podUID, claimUID, prepared, nil)).To(Succeed())
 
 		claim := &resourceapi.ResourceClaim{
 			ObjectMeta: metav1.ObjectMeta{
@@ -622,7 +652,7 @@ var _ = Describe("NRI updateNetworkDeviceData ordering", func() {
 				},
 			},
 		}
-		Expect(pm.Set(podUID, claimUID, prepared)).To(Succeed())
+		Expect(pm.Set(podUID, claimUID, prepared, nil)).To(Succeed())
 
 		claim := &resourceapi.ResourceClaim{
 			ObjectMeta: metav1.ObjectMeta{
@@ -705,7 +735,7 @@ var _ = Describe("NRI updateNetworkDeviceData ordering", func() {
 				},
 			},
 		}
-		Expect(pm.Set(podUID, preparedFor, prepared)).To(Succeed())
+		Expect(pm.Set(podUID, preparedFor, prepared, nil)).To(Succeed())
 
 		// Same name, different object: the claim these devices were prepared for
 		// is gone and this one belongs to whoever recreated it.
@@ -749,3 +779,39 @@ var _ = Describe("NRI updateNetworkDeviceData ordering", func() {
 		Expect(got.Status.Devices[0].NetworkData).To(BeNil(), "the replacement claim must not take the old claim's network data")
 	})
 })
+
+// storeTrustedNRIClaim connects NRI fixtures to a matching class-only allocation and saved provenance.
+func storeTrustedNRIClaim(plugin *Plugin, pod *api.PodSandbox, devices types.PreparedDevices) *resourceapi.ResourceClaim {
+	claim := &resourceapi.ResourceClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "claim-1", UID: "claim-1"}}
+	claim.Spec.Devices.Requests = []resourceapi.DeviceRequest{{Name: "request-a", Exactly: &resourceapi.ExactDeviceRequest{DeviceClassName: "test-class"}}}
+	claim.Status.ReservedFor = []resourceapi.ResourceClaimConsumerReference{{UID: k8stypes.UID(pod.Uid)}}
+	claim.Status.Allocation = &resourceapi.AllocationResult{Devices: resourceapi.DeviceAllocationResult{Results: []resourceapi.DeviceRequestAllocationResult{{Request: "request-a", Driver: consts.DriverName, Pool: "pool-a", Device: "dev-a"}}}}
+	cfg := configapi.DefaultVfConfig()
+	cfg.NetAttachDefName = "net1"
+	cfg.NetAttachDefNamespace = "admin"
+	if len(devices) > 0 && devices[0].Config != nil {
+		cfg = devices[0].Config.DeepCopy()
+	}
+	cfg.APIVersion = configapi.GroupName + "/v1alpha1"
+	cfg.Kind = configapi.VfConfigKind
+	raw, err := runtime.Encode(configapi.Decoder.(runtime.Encoder), cfg)
+	Expect(err).NotTo(HaveOccurred())
+	claim.Status.Allocation.Devices.Config = []resourceapi.DeviceAllocationConfiguration{{Source: resourceapi.AllocationConfigSourceClass, DeviceConfiguration: resourceapi.DeviceConfiguration{Opaque: &resourceapi.OpaqueDeviceConfiguration{Driver: consts.DriverName, Parameters: runtime.RawExtension{Raw: raw}}}}}
+	for _, device := range devices {
+		device.Config = cfg.DeepCopy()
+		device.PodUID = pod.Uid
+		device.ClaimNamespacedName = kubeletplugin.NamespacedObject{NamespacedName: k8stypes.NamespacedName{Namespace: claim.Namespace, Name: claim.Name}, UID: claim.UID}
+		device.Device = drapbv1.Device{RequestNames: []string{"request-a"}, PoolName: "pool-a", DeviceName: "dev-a"}
+		if device.IfName == "" {
+			device.IfName = "vfnet0"
+		}
+		if device.NetAttachDefConfig == "" && cfg.Driver != "vfio-pci" {
+			device.NetAttachDefConfig = `{"cniVersion":"1.0.0","type":"sriov","name":"net1"}`
+		}
+	}
+	resolved, err := devicestate.ResolveClaimConfiguration(claim, configapi.Decoder, string(consts.ConfigurationModeStandalone))
+	Expect(err).NotTo(HaveOccurred())
+	plugin.k8sClient.Client = ctrlclientfake.NewClientBuilder().WithScheme(flags.Scheme).WithRuntimeObjects(claim).Build()
+	Expect(plugin.podManager.Set(k8stypes.UID(pod.Uid), claim.UID, devices, &types.PreparedClaimMeta{ConfigPolicyVersion: resolved.ConfigPolicyVersion, ConfigFingerprint: resolved.Fingerprint})).To(Succeed())
+	return claim
+}
