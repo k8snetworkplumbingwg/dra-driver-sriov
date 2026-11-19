@@ -2,7 +2,6 @@ package devicestate
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -10,7 +9,6 @@ import (
 	"strings"
 
 	resourceapi "k8s.io/api/resource/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
@@ -196,22 +194,6 @@ func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 			return nil, fmt.Errorf("error applying config on device: %v", err)
 		}
 
-		rawConfig, err := json.Marshal(config)
-		if err != nil {
-			logger.Error(err, "error marshaling config", "config", config)
-			rawConfig = []byte("{}")
-		}
-		// Record the applied config as this device's status. Upsert instead of
-		// append: a claim reused by another pod, or re-prepared after a restart,
-		// can already carry this device, and a duplicate (driver, pool, device,
-		// share ID) key makes the whole status update fail validation.
-		claim.Status.Devices = drasriovtypes.UpsertDeviceStatus(claim.Status.Devices, resourceapi.AllocatedDeviceStatus{
-			Device:  result.Device,
-			Pool:    result.Pool,
-			Driver:  result.Driver,
-			ShareID: (*string)(result.ShareID),
-			Data:    &runtime.RawExtension{Raw: rawConfig},
-		})
 		preparedDevices = append(preparedDevices, preparedDevice)
 	}
 
@@ -402,6 +384,7 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 		PodUID:             string(claim.Status.ReservedFor[0].UID),
 		Config:             config,
 		OriginalDriver:     originalDriver,
+		ShareID:            (*string)(result.ShareID),
 	}
 
 	return preparedDevice, nil

@@ -45,5 +45,8 @@ var _ = Describe("demo/resourceclaim", Label(framework.LabelStandalone), Serial,
 
 		By("checking SR-IOV interface has an address")
 		clients.ExpectInterfaceHasAddress(ctx, ns, podName, container, ifName)
+
+		By("waiting for the driver to record the network data on the ResourceClaim")
+		clients.WaitForResourceClaimDeviceNetworkData(ctx, ns, claimName, ifName)
 	})
 })
