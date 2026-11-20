@@ -538,6 +538,9 @@ The project includes unit tests and end-to-end tests:
 # Run unit tests
 make test
 
+# Run unit tests with the race detector, as CI does
+make test-coverage
+
 # Run with coverage
 make coverage
 
