@@ -118,7 +118,7 @@ test:
 	$(filter-coverage)
 
 test-coverage:
-	KUBEBUILDER_ASSETS=$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir=$(ENVTEST_ASSETS_DIR) -p path) go test -v -covermode=atomic -coverprofile=$(COVERAGE_FILE) $(MODULE)/...
+	KUBEBUILDER_ASSETS=$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir=$(ENVTEST_ASSETS_DIR) -p path) go test -v -race -covermode=atomic -coverprofile=$(COVERAGE_FILE) $(MODULE)/...
 	$(filter-coverage)
 
 coverage: test
