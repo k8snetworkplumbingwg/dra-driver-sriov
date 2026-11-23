@@ -2,6 +2,7 @@ package controller_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,8 +44,9 @@ var (
 	cancelFunc context.CancelFunc
 
 	reconciler *controller.SriovResourcePolicyReconciler
-	// applied tracks the last call to UpdatePolicyDevices
-	applied map[string]map[resourcev1.QualifiedName]resourcev1.DeviceAttribute
+	// applied tracks the last call to UpdatePolicyDevices, made on a controller worker goroutine.
+	appliedMu sync.Mutex
+	applied   map[string]map[resourcev1.QualifiedName]resourcev1.DeviceAttribute
 )
 
 var _ = BeforeSuite(func(ctx SpecContext) {
@@ -90,6 +92,8 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 	devState.EXPECT().GetAllocatableDevices().AnyTimes().Return(defaultAllocatableDevices())
 	devState.EXPECT().UpdatePolicyDevices(gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
 		func(_ context.Context, m map[string]map[resourcev1.QualifiedName]resourcev1.DeviceAttribute) error {
+			appliedMu.Lock()
+			defer appliedMu.Unlock()
 			applied = m
 			return nil
 		},
@@ -109,6 +113,13 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 		return k8sClient.Get(context.Background(), client.ObjectKey{Name: "test-node"}, tmp)
 	}, 10*time.Second, 200*time.Millisecond).Should(Succeed())
 })
+
+// lastApplied returns the devices of the last UpdatePolicyDevices call.
+func lastApplied() map[string]map[resourcev1.QualifiedName]resourcev1.DeviceAttribute {
+	appliedMu.Lock()
+	defer appliedMu.Unlock()
+	return applied
+}
 
 var _ = AfterSuite(func() {
 	if cancelFunc != nil {
@@ -152,7 +163,7 @@ func defaultAllocatableDevices() drasriovtypes.AllocatableDevices {
 var _ = Describe("SriovResourcePolicyReconciler (envtest)", func() {
 	It("should handle no policies in namespace", func(ctx SpecContext) {
 		Consistently(func() int {
-			return len(applied)
+			return len(lastApplied())
 		}, 500*time.Millisecond, 100*time.Millisecond).Should(Equal(0))
 	})
 
@@ -167,7 +178,7 @@ var _ = Describe("SriovResourcePolicyReconciler (envtest)", func() {
 		}
 		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
 
-		Eventually(func() int { return len(applied) }, 5*time.Second, 200*time.Millisecond).Should(BeNumerically(">=", 1))
+		Eventually(func() int { return len(lastApplied()) }, 5*time.Second, 200*time.Millisecond).Should(BeNumerically(">=", 1))
 	})
 
 	It("should ignore policies in other namespaces", func(ctx SpecContext) {
@@ -181,7 +192,7 @@ var _ = Describe("SriovResourcePolicyReconciler (envtest)", func() {
 		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
 
 		Consistently(func() int {
-			return len(applied)
+			return len(lastApplied())
 		}, 1*time.Second, 200*time.Millisecond).Should(BeNumerically(">=", 1))
 	})
 
@@ -196,7 +207,7 @@ var _ = Describe("SriovResourcePolicyReconciler (envtest)", func() {
 		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
 
 		// Both policies match -- devices should still be advertised (merged)
-		Eventually(func() int { return len(applied) }, 5*time.Second, 200*time.Millisecond).Should(BeNumerically(">=", 1))
+		Eventually(func() int { return len(lastApplied()) }, 5*time.Second, 200*time.Millisecond).Should(BeNumerically(">=", 1))
 	})
 
 	It("should apply DeviceAttributes when selector matches", func(ctx SpecContext) {
@@ -243,10 +254,11 @@ var _ = Describe("SriovResourcePolicyReconciler (envtest)", func() {
 		Expect(k8sClient.Create(ctx, policy)).To(Succeed())
 
 		Eventually(func() bool {
-			if len(applied) == 0 {
+			devices := lastApplied()
+			if len(devices) == 0 {
 				return false
 			}
-			for _, attrs := range applied {
+			for _, attrs := range devices {
 				if _, ok := attrs[resourcev1.QualifiedName("sriovnetwork.k8snetworkplumbingwg.io/resourceName")]; ok {
 					return true
 				}
