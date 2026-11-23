@@ -19,8 +19,10 @@ The `SriovResourcePolicy` resource defines which SR-IOV devices should be advert
   - `eth1_resource`: Filters devices connected to eth1 Physical Function
 - **resourceFilters**: Specifies filtering criteria:
   - Vendor ID filtering (Intel: `8086`)
-  - Physical Function name filtering (`pfNames`)
+  - Physical Function filtering through `pfNames`: a plain PF name selects all of its VFs, while `PF#start-end` selects an inclusive, zero-based VF ID range
   - Optional filters for device IDs, PCI addresses, NUMA nodes, and drivers
+
+For example, `pfNames: ["eth0"]` selects all VFs on `eth0`, while `pfNames: ["eth0#0-2"]` selects only VF IDs 0, 1, and 2. Bounds are inclusive, so `eth0#3-3` selects VF 3. Multiple `pfNames` entries form a union, such as `["eth0#0-2", "eth1#0-1"]`. A malformed range entry matches no devices; other valid entries remain effective. A different matching config, resource filter, or policy can still advertise the same VF independently.
 
 ### 2. Networking Setup
 - Creates a dedicated namespace (`vf-test4`)

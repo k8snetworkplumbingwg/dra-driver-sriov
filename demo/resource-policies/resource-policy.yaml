@@ -47,7 +47,11 @@ spec:
         pool: eth0-resource
     resourceFilters:
     - vendors: ["8086"]
-      pfNames: ["eth0"]
+      pfNames: ["eth0"] # Plain PF name selects all of its VFs.
+      # Quoted range notation selects VF IDs 0 through 2 on eth0 (inclusive):
+      # pfNames: ["eth0#0-2"]
+      # Multiple entries are unioned, for example ["eth0", "eth1#0-2"].
+      # A malformed range entry matches no devices.
       # Filter by PF PCI addresses (optional)
       # pfPciAddresses: ["0000:01:00.0"]
       # Filter by driver names (optional)
@@ -60,7 +64,7 @@ spec:
         pool: eth1-resource
     resourceFilters:
     - vendors: ["8086"]
-      pfNames: ["eth1"]
+      pfNames: ["eth1"] # Plain PF name selects all of its VFs.
 ---
 apiVersion: v1
 kind: Namespace
