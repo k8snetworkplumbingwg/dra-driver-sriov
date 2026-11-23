@@ -6,6 +6,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/test/e2e/framework"
 )
 
@@ -13,6 +15,7 @@ var _ = Describe("demo/claim-for-deployment", Label(framework.LabelStandalone), 
 	const (
 		ns         = "vf-test6"
 		deployName = "pod0"
+		podClaim   = "vf"
 		container  = "ctr0"
 		ifName     = "net1"
 	)
@@ -44,5 +47,14 @@ var _ = Describe("demo/claim-for-deployment", Label(framework.LabelStandalone), 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(names).NotTo(BeEmpty())
 		clients.ExpectInterfaceHasAddress(ctx, ns, names[0], container, ifName)
+
+		By("waiting for the driver to record the network data on each replica's ResourceClaim")
+		for _, name := range names {
+			pod, err := clients.Clientset.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			claimName := framework.ResourceClaimNameForPodClaim(pod, podClaim)
+			Expect(claimName).NotTo(BeEmpty(), "pod %s has no ResourceClaim for %s", name, podClaim)
+			clients.WaitForResourceClaimDeviceNetworkData(ctx, ns, claimName, ifName)
+		}
 	})
 })

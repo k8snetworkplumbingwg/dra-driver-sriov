@@ -56,6 +56,8 @@ type Driver struct {
 	cancelCtx          func(error)
 	config             *sriovdratype.Config
 	cdi                *cdi.Handler
+	// prepareStatusTimeout bounds the claim status writes of one call; zero means the default.
+	prepareStatusTimeout time.Duration
 }
 
 func buildPluginOptions(config *sriovdratype.Config) []kubeletplugin.Option {
@@ -81,12 +83,13 @@ func buildPluginOptions(config *sriovdratype.Config) []kubeletplugin.Option {
 // with the kubelet before starting the healthcheck service and publishing the available resources.
 func Start(ctx context.Context, config *sriovdratype.Config, deviceStateManager *devicestate.Manager, podManager *podmanager.PodManager, cdi *cdi.Handler) (*Driver, error) {
 	driver := &Driver{
-		client:             config.K8sClient.Interface,
-		cancelCtx:          config.CancelMainCtx,
-		config:             config,
-		deviceStateManager: deviceStateManager,
-		podManager:         podManager,
-		cdi:                cdi,
+		client:               config.K8sClient.Interface,
+		cancelCtx:            config.CancelMainCtx,
+		config:               config,
+		deviceStateManager:   deviceStateManager,
+		podManager:           podManager,
+		cdi:                  cdi,
+		prepareStatusTimeout: config.Flags.PrepareStatusTimeout,
 	}
 
 	pluginOpts := buildPluginOptions(config)

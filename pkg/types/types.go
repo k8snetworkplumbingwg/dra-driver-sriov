@@ -13,6 +13,7 @@ import (
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 
 	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
 )
 
 // AllocatableDevices is a map of device pci address to dra device objects
@@ -32,6 +33,12 @@ type NetworkDataChanStruct struct {
 	NetworkDeviceData *resourceapi.NetworkDeviceData
 	CNIConfig         map[string]interface{}
 	CNIResult         map[string]interface{}
+	// Seq orders the observations of a device; an update is stale once a later one is recorded.
+	Seq uint64
+	// Checkpointed is set once the observation is saved, so a status retry skips the disk write.
+	Checkpointed bool
+	// Requeues counts how often the update was requeued after a failed claim status write.
+	Requeues int
 }
 type NetworkDataChanStructList []*NetworkDataChanStruct
 
@@ -71,9 +78,31 @@ type PreparedDevice struct {
 	MultusResourceName  string
 	DeviceAttributes    map[string]resourceapi.DeviceAttribute
 	NetworkDeviceData   *resourceapi.NetworkDeviceData
-	PodUID              string
-	NetAttachDefConfig  string
-	OriginalDriver      string // Store original driver for restoration during unprepare
+	// NetworkDataSeq orders NetworkDeviceData. It restarts with the plugin, so it is not saved.
+	NetworkDataSeq     uint64 `json:"-"`
+	PodUID             string
+	NetAttachDefConfig string
+	OriginalDriver     string // Store original driver for restoration during unprepare
+	// ShareID is nil for an unshared device; omitempty keeps old checkpoints verifiable.
+	ShareID *string `json:",omitempty"`
+}
+
+// AllocatedDeviceStatus returns the device's entry for ResourceClaim.status.devices.
+// If Config does not marshal, Data is "{}" and the error is returned for logging.
+func (p *PreparedDevice) AllocatedDeviceStatus() (resourceapi.AllocatedDeviceStatus, error) {
+	status := resourceapi.AllocatedDeviceStatus{
+		Device:  p.Device.GetDeviceName(),
+		Pool:    p.Device.GetPoolName(),
+		Driver:  consts.DriverName,
+		ShareID: p.ShareID,
+		Data:    &runtime.RawExtension{Raw: []byte("{}")},
+	}
+	raw, err := json.Marshal(p.Config)
+	if err != nil {
+		return status, fmt.Errorf("marshaling config for device %s: %w", status.Device, err)
+	}
+	status.Data = &runtime.RawExtension{Raw: raw}
+	return status, nil
 }
 
 func (p *PreparedDevice) ToKubeletPluginDevice(networkData *resourceapi.NetworkDeviceData) kubeletplugin.Device {

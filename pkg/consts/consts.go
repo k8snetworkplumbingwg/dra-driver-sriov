@@ -104,6 +104,9 @@ const (
 	ConfigurationModeMultus     ConfigurationMode = "MULTUS"
 )
 
+// DefaultPrepareStatusTimeout bounds the claim status writes of one prepare call.
+const DefaultPrepareStatusTimeout = 10 * time.Second
+
 var Backoff = wait.Backoff{
 	Duration: 100 * time.Millisecond, // Initial delay
 	Factor:   2.0,                    // Exponential factor

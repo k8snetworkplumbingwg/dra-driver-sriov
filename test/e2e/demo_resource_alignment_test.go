@@ -14,6 +14,7 @@ var _ = Describe("demo/resource-alignment", Label(framework.LabelStandalone, fra
 		ns               = "vf-test5"
 		podName          = "pod0"
 		podClaim         = "vf"
+		ifName           = "net1"
 		vfDeviceRequest  = "vf"
 		gpuDeviceRequest = "gpu"
 	)
@@ -46,5 +47,8 @@ var _ = Describe("demo/resource-alignment", Label(framework.LabelStandalone, fra
 
 		By("checking VF and GPU share pcieRoot via ResourceSlice attributes")
 		clients.ExpectResourceClaimRequestsSharePCIeRoot(ctx, ns, claimName, vfDeviceRequest, gpuDeviceRequest)
+
+		By("waiting for the driver to record the VF's network data on the ResourceClaim")
+		clients.WaitForResourceClaimDeviceNetworkData(ctx, ns, claimName, ifName)
 	})
 })

@@ -113,6 +113,13 @@ func newApp() *cli.App {
 			Destination: &flagsOptions.ConfigurationMode,
 			EnvVars:     []string{"CONFIGURATION_MODE"},
 		},
+		&cli.DurationFlag{
+			Name:        "prepare-status-timeout",
+			Usage:       "Time limit for the ResourceClaim status updates of one prepare request, for example 10s. Time spent preparing the devices is not counted.",
+			Value:       consts.DefaultPrepareStatusTimeout,
+			Destination: &flagsOptions.PrepareStatusTimeout,
+			EnvVars:     []string{"PREPARE_STATUS_TIMEOUT"},
+		},
 	}
 	cliFlags = append(cliFlags, flagsOptions.KubeClientConfig.Flags()...)
 	cliFlags = append(cliFlags, flagsOptions.LoggingConfig.Flags()...)
@@ -126,6 +133,9 @@ func newApp() *cli.App {
 		Before: func(c *cli.Context) error {
 			if c.Args().Len() > 0 {
 				return fmt.Errorf("arguments not supported: %v", c.Args().Slice())
+			}
+			if flagsOptions.PrepareStatusTimeout <= 0 {
+				return fmt.Errorf("prepare-status-timeout must be positive, got %v", flagsOptions.PrepareStatusTimeout)
 			}
 			return flagsOptions.LoggingConfig.Apply()
 		},

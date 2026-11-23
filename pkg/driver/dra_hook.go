@@ -1,9 +1,11 @@
 package driver
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	resourceapi "k8s.io/api/resource/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -15,6 +17,9 @@ import (
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
 )
 
+// statusWriteReserve is left before the kubelet's deadline for the rest of the call.
+const statusWriteReserve = time.Second
+
 func (d *Driver) PrepareResourceClaims(ctx context.Context, claims []*resourceapi.ResourceClaim) (map[k8stypes.UID]kubeletplugin.PrepareResult, error) {
 	result := make(map[k8stypes.UID]kubeletplugin.PrepareResult)
 	if len(claims) == 0 {
@@ -23,13 +28,16 @@ func (d *Driver) PrepareResourceClaims(ctx context.Context, claims []*resourceap
 	logger := klog.FromContext(ctx).WithName("PrepareResourceClaims")
 	logger.V(3).Info("claims", "claims", claims)
 
+	// The claims' status writes share one budget; preparing the devices does not use it.
+	statusBudget := cmp.Or(d.prepareStatusTimeout, consts.DefaultPrepareStatusTimeout)
+
 	// we share this between all the claims so we can enumerate network interfaces
 	ifNameIndex := 0
 	// let's prepare the claims
 	for _, claim := range claims {
 		logger.V(1).Info("Preparing claim", "claim", claim.UID)
 		logger.V(3).Info("Claim", "claim", claim)
-		result[claim.UID] = d.prepareResourceClaim(ctx, &ifNameIndex, claim)
+		result[claim.UID] = d.prepareResourceClaim(ctx, &statusBudget, &ifNameIndex, claim)
 		logger.V(1).Info("Prepared claim", "claim", claim.UID, "result", result[claim.UID])
 		if result[claim.UID].Err != nil {
 			logger.Error(result[claim.UID].Err, "failed to prepare resource claim", "claim", claim)
@@ -104,7 +112,8 @@ func (d *Driver) rollbackPreparedClaims(ctx context.Context, claims []*resourcea
 	return nil
 }
 
-func (d *Driver) prepareResourceClaim(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
+// prepareResourceClaim prepares one claim's devices; its status write draws on statusBudget.
+func (d *Driver) prepareResourceClaim(ctx context.Context, statusBudget *time.Duration, ifNameIndex *int, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
 	logger := klog.FromContext(ctx).WithName("prepareResourceClaim")
 
 	// Get pod info from claim
@@ -165,17 +174,34 @@ func (d *Driver) prepareResourceClaim(ctx context.Context, ifNameIndex *int, cla
 		}
 	}
 
-	// status.devices is shared with every other driver that contributed a device
-	// to the claim, so the retry refetches and merges on conflict rather than
-	// restoring a pre-conflict snapshot. The status write is best-effort here: on
-	// failure the devices are still prepared, so log and return them.
-	if err := types.UpdateClaimStatusWithRetry(
-		ctx,
+	deviceStatuses := make([]resourceapi.AllocatedDeviceStatus, 0, len(preparedDevices))
+	for _, preparedDevice := range preparedDevices {
+		status, statusErr := preparedDevice.AllocatedDeviceStatus()
+		if statusErr != nil {
+			logger.Error(statusErr, "recording device status with empty config", "device", preparedDevice.Device.GetDeviceName())
+		}
+		deviceStatuses = append(deviceStatuses, status)
+	}
+
+	// Upsert only the prepared devices onto the latest claim, so other entries
+	// survive a conflict. The write is best-effort: on failure, log and go on.
+	timeout := *statusBudget
+	if deadline, ok := ctx.Deadline(); ok {
+		timeout = min(timeout, time.Until(deadline)-statusWriteReserve)
+	}
+	start := time.Now()
+	statusCtx, cancelStatus := context.WithTimeout(ctx, timeout)
+	err = types.UpdateClaimStatusWithRetry(
+		statusCtx,
 		d.client.ResourceV1().ResourceClaims(claim.Namespace),
-		claim,
-		consts.DriverName,
+		claim.Name,
+		claim.UID,
 		consts.Backoff,
-	); err != nil {
+		types.UpsertDeviceStatuses(deviceStatuses),
+	)
+	cancelStatus()
+	*statusBudget -= time.Since(start)
+	if err != nil {
 		logger.Error(err, "Failed to update claim status after retries", "claim", claim.UID)
 	}
 
