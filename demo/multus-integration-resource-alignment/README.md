@@ -7,6 +7,11 @@ attached with **Multus** (pod network annotation and DRA `resourceName` attribut
 For the same alignment constraint over the **NRI / VfConfig** path, see
 [`../resource-alignment/`](../resource-alignment/).
 
+DeviceClass `demo-multus-alignment` is administrator-owned; workloads contain no SR-IOV
+opaque configuration. Applying the bundle requires permission to manage
+its classes, policies, and NADs; the `dra-driver-sriov` namespace must exist.
+Multus must allow references to NADs in that namespace.
+
 ## Prerequisite: deploy DRA SR-IOV driver in MULTUS mode
 
 These Multus demos require `kubeletPlugin.configurationMode=MULTUS`.
@@ -55,14 +60,14 @@ The `multus-integration-resource-alignment.yaml` file creates:
 2. **`SriovResourcePolicy`** (`alignment-multus-policy`) in namespace `dra-driver-sriov`
    - Selects the `DeviceAttributes` object by label and advertises matching devices
 3. **Namespace** `vf-test10`
-4. **NetworkAttachmentDefinition** `vf-test1`
+4. **NetworkAttachmentDefinition** `dra-driver-sriov/demo-multus-alignment-net`
    - Annotation `k8s.v1.cni.cncf.io/resourceName: sriov_nic_align`
    - SR-IOV CNI config with IPAM subnet `10.0.10.0/24`
 5. **`ResourceClaimTemplate`** `resource-alignment-multus`
    - Requests one VF and one GPU with **`matchAttribute`**: `resource.kubernetes.io/pcieRoot`
    - No `VfConfig` opaque config (Multus attaches the VF)
 6. **Pod** `pod0`
-   - Annotation `k8s.v1.cni.cncf.io/networks: vf-test1`
+   - Annotation `k8s.v1.cni.cncf.io/networks: dra-driver-sriov/demo-multus-alignment-net`
    - Consumes the claim via `resourceClaimTemplateName: resource-alignment-multus`
 
 ## Required Multus attributes (resource.k8s.io/v1)
@@ -96,7 +101,8 @@ kubectl apply -f multus-integration-resource-alignment.yaml
 
    ```bash
    kubectl get deviceattributes,sriovresourcepolicy -n dra-driver-sriov
-   kubectl get net-attach-def,resourceclaimtemplate,resourceclaim,pod -n vf-test10
+   kubectl get resourceclaimtemplate,resourceclaim,pod -n vf-test10
+   kubectl get net-attach-def -n dra-driver-sriov demo-multus-alignment-net
    ```
 
 3. Wait for the pod and inspect interfaces:
@@ -133,8 +139,12 @@ make e2e-workloads E2E_LABEL_FILTER='Multus && Alignment'
 
 ## Cleanup
 
+Delete the workload before removing the administrator-owned class and NAD.
+Deleting only the workload namespace leaves those resources behind.
+
 ```bash
-kubectl delete -f multus-integration-resource-alignment.yaml
+kubectl delete pod pod0 -n vf-test10 --ignore-not-found --wait=true
+kubectl delete -f multus-integration-resource-alignment.yaml --ignore-not-found
 ```
 
 ## Related demos

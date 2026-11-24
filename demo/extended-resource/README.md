@@ -2,6 +2,11 @@
 
 This demo demonstrates the **DRAExtendedResource** feature gate (Kubernetes v1.34 alpha), which allows pods to request DRA-managed devices through standard extended resource requests — the same mechanism used by the legacy device plugin API — without creating explicit ResourceClaims.
 
+DeviceClasses `sriov-port1`, `sriov-port2` are administrator-owned; workloads contain no SR-IOV
+opaque configuration. Applying the bundle requires permission to manage
+its classes, policies, and NADs; the `dra-driver-sriov` namespace must exist.
+Run the driver in STANDALONE mode with kernel-bound VFs.
+
 ## Overview
 
 This scenario demonstrates:
@@ -40,7 +45,7 @@ Each DeviceClass includes:
 - **extendedResourceName**: The extended resource name pods will request
 
 ### 3. NetworkAttachmentDefinitions
-Two NetworkAttachmentDefinitions (`sriov-port1-net`, `sriov-port2-net`) provide SR-IOV CNI configuration for each port.
+Two administrator-owned NADs in `dra-driver-sriov` (`sriov-port1-net`, `sriov-port2-net`) provide SR-IOV CNI configuration. Both classes specify that namespace explicitly.
 
 ### 4. Pod Deployment
 Two test pods demonstrate extended resource requests:
@@ -152,19 +157,19 @@ This works with any DeviceClass without modifications.
 
 ## Comparison with Explicit ResourceClaims
 
-The other demos in this repository (`single-vf-claim/`, `resourceclaim/`, `vfio-driver/`) use explicit ResourceClaims with opaque driver config.
+The other demos in this repository (`single-vf-claim/`, `resourceclaim/`, `vfio-driver/`) use explicit ResourceClaims that select administrator-managed DeviceClasses. Neither explicit nor implicit claims supply SR-IOV opaque configuration.
 
 | Feature | Extended Resource | Explicit ResourceClaim |
 |---------|-------------------|----------------------|
 | Pod spec complexity | Minimal — just `resources.requests` | Requires `resourceClaims` + `ResourceClaimTemplate` |
 | Device allocation | Yes | Yes |
 | Per-port device selection | Yes (one DeviceClass per port) | Yes (CEL selectors per request) |
-| CNI config (NetworkAttachmentDefinition) | Yes (via DeviceClass config) | Yes (via opaque config per request) |
-| Custom interface naming (ifName) | No — see note below | Yes (unique ifName per request) |
+| CNI config (NetworkAttachmentDefinition) | Yes (via DeviceClass config) | Yes (via DeviceClass config) |
+| Fixed interface naming (ifName) | Via administrator class; requires unique names | Via administrator class; requires unique names |
 | Multi-device request | Yes (set count > 1) | Yes (set count in `exactly`) |
 | Migration from device plugin | Drop-in replacement | Requires pod spec changes |
 
-> **Note on ifName:** DeviceClass config applies uniformly to all allocated devices of that class. If `ifName: net1` is set and a pod requests 2+ VFs from the same DeviceClass, both try to use `net1`, causing a sandbox creation loop. Omit `ifName` and let the driver auto-assign unique names (`vfnet0`, `vfnet1`, ...). Use explicit ResourceClaims if you need specific interface names per device.
+> **Note on ifName:** DeviceClass config applies uniformly to all allocated devices of that class. If `ifName: net1` is set and a pod requests 2+ VFs from the same DeviceClass, preparation rejects the duplicate fixed name before binding. Omit `ifName` and let the driver auto-assign unique names (`vfnet0`, `vfnet1`, ...). Use separate administrator classes with distinct fixed names when explicit per-device names are required.
 
 ## Customization
 
@@ -201,6 +206,8 @@ resources:
 ```
 
 ## Cleanup
+
+Removing the classes and protected NADs requires the corresponding API permissions.
 
 ```bash
 kubectl delete -f pod-extended-resource.yaml --ignore-not-found
@@ -239,4 +246,4 @@ kubectl get deviceclass sriov-port1 sriov-port2 -o yaml
 
 ### Multi-VF pod stuck in ContainerCreating
 
-If the DeviceClass config specifies `ifName`, all VFs of that class try to use the same interface name. Remove `ifName` from the DeviceClass config — the driver will auto-assign unique names (`vfnet0`, `vfnet1`, ...).
+If the DeviceClass config specifies `ifName`, all VFs of that class try to use the same interface name. Remove `ifName` from the DeviceClass config and recreate the affected Pods so their new claims capture the updated class snapshot. The driver will then auto-assign unique names (`vfnet0`, `vfnet1`, ...).

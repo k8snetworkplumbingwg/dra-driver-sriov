@@ -9,6 +9,9 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/containernetworking/cni/libcni"
+	nadutils "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/utils"
+
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -42,10 +45,11 @@ type Manager struct {
 	// device key also indicates that the device is advertised (policy-matched).
 	policyAttrKeys    map[string]map[resourceapi.QualifiedName]bool
 	configurationMode string
+	nodeName          string
 	iommuAvailable    bool
 }
 
-// NewManager creates a new device-state manager and initializes allocatable SR-IOV devices.
+// NewManager validates the networking mode and discovers the node's existing VFs.
 func NewManager(config *drasriovtypes.Config, cdi *cdi.Handler, deviceInfoStore DeviceInfoStore) (*Manager, error) {
 	if config == nil {
 		return nil, fmt.Errorf("config must not be nil")
@@ -57,7 +61,7 @@ func NewManager(config *drasriovtypes.Config, cdi *cdi.Handler, deviceInfoStore 
 		return nil, fmt.Errorf("cdi handler must not be nil")
 	}
 
-	configurationMode, err := normalizeConfigurationMode(config.Flags.ConfigurationMode)
+	configurationMode, err := NormalizeConfigurationMode(config.Flags.ConfigurationMode)
 	if err != nil {
 		return nil, err
 	}
@@ -78,6 +82,7 @@ func NewManager(config *drasriovtypes.Config, cdi *cdi.Handler, deviceInfoStore 
 		deviceInfoStore:        deviceInfoStore,
 		allocatable:            allocatable,
 		configurationMode:      configurationMode,
+		nodeName:               config.Flags.NodeName,
 		iommuAvailable:         host.GetHelpers().IsIommufdAvailable(),
 	}
 
@@ -89,8 +94,8 @@ func (s *Manager) GetAllocatableDevices() drasriovtypes.AllocatableDevices {
 	return s.allocatable
 }
 
-// normalizeConfigurationMode validates the configured mode and applies defaulting.
-func normalizeConfigurationMode(mode string) (string, error) {
+// NormalizeConfigurationMode defaults an empty mode to STANDALONE and rejects unsupported values.
+func NormalizeConfigurationMode(mode string) (string, error) {
 	switch consts.ConfigurationMode(mode) {
 	case "":
 		return string(consts.ConfigurationModeStandalone), nil
@@ -120,24 +125,25 @@ func (s *Manager) isMultusMode() bool {
 	return consts.ConfigurationMode(s.configurationMode) == consts.ConfigurationModeMultus
 }
 
-// PrepareDevicesForClaim prepares the devices for a given claim
-// It will return the prepared devices for the claim
-func (s *Manager) PrepareDevicesForClaim(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim) (drasriovtypes.PreparedDevices, error) {
+// PrepareDevicesForClaim preflights and prepares devices from trusted resolved configuration.
+func (s *Manager) PrepareDevicesForClaim(
+	ctx context.Context,
+	ifNameIndex *int,
+	claim *resourceapi.ResourceClaim,
+	resolved *ResolvedClaimConfiguration,
+) (drasriovtypes.PreparedDevices, error) {
 	logger := klog.FromContext(ctx).WithName("PrepareDevicesForClaim")
-
-	resultsConfig, err := getMapOfOpaqueDeviceConfigForDevice(configapi.Decoder, claim.Status.Allocation.Devices.Config)
-	if err != nil {
-		logger.Error(err, "failed to create map of opaque device config for device", "claim", *claim)
-		return nil, fmt.Errorf("error creating map of opaque device config for device: %v", err)
+	if resolved == nil {
+		return nil, fmt.Errorf("resolved claim configuration is required")
 	}
 
-	preparedDevices, err := s.prepareDevices(ctx, ifNameIndex, claim, resultsConfig)
+	preparedDevices, err := s.prepareDevices(ctx, ifNameIndex, claim, resolved)
 	if err != nil {
-		logger.Error(err, "Prepare failed", "claim", *claim)
+		logger.Error(err, "Prepare failed", "claim", klog.KObj(claim))
 		return nil, fmt.Errorf("prepare failed: %v", err)
 	}
 	if len(preparedDevices) == 0 {
-		logger.Error(fmt.Errorf("no prepared devices found for claim"), "Prepare failed", "claim", *claim)
+		logger.Error(fmt.Errorf("no prepared devices found for claim"), "Prepare failed", "claim", klog.KObj(claim))
 		return nil, fmt.Errorf("no prepared devices found for claim")
 	}
 
@@ -166,28 +172,31 @@ func (s *Manager) PrepareDevicesForClaim(ctx context.Context, ifNameIndex *int, 
 	return preparedDevices, nil
 }
 
+// prepareDevices preflights the claim, applies independent configurations, and records device status.
 func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 	claim *resourceapi.ResourceClaim,
-	resultsConfig map[string]*configapi.VfConfig) (drasriovtypes.PreparedDevices, error) {
+	resolved *ResolvedClaimConfiguration,
+) (drasriovtypes.PreparedDevices, error) {
 	logger := klog.FromContext(ctx).WithName("prepareDevices")
+	inputs, err := s.preflightDevices(ctx, ifNameIndex, claim, resolved)
+	if err != nil {
+		return nil, err
+	}
 	preparedDevices := drasriovtypes.PreparedDevices{}
 	for _, result := range claim.Status.Allocation.Devices.Results {
 		if result.Driver != consts.DriverName {
 			continue
 		}
 
-		config, ok := resultsConfig[result.Request]
+		key := allocationKeyFromResult(&result)
+		resolvedDev, ok := resolved.ByKey[key]
 		if !ok {
-			config, ok = resultsConfig[""]
+			return nil, fmt.Errorf("no resolved configuration for allocation key %s", key)
 		}
-		if !ok {
-			config = configapi.DefaultVfConfig()
-		}
-
-		// make changes if needed
+		config := resolvedDev.Config.DeepCopy()
 		config.Normalize()
 
-		preparedDevice, err := s.applyConfigOnDevice(ctx, ifNameIndex, claim, config, &result)
+		preparedDevice, err := s.applyConfigOnDevice(ctx, claim, config, &result, inputs[key])
 		if err != nil {
 			logger.Error(err, "error applying config on device", "config", config, "result", result)
 			if rollbackErr := s.unprepareDevices(preparedDevices); rollbackErr != nil {
@@ -219,7 +228,105 @@ func (s *Manager) prepareDevices(ctx context.Context, ifNameIndex *int,
 	return preparedDevices, nil
 }
 
-func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim, config *configapi.VfConfig, result *resourceapi.DeviceRequestAllocationResult) (*drasriovtypes.PreparedDevice, error) {
+// preflightDevice validates a local allocation and resolves its standalone NAD before device changes.
+func (s *Manager) preflightDevice(ctx context.Context, config *configapi.VfConfig, result *resourceapi.DeviceRequestAllocationResult) (string, error) {
+	deviceInfo, exists := s.allocatable[result.Device]
+	if !exists {
+		return "", fmt.Errorf("device %s not found in allocatable devices", result.Device)
+	}
+	if s.nodeName != "" && result.Pool != s.nodeName {
+		return "", fmt.Errorf("allocation pool %q does not match local pool %q", result.Pool, s.nodeName)
+	}
+	mode, err := NormalizeConfigurationMode(s.configurationMode)
+	if err != nil {
+		return "", err
+	}
+	if err := configapi.ValidateForPrepare(mode, config); err != nil {
+		return "", err
+	}
+	var netAttachDefRawConfig string
+	pciAttr := deviceInfo.Attributes[consts.AttributePciAddress]
+	if pciAttr.StringValue == nil || *pciAttr.StringValue == "" {
+		return "", fmt.Errorf("device %s has no PCI address", result.Device)
+	}
+	pciAddress := *pciAttr.StringValue
+	if s.isStandaloneMode() && (config.NetAttachDefName != "" || config.NetAttachDefNamespace != "") {
+		netAttachDefRawConfig, err = s.getNetAttachDefRawConfig(ctx, config.NetAttachDefNamespace, config.NetAttachDefName)
+		if err != nil {
+			return "", fmt.Errorf("error getting net attach def raw config: %w", err)
+		}
+		netAttachDefRawConfig, err = drasriovtypes.AddDeviceIDToNetConf(netAttachDefRawConfig, pciAddress)
+		if err != nil {
+			return "", fmt.Errorf("error converting net attach def config to sriov-cni format: %w", err)
+		}
+	}
+
+	if netAttachDefRawConfig != "" {
+		raw, err := nadutils.GetCNIConfigFromSpec(netAttachDefRawConfig, consts.DriverName)
+		if err != nil {
+			return "", fmt.Errorf("invalid NAD configuration: %w", err)
+		}
+		if _, err := libcni.NetworkPluginConfFromBytes(raw); err != nil {
+			return "", fmt.Errorf("invalid NAD configuration: %w", err)
+		}
+	}
+	return netAttachDefRawConfig, nil
+}
+
+type devicePreparationInput struct{ networkConfig, ifName string }
+
+// preflightDevices validates devices and assigns interface names without changing trusted configuration.
+func (s *Manager) preflightDevices(ctx context.Context, ifNameIndex *int, claim *resourceapi.ResourceClaim, resolved *ResolvedClaimConfiguration) (map[AllocationKey]devicePreparationInput, error) {
+	inputs := make(map[AllocationKey]devicePreparationInput, len(resolved.ByKey))
+	used := make(map[string]bool, len(resolved.ExistingIfNames))
+	for name, owner := range resolved.ExistingIfNames {
+		if owner != claim.UID {
+			used[name] = true
+		}
+	}
+	// Reserve every fixed name before assigning any automatic name.
+	for _, entry := range resolved.ByKey {
+		if name := entry.Config.IfName; name != "" {
+			if used[name] {
+				return nil, fmt.Errorf("interface name %q already used in this Pod", name)
+			}
+			used[name] = true
+		}
+	}
+	for _, result := range claim.Status.Allocation.Devices.Results {
+		if result.Driver != consts.DriverName {
+			continue
+		}
+		key := allocationKeyFromResult(&result)
+		entry, ok := resolved.ByKey[key]
+		if !ok {
+			return nil, fmt.Errorf("no resolved configuration for allocation key %s", key)
+		}
+		networkConfig, err := s.preflightDevice(ctx, entry.Config, &result)
+		if err != nil {
+			return nil, fmt.Errorf("request %q device %s: %w", result.Request, result.Device, err)
+		}
+		name := entry.Config.IfName
+		if s.isStandaloneMode() && name == "" && networkConfig != "" {
+			for {
+				name = fmt.Sprintf("%s%d", s.defaultInterfacePrefix, *ifNameIndex)
+				*ifNameIndex++
+				if !used[name] {
+					break
+				}
+			}
+			if err := configapi.ValidateInterfaceName(name); err != nil {
+				return nil, err
+			}
+			used[name] = true
+		}
+		inputs[key] = devicePreparationInput{networkConfig: networkConfig, ifName: name}
+	}
+	return inputs, nil
+}
+
+// applyConfigOnDevice binds one preflighted device and builds its applied and cleanup state.
+func (s *Manager) applyConfigOnDevice(ctx context.Context, claim *resourceapi.ResourceClaim, config *configapi.VfConfig, result *resourceapi.DeviceRequestAllocationResult, input devicePreparationInput) (*drasriovtypes.PreparedDevice, error) {
 	logger := klog.FromContext(ctx).WithName("applyConfigOnDevice")
 	logger.V(3).Info("Applying config on device", "config", config, "result", result)
 	deviceInfo, exist := s.allocatable[result.Device]
@@ -238,25 +345,7 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 		}
 	}
 
-	var netAttachDefRawConfig string
-	var err error
 	pciAddress := *deviceInfo.Attributes[consts.AttributePciAddress].StringValue
-	// if in standalone mode, we get the net attach def raw config and add the deviceID (PCI address) to it
-	if s.isStandaloneMode() {
-		netAttachDefNamespace := claim.GetNamespace()
-		if config.NetAttachDefNamespace != "" {
-			netAttachDefNamespace = config.NetAttachDefNamespace
-		}
-		netAttachDefRawConfig, err = s.getNetAttachDefRawConfig(ctx, netAttachDefNamespace, config.NetAttachDefName)
-		if err != nil {
-			return nil, fmt.Errorf("error getting net attach def raw config: %w", err)
-		}
-		// add to sriov-cni compatible netconf the deviceID (PCI address)
-		netAttachDefRawConfig, err = drasriovtypes.AddDeviceIDToNetConf(netAttachDefRawConfig, pciAddress)
-		if err != nil {
-			return nil, fmt.Errorf("error converting net attach def config to sriov-cni format: %w", err)
-		}
-	}
 	// Bind device to driver if specified in config
 	originalDriver, err := host.GetHelpers().BindDeviceDriver(pciAddress, config)
 	if err != nil {
@@ -368,13 +457,7 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 		DeviceNodes: deviceNodes,
 	}
 
-	ifName := config.IfName
-	// if the device name is not set, we use the default interface prefix
-	// and the interface index, we also bump the index.
-	if s.isStandaloneMode() && ifName == "" {
-		ifName = fmt.Sprintf("%s%d", s.defaultInterfacePrefix, *ifNameIndex)
-		*ifNameIndex++
-	}
+	ifName := input.ifName
 
 	metadataAttributes := buildMetadataAttributes(deviceInfo.Attributes, ifName)
 
@@ -393,7 +476,7 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 			CdiDeviceIds: []string{s.cdi.GetClaimDevices(string(claim.UID), result.Device), s.cdi.GetPodSpecName(string(claim.Status.ReservedFor[0].UID))},
 		},
 		ContainerEdits:     &cdiapi.ContainerEdits{ContainerEdits: edits},
-		NetAttachDefConfig: netAttachDefRawConfig,
+		NetAttachDefConfig: input.networkConfig,
 		IfName:             ifName,
 		PciAddress:         pciAddress,
 		MultusDeviceID:     multusDeviceID,
@@ -402,6 +485,7 @@ func (s *Manager) applyConfigOnDevice(ctx context.Context, ifNameIndex *int, cla
 		PodUID:             string(claim.Status.ReservedFor[0].UID),
 		Config:             config,
 		OriginalDriver:     originalDriver,
+		ShareID:            allocationKeyFromResult(result).ShareID,
 	}
 
 	return preparedDevice, nil
@@ -496,7 +580,7 @@ func (s *Manager) getNetAttachDefRawConfig(ctx context.Context, namespace string
 	return netAttachDef.Spec.Config, nil
 }
 
-// Unprepare removes device-info artifacts, reverts device changes, and cleans CDI specs.
+// Unprepare restores device bindings and removes claim artifacts using saved state.
 func (s *Manager) Unprepare(claimUID string, preparedDevices drasriovtypes.PreparedDevices) error {
 	var errs []error
 
@@ -510,14 +594,7 @@ func (s *Manager) Unprepare(claimUID string, preparedDevices drasriovtypes.Prepa
 
 	err := s.cdi.DeleteSpecFile(claimUID)
 	if err != nil {
-		errs = append(errs, fmt.Errorf("unable to delete CDI spec file for PodUID: %v", err))
-	}
-
-	if len(preparedDevices) > 0 && preparedDevices[0] != nil {
-		err = s.cdi.DeleteSpecFile(preparedDevices[0].PodUID)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("unable to delete CDI spec file for PodUID: %v", err))
-		}
+		errs = append(errs, fmt.Errorf("unable to delete CDI spec file for claim %s: %w", claimUID, err))
 	}
 
 	if len(errs) > 0 {

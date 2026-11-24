@@ -10,6 +10,16 @@ A Kubernetes Dynamic Resource Allocation (DRA) driver that enables exposure and 
 
 This project implements a DRA driver that allows Kubernetes workloads to request and use SR-IOV virtual functions through the native Kubernetes resource allocation system. The driver integrates with the kubelet plugin system to manage SR-IOV VF lifecycle, including discovery, allocation, and cleanup.
 
+SR-IOV preparation configuration belongs in administrator-managed DeviceClasses.
+Claims and templates select a class and may narrow device selection, but cannot
+supply this driver's `VfConfig`. The driver rejects claim configuration during
+preparation; installed admission policies can reject it earlier at API creation.
+
+Preparation uses the allocation-time class snapshot. Class edits do not update
+existing allocations; recreate affected claims when migrating. The chart creates
+no class by default: replace the example `deviceClassName` values below with an
+approved administrator-created class backed by a protected NAD when required.
+
 The driver features an advanced resource filtering system that enables administrators to define fine-grained policies for how Virtual Functions are exposed and allocated based on hardware characteristics such as vendor ID, device ID, Physical Function names, PCI addresses, PCIe topology, and more.
 
 ## Features
@@ -27,7 +37,7 @@ The driver features an advanced resource filtering system that enables administr
 - **Kubernetes Native**: Integrates seamlessly with standard Kubernetes resource request/limit model
 - **CNI Plugin Support**: Integrates with SR-IOV CNI for network configuration
 - **VFIO Driver Support**: Support for both kernel and VFIO-PCI driver binding modes
-- **Vhost-user Integration**: Optional mounting of vhost-user sockets for DPDK and userspace networking
+- **Vhost Device Access**: Optional exposure of `/dev/vhost-net` and `/dev/net/tun`
 - **Health Monitoring**: Built-in health check endpoints for monitoring driver status
 - **Helm Deployment**: Easy deployment through Helm charts
 
@@ -343,33 +353,38 @@ spec:
 
 ## VfConfig Parameters
 
-The `VfConfig` resource defines how Virtual Functions are configured and exposed to containers. All VfConfig parameters are optional with sensible defaults:
+The `VfConfig` payload in an administrator-managed DeviceClass defines how Virtual
+Functions are configured and exposed to containers. Never place it in a tenant
+claim or template. Defaults are supported for Multus classes; standalone kernel
+attachment requires an explicit NAD name and namespace. All fields, including
+`netAttachDefNamespace` and `addVhostMount`, are preserved from the class.
 
 ### Core Parameters
 
 - **`driver`**: Driver binding mode for the Virtual Function
-  - `""` (default): Use kernel networking driver
+  - `""` (default): Leave the current binding unchanged
+  - `"default"`: Restore the device's default kernel driver
   - `"vfio-pci"`: Bind to VFIO-PCI driver for userspace access (DPDK, etc.)
 
 - **`ifName`**: Network interface name inside the container
-  - Default: Auto-generated (typically `net1`, `net2`, etc.)
-  - Only relevant for kernel driver mode
+  - Default: Auto-generated for standalone CNI attachments (`vfnet0`, `vfnet1`, etc.)
+  - The prefix is configurable through `kubeletPlugin.defaultInterfacePrefix`
+  - Fixed names must be unique within the Pod; omit for classes allocating multiple interfaces
+  - Multus controls its own attachment names
 
 - **`netAttachDefName`**: Reference to NetworkAttachmentDefinition resource
   - Defines CNI configuration for the interface
-  - Required for network connectivity
+  - Required for standalone kernel attachment; Multus resolves its own NADs
 
 - **`netAttachDefNamespace`**: Namespace of the NetworkAttachmentDefinition
-  - Default: Same namespace as the pod
-  - Optional parameter for cross-namespace references
+  - Required with `netAttachDefName` for standalone/NRI attachment
+  - Use an administrator-controlled namespace; there is no pod-namespace fallback
 
 ### Advanced Parameters
 
-- **`addVhostMount`**: Mount vhost-user sockets into the container
-  - `false` (default): No vhost-user socket mounting
-  - `true`: Mount vhost-user sockets for accelerated userspace networking
-  - Typically used with DPDK applications requiring vhost-user interfaces
-  - Creates socket paths accessible by userspace networking frameworks
+- **`addVhostMount`**: Expose the fixed `/dev/vhost-net` and `/dev/net/tun` device nodes
+  - `false` (default): Do not add these device nodes
+  - `true`: Load the required vhost modules and expose the fixed nodes
 
 ### Usage Examples
 
@@ -380,6 +395,7 @@ parameters:
   kind: VfConfig
   ifName: net1
   netAttachDefName: sriov-network
+  netAttachDefNamespace: sriov-system
 ```
 
 **VFIO for DPDK Applications:**
@@ -389,12 +405,13 @@ parameters:
   kind: VfConfig
   driver: vfio-pci
   addVhostMount: true
-  netAttachDefName: sriov-management
+  # Omit both NAD fields for VFIO without CNI.
 ```
 
 ### Example Workloads
 
 The `demo/` directory contains comprehensive example scenarios demonstrating different usage patterns:
+Run demos separately; some share namespaces and advertisement policies.
 
 #### Single VF Claim (`demo/single-vf-claim/`)
 Complete example showing a pod requesting a single SR-IOV virtual function:
@@ -403,9 +420,9 @@ Complete example showing a pod requesting a single SR-IOV virtual function:
 - Simple container deployment with high-performance networking
 - VfConfig parameters for kernel networking:
   - `ifName: net1`: Network interface name in the container
-  - `netAttachDefName: vf-test1`: References the NetworkAttachmentDefinition
-  - `driver`: Driver binding mode (default: kernel driver)
-  - `addVhostMount`: Mount vhost-user sockets (default: false)
+  - `netAttachDefName: demo-single-vf-net`: References the administrator NAD
+  - `driver`: Driver binding mode (omitted: preserve the current binding)
+  - `addVhostMount`: Expose `/dev/vhost-net` and `/dev/net/tun` (default: false)
 
 #### Multiple VF Claim (`demo/multiple-vf-claim/`)
 Demonstrates requesting multiple Virtual Functions in a single resource claim:
@@ -413,7 +430,7 @@ Demonstrates requesting multiple Virtual Functions in a single resource claim:
 - Load balancing and bandwidth aggregation use cases
 - Multi-interface networking setup
 - VfConfig applies to all allocated VFs in the claim
-- Automatic interface naming (typically net1, net2, etc.)
+- Automatic standalone interface naming (`vfnet0`, `vfnet1`, etc. by default)
 
 #### Resource Policies (`demo/resource-policies/`)  
 Shows how to use SriovResourcePolicy for controlling device advertisement:
@@ -425,12 +442,11 @@ Shows how to use SriovResourcePolicy for controlling device advertisement:
 Illustrates VFIO-PCI driver configuration for userspace applications:
 - Configure Virtual Functions with VFIO-PCI driver for DPDK applications
 - Device passthrough for high-performance userspace networking
-- Vhost-user socket mounting for container networking acceleration
+- Optional exposure of the fixed `/dev/vhost-net` and `/dev/net/tun` device nodes
 - VfConfig parameters for userspace networking:
   - `driver: vfio-pci`: Binds VF to VFIO-PCI driver instead of kernel driver
-  - `addVhostMount: true`: Mounts vhost-user sockets into the container
-  - `ifName`: Interface name (optional for VFIO mode)
-  - `netAttachDefName`: Network attachment definition for management interface
+  - `addVhostMount: true`: Exposes `/dev/vhost-net` and `/dev/net/tun` in the container
+  - Omit `ifName` and both NAD fields for this VFIO-without-CNI example
 
 #### Multus Integration: Single VF (`demo/multus-integration-single-vf/`)
 Shows end-to-end Multus + DRA attachment for one VF:
@@ -441,7 +457,7 @@ Shows end-to-end Multus + DRA attachment for one VF:
 #### Multus Integration: Multiple VFs (`demo/multus-integration-multiple-vf/`)
 Demonstrates consuming two VFs from one claim:
 - Requests `count: 2` from one `ResourceClaimTemplate`
-- Uses repeated network annotation (`vf-test1,vf-test1`) for two interfaces
+- Uses repeated network annotation (`dra-driver-sriov/demo-multus-multiple-net,dra-driver-sriov/demo-multus-multiple-net`) for two interfaces
 - Relies on Multus-required device attributes (`resourceName`, `deviceID`)
 
 #### Multus Integration: Multiple Resource Claims (`demo/multus-integration-multiple-resourceclaim/`)

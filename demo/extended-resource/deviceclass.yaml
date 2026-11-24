@@ -1,3 +1,8 @@
+# Administrator setup: policy, attributes, DeviceClasses and NADs below require
+# administrator credentials. NADs live in the protected dra-driver-sriov namespace.
+# Tenant claims/templates contain requests only; they cannot supply SR-IOV config.
+# The driver release namespace must already exist; adjust admin namespace references
+# together if the driver was installed elsewhere.
 # DeviceAttributes for port 1
 apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
 kind: DeviceAttributes
@@ -64,6 +69,7 @@ spec:
         apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
         kind: VfConfig
         netAttachDefName: sriov-port1-net
+        netAttachDefNamespace: dra-driver-sriov
   extendedResourceName: example.com/sriov-port1
 ---
 # DeviceClass for port 2 — extended resource: example.com/sriov-port2
@@ -84,14 +90,15 @@ spec:
         apiVersion: sriovnetwork.k8snetworkplumbingwg.io/v1alpha1
         kind: VfConfig
         netAttachDefName: sriov-port2-net
+        netAttachDefNamespace: dra-driver-sriov
   extendedResourceName: example.com/sriov-port2
 ---
 # NetworkAttachmentDefinition for port 1
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
 metadata:
-  name: sriov-port1-net
-  namespace: default
+  name: "sriov-port1-net"
+  namespace: "dra-driver-sriov"
 spec:
   config: |-
     {
@@ -109,8 +116,8 @@ spec:
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
 metadata:
-  name: sriov-port2-net
-  namespace: default
+  name: "sriov-port2-net"
+  namespace: "dra-driver-sriov"
 spec:
   config: |-
     {

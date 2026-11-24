@@ -14,8 +14,10 @@ import (
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	configapi "github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/api/virtualfunction/v1alpha1"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/cni"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/consts"
+	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/devicestate"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/flags"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/podmanager"
 	"github.com/k8snetworkplumbingwg/dra-driver-sriov/pkg/types"
@@ -85,13 +87,13 @@ func (p *Plugin) Stop() {
 	close(p.networkDeviceDataUpdateChan)
 }
 
-// RunPodSandbox runs the CNI ADD operation for each device in the devices list.
+// RunPodSandbox verifies saved claims before attaching networks with saved CNI configuration.
 func (p *Plugin) RunPodSandbox(ctx context.Context, pod *api.PodSandbox) error {
 	logger := klog.FromContext(ctx).WithName("NRI RunPodSandbox")
 	logger.Info("RunPodSandbox", "pod.UID", pod.Uid, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace)
 
-	devices, found := p.podManager.GetDevicesByPodUID(k8stypes.UID(pod.Uid))
-	if !found {
+	preparedClaims := p.podManager.GetClaimsByPodUID(k8stypes.UID(pod.Uid))
+	if len(preparedClaims) == 0 {
 		logger.Info("No prepared devices found for pod", "pod.UID", pod.Uid)
 		return nil
 	}
@@ -104,8 +106,55 @@ func (p *Plugin) RunPodSandbox(ctx context.Context, pod *api.PodSandbox) error {
 		return nil
 	}
 
+	// Verify all claims before CNI ADD; legacy records remain available for cleanup.
+	var devices types.PreparedDevices
+	for uid, prepared := range preparedClaims {
+		meta, _ := p.podManager.ClaimProvenance(k8stypes.UID(pod.Uid), uid)
+		if meta.LegacyCleanupOnly || len(prepared) == 0 {
+			return fmt.Errorf("migration: legacy prepared claim %s cannot create a new network attachment", uid)
+		}
+		if p.k8sClient.Client == nil {
+			return fmt.Errorf("cannot verify prepared claim %s: Kubernetes client unavailable", uid)
+		}
+		claim := &resourceapi.ResourceClaim{}
+		if err := p.k8sClient.Client.Get(ctx, client.ObjectKey{Namespace: prepared[0].ClaimNamespacedName.Namespace, Name: prepared[0].ClaimNamespacedName.Name}, claim); err != nil {
+			return fmt.Errorf("cannot verify prepared claim %s: %w", uid, err)
+		}
+		if claim.UID != uid || len(claim.Status.ReservedFor) != 1 || string(claim.Status.ReservedFor[0].UID) != pod.Uid {
+			return fmt.Errorf("prepared claim %s is not reserved for Pod %s", uid, pod.Uid)
+		}
+		resolved, err := devicestate.ResolveClaimConfiguration(claim, configapi.Decoder, string(consts.ConfigurationModeStandalone))
+		if err != nil {
+			return fmt.Errorf("claim %s configuration policy: %w", uid, err)
+		}
+		if err := devicestate.VerifyPreparedClaim(claim, resolved, prepared, meta); err != nil {
+			return err
+		}
+		devices = append(devices, prepared...)
+	}
+
+	usedNames := make(map[string]bool)
+	for _, device := range devices {
+		if device.IsVFIOWithoutCNI() {
+			continue
+		}
+		if device.NetAttachDefConfig == "" {
+			return fmt.Errorf("prepared kernel device %s has no network configuration", device.Device.DeviceName)
+		}
+		if err := configapi.ValidateInterfaceName(device.IfName); err != nil {
+			return err
+		}
+		if usedNames[device.IfName] {
+			return fmt.Errorf("interface name %q already used in this Pod", device.IfName)
+		}
+		usedNames[device.IfName] = true
+	}
+
 	networkDevicesData := types.NetworkDataChanStructList{}
 	for _, device := range devices {
+		if device.IsVFIOWithoutCNI() {
+			continue
+		}
 		networkDeviceData, cniResultMap, err := p.cniRuntime.AttachNetwork(ctx, pod, networkNamespace, device)
 		if err != nil {
 			logger.Error(err, "Failed to attach network", "deviceName", device.Device.DeviceName, "pod.UID", pod.Uid, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace)
@@ -142,7 +191,7 @@ func (p *Plugin) RunPodSandbox(ctx context.Context, pod *api.PodSandbox) error {
 	return nil
 }
 
-// StopPodSandbox runs the CNI DEL operation for each device in the devices list.
+// StopPodSandbox detaches saved networks, including legacy state, and skips VFIO without CNI.
 func (p *Plugin) StopPodSandbox(ctx context.Context, pod *api.PodSandbox) error {
 	logger := klog.FromContext(ctx).WithName("NRI StopPodSandbox")
 	logger.Info("StopPodSandbox", "pod.UID", pod.Uid, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace)
@@ -159,6 +208,9 @@ func (p *Plugin) StopPodSandbox(ctx context.Context, pod *api.PodSandbox) error 
 	}
 
 	for _, device := range devices {
+		if device.IsVFIOWithoutCNI() {
+			continue
+		}
 		logger.Info("Detaching network", "device", device)
 		err := p.cniRuntime.DetachNetwork(ctx, pod, networkNamespace, device)
 		if err != nil {

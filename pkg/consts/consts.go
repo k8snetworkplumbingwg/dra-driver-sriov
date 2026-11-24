@@ -102,6 +102,9 @@ type ConfigurationMode string
 const (
 	ConfigurationModeStandalone ConfigurationMode = "STANDALONE"
 	ConfigurationModeMultus     ConfigurationMode = "MULTUS"
+
+	// DeviceClassAdminConfigPolicyVersion tags trusted DeviceClass-only configuration records.
+	DeviceClassAdminConfigPolicyVersion = "deviceclass-admin/v1"
 )
 
 var Backoff = wait.Backoff{

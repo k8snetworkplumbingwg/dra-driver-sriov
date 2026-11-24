@@ -105,6 +105,12 @@ var _ = Describe("Types", func() {
 			Expect(err.Error()).To(ContainSubstring("failed to unmarshal existing config"))
 		})
 
+		It("rejects JSON null rather than panicking when inserting the device ID", func() {
+			config, err := draTypes.AddDeviceIDToNetConf("null", "0000:01:00.1")
+			Expect(config).To(BeEmpty())
+			Expect(err).To(MatchError(ContainSubstring("must be a JSON object")))
+		})
+
 		It("should handle empty deviceID", func() {
 			originalConfig := `{"type": "sriov", "name": "mynet"}`
 			deviceID := ""
